@@ -1,0 +1,46 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+web/node_modules/
+cloudflare-worker/node_modules/
+landing/node_modules/
+docs-site/node_modules/
+
+# Build outputs
+web/dist/
+landing/dist/
+docs-site/dist/
+cloudflare-worker/dist/
+
+# Deno cache
+.deno/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs and scratch files
+.scratch/
+*.log
+
+# Testing
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Redis dump
+dump.rdb
+
+# Secrets
+chipp-deno-secret.yaml
+*.pem
+*.key
