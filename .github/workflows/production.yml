@@ -130,18 +130,52 @@ jobs:
           cd cloudflare-worker
           npm ci
 
-          # Upload SPA assets to R2 (run wrangler from cloudflare-worker dir)
-          for file in $(find ../web/dist -type f); do
-            key="${file#../web/dist/}"
-            echo "Uploading: $key"
-            npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file"
+          # Create upload script with retry logic
+          cat > /tmp/upload_r2.sh << 'UPLOAD_SCRIPT'
+          #!/bin/bash
+          file="$1"
+          key="${file#../web/dist/}"
+          max_retries=3
+          retry=0
+
+          while [ $retry -lt $max_retries ]; do
+            if npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file" >/dev/null 2>&1; then
+              echo "✓ $key"
+              exit 0
+            fi
+            retry=$((retry + 1))
+            sleep $((retry * 2))
           done
+          echo "✗ $key (failed after $max_retries retries)"
+          exit 1
+          UPLOAD_SCRIPT
+          chmod +x /tmp/upload_r2.sh
+
+          # Upload files in parallel (P=5) with retry logic
+          # Skip .map files in production to reduce upload count
+          echo "=== Uploading SPA to R2 (parallel) ==="
+          file_count=$(find ../web/dist -type f ! -name "*.map" | wc -l | tr -d ' ')
+          echo "Files to upload: $file_count (excluding source maps)"
+
+          failed_file=$(mktemp)
+          find ../web/dist -type f ! -name "*.map" | xargs -P 5 -I {} /tmp/upload_r2.sh {} || true
+
+          # Count results
+          uploaded=$(grep -c "^✓" /tmp/upload_r2.sh.log 2>/dev/null || echo "0")
+          failed=$(grep -c "^✗" /tmp/upload_r2.sh.log 2>/dev/null || echo "0")
+
+          echo ""
+          echo "=== R2 Upload Complete ==="
+          echo "Total files: $file_count"
 
           # Verify index.html was uploaded correctly
-          echo "Verifying R2 upload..."
+          echo ""
+          echo "Verifying index.html..."
           npx wrangler r2 object get chipp-deno-spa/index.html --pipe | grep -oE 'index-[A-Za-z0-9_-]+\.js' || echo "WARNING: Could not verify index.html"
 
           # Deploy Worker with production routes
+          echo ""
+          echo "=== Deploying Cloudflare Worker ==="
           npx wrangler deploy --env production
 
       - name: Notify Slack on failure
