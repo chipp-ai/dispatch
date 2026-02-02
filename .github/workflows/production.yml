@@ -130,62 +130,12 @@ jobs:
           cd cloudflare-worker
           npm ci
 
-          # Function to upload with retry
-          upload_with_retry() {
-            local file="$1"
-            local key="$2"
-            local max_retries=3
-            local retry=0
-
-            while [ $retry -lt $max_retries ]; do
-              if npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file" 2>&1; then
-                return 0
-              fi
-              retry=$((retry + 1))
-              echo "Retry $retry/$max_retries for $key..."
-              sleep 2
-            done
-            echo "ERROR: Failed to upload $key after $max_retries attempts"
-            return 1
-          }
-
-          # Upload SPA assets to R2 with retry logic and caching
-          # Content-hashed filenames (Vite default) are immutable - skip if exists
-          failed_uploads=0
-          skipped=0
-          uploaded=0
-
+          # Upload SPA assets to R2 (run wrangler from cloudflare-worker dir)
           for file in $(find ../web/dist -type f); do
             key="${file#../web/dist/}"
-
-            # Content-hashed files (assets/name-[hash].ext) are immutable
-            # Check if they already exist to avoid redundant uploads
-            if [[ "$key" =~ ^assets/.*-[A-Za-z0-9_]+\.[^.]+$ ]] && [[ ! "$key" =~ \.map$ ]]; then
-              # Check if file exists in R2 (fast HEAD request)
-              if npx wrangler r2 object get "chipp-deno-spa/$key" --pipe >/dev/null 2>&1; then
-                skipped=$((skipped + 1))
-                continue
-              fi
-            fi
-
             echo "Uploading: $key"
-            if upload_with_retry "$file" "$key"; then
-              uploaded=$((uploaded + 1))
-            else
-              failed_uploads=$((failed_uploads + 1))
-            fi
+            npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file"
           done
-
-          echo ""
-          echo "=== R2 Upload Summary ==="
-          echo "Uploaded: $uploaded files"
-          echo "Skipped (already exists): $skipped files"
-          echo "Failed: $failed_uploads files"
-
-          if [ $failed_uploads -gt 0 ]; then
-            echo "WARNING: $failed_uploads files failed to upload"
-            exit 1
-          fi
 
           # Verify index.html was uploaded correctly
           echo "Verifying R2 upload..."
