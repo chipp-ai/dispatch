@@ -23,6 +23,9 @@ cloudflare-worker/dist/
 .vscode/
 .idea/
 
+# Claude Code (user-specific local overrides)
+.claude/settings.local.json
+
 # Logs and scratch files
 .scratch/
 *.log
