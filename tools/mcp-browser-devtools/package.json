@@ -1,0 +1,20 @@
+{
+  "name": "mcp-browser-devtools",
+  "version": "1.0.0",
+  "description": "MCP server for Chrome DevTools Protocol - access browser console logs, network requests, screenshots",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "mcp-browser-devtools": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "chrome-remote-interface": "^0.33.2",
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0"
+  }
+}
