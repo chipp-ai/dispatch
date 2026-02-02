@@ -1,0 +1,22 @@
+<script lang="ts">
+</script>
+
+<div class="sheet-footer" {...$$restProps}>
+  <slot />
+</div>
+
+<style>
+  .sheet-footer {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: var(--space-2);
+    margin-top: var(--space-6);
+  }
+
+  @media (min-width: 640px) {
+    .sheet-footer {
+      flex-direction: row;
+      justify-content: flex-end;
+    }
+  }
+</style>

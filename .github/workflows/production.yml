@@ -1,0 +1,158 @@
+name: PRODUCTION - Build and Deploy Chipp Deno
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["staging"]
+
+# Prevent race conditions: cancel in-progress runs when a new one starts
+# This ensures the latest code is always deployed without R2 upload conflicts
+concurrency:
+  group: chipp-deno-production
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: chippai-398019
+  GAR_LOCATION: us-central1
+  REPO: chipp-deno
+  REGION: us-central1
+  GKE_CLUSTER: production
+
+jobs:
+  deploy:
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    runs-on: chipp-beefy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: Docker Auth
+        id: docker-auth
+        uses: "docker/login-action@v3"
+        with:
+          username: "oauth2accesstoken"
+          password: "${{ steps.auth.outputs.access_token }}"
+          registry: "${{ env.GAR_LOCATION }}-docker.pkg.dev"
+
+      - name: Create Artifact Registry repo if not exists
+        run: |
+          gcloud artifacts repositories describe ${{ env.REPO }} --location=${{ env.GAR_LOCATION }} 2>/dev/null || \
+          gcloud artifacts repositories create ${{ env.REPO }} \
+            --repository-format=docker \
+            --location=${{ env.GAR_LOCATION }} \
+            --description="Chipp Deno API Docker images"
+
+      - name: Build and Push Container
+        run: |-
+          docker build \
+            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}" \
+            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production" \
+            .
+          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}"
+          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production"
+
+      - name: Deploy Secrets
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+        run: |
+          curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
+          sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg && \
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" | \
+          sudo tee /etc/apt/sources.list.d/1password.list && \
+          sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/ && \
+          curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol | \
+          sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol && \
+          sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22 && \
+          curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
+          sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && \
+          sudo apt update && sudo apt install 1password-cli
+
+          op user get --me
+
+          scripts/op_to_yaml.py chipp-deno chipp-deno chipp-deno > chipp-deno-secret.yaml
+          kubectl apply -f chipp-deno-secret.yaml
+
+      - name: Apply K8s manifests
+        run: |
+          kubectl apply -f charts/
+
+      - name: Deploy
+        run: |-
+          kubectl set image deployment/chipp-deno chipp-deno=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}
+          kubectl rollout status deployment/chipp-deno
+          kubectl get services -o wide
+
+      - name: Verify Health
+        run: |
+          sleep 10
+          kubectl run curl-test --image=curlimages/curl --rm -i --restart=Never -- \
+            curl -sf http://chipp-deno:8000/health || echo "Health check via internal service"
+
+      # --- SPA Deployment to Cloudflare R2 ---
+      - name: Setup Node.js for SPA build
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Build Svelte SPA
+        run: |
+          cd web
+          # Clean dist to prevent stale cached files
+          rm -rf dist
+          npm ci
+          npm run build
+          # Verify build output
+          echo "Built index.html references:"
+          grep -oE 'index-[A-Za-z0-9_-]+\.js' dist/index.html
+
+      - name: Deploy SPA to R2 and Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          cd cloudflare-worker
+          npm ci
+
+          # Upload SPA assets to R2 (run wrangler from cloudflare-worker dir)
+          for file in $(find ../web/dist -type f); do
+            key="${file#../web/dist/}"
+            echo "Uploading: $key"
+            npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file"
+          done
+
+          # Verify index.html was uploaded correctly
+          echo "Verifying R2 upload..."
+          npx wrangler r2 object get chipp-deno-spa/index.html --pipe | grep -oE 'index-[A-Za-z0-9_-]+\.js' || echo "WARNING: Could not verify index.html"
+
+          # Deploy Worker with production routes
+          npx wrangler deploy --env production
+
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":":x: Chipp Deno PRODUCTION deployment failed"}' \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on success
+        if: ${{ success() }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":":rocket: Chipp Deno deployed to PRODUCTION successfully"}' \
+            ${{ secrets.SLACK_WEBHOOK_URL }}

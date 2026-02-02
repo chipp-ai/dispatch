@@ -1,0 +1,29 @@
+name = "chipp-deno-spa"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# R2 bucket for static assets
+# Production uses chipp-deno-spa, local dev uses chipp-deno-spa-dev
+# to avoid overwriting production assets during development
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "chipp-deno-spa"
+preview_bucket_name = "chipp-deno-spa-dev"
+
+[vars]
+API_ORIGIN = "https://dino-mullet.chipp.ai"
+
+# Production environment with chipp.ai zone routes
+[env.production]
+name = "chipp-deno-spa"
+routes = [
+  { pattern = "build.chipp.ai/*", zone_name = "chipp.ai" },
+  { pattern = "*.chipp.ai/*", zone_name = "chipp.ai" }
+]
+
+[env.production.vars]
+API_ORIGIN = "https://dino-mullet.chipp.ai"
+
+[[env.production.r2_buckets]]
+binding = "ASSETS"
+bucket_name = "chipp-deno-spa"
