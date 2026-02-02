@@ -1,0 +1,90 @@
+{
+  "$schema": "https://deno.land/x/deno/cli/schemas/config-file.v1.json",
+  "tasks": {
+    "dev": "DENO_NO_PACKAGE_JSON=1 deno run --env --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi main.ts",
+    "dev:all": "DENO_NO_PACKAGE_JSON=1 ./scripts/dev.sh",
+    "dev:log": "mkdir -p ../../.scratch/logs && DENO_NO_PACKAGE_JSON=1 deno run --watch --allow-net --allow-env --allow-read --allow-ffi main.ts 2>&1 | tee ../../.scratch/logs/deno-$(date +%Y%m%d-%H%M%S).log",
+    "start": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi main.ts",
+    "start:log": "mkdir -p ../../.scratch/logs && DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi main.ts 2>&1 | tee ../../.scratch/logs/deno-$(date +%Y%m%d-%H%M%S).log",
+    "check": "DENO_NO_PACKAGE_JSON=1 deno check main.ts",
+    "test": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "test:routes": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/",
+    "test:persistence": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/consumer_chat_persistence_test.ts",
+    "test:completion": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/agent/completion_test.ts",
+    "test:ci:streaming": "./scripts/test-streaming-persistence.sh",
+    "test:scenarios": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/scenarios/",
+    "test:watch": "DENO_NO_PACKAGE_JSON=1 deno test --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "test:coverage": "DENO_NO_PACKAGE_JSON=1 deno test --coverage=coverage/ --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "db:migrate": "DENO_NO_PACKAGE_JSON=1 deno run --env --allow-net --allow-env --allow-read db/migrate.ts",
+    "migrate:data": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi scripts/migrate-data/main.ts",
+    "migrate:data:dry-run": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi scripts/migrate-data/main.ts --dry-run",
+    "migrate:data:test": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi scripts/migrate-data/main.ts --test",
+    "migrate:test-connection": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read scripts/migrate-data/test-connection.ts"
+  },
+  "imports": {
+    "@/": "./",
+    "@std/assert": "jsr:@std/assert@^1.0.0",
+    "@std/testing": "jsr:@std/testing@^1.0.0",
+    "@std/testing/bdd": "jsr:@std/testing@^1.0.0/bdd",
+    "@std/testing/bdd": "jsr:@std/testing@^1.0.0/bdd",
+    "hono": "npm:hono@^4.6.0",
+    "hono/cookie": "npm:hono@^4.6.0/cookie",
+    "hono/cors": "npm:hono@^4.6.0/cors",
+    "hono/logger": "npm:hono@^4.6.0/logger",
+    "hono/secure-headers": "npm:hono@^4.6.0/secure-headers",
+    "hono/timing": "npm:hono@^4.6.0/timing",
+    "hono/pretty-json": "npm:hono@^4.6.0/pretty-json",
+    "hono/compress": "npm:hono@^4.6.0/compress",
+    "hono/streaming": "npm:hono@^4.6.0/streaming",
+    "hono/factory": "npm:hono@^4.6.0/factory",
+    "hono/http-exception": "npm:hono@^4.6.0/http-exception",
+    "@hono/zod-validator": "npm:@hono/zod-validator@^0.4.0",
+    "zod": "npm:zod@^3.23.0",
+    "kysely": "npm:kysely@^0.27.4",
+    "kysely-postgres-js": "jsr:@byzanteam/kysely-deno-postgres-dialect",
+    "postgres": "npm:postgres@^3.4.4",
+    "arctic": "npm:arctic@^2.0.0",
+    "redis": "https://deno.land/x/redis@v0.32.4/mod.ts",
+    "openai": "npm:openai@^4.0.0",
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.30.0",
+    "ai": "npm:ai@^3.4.0",
+    "@ai-sdk/openai": "npm:@ai-sdk/openai@^0.0.70",
+    "@ai-sdk/anthropic": "npm:@ai-sdk/anthropic@^0.0.55",
+    "stripe": "npm:stripe@^17.0.0",
+    "@sentry/deno": "npm:@sentry/deno@^8.0.0",
+    "@huggingface/transformers": "npm:@huggingface/transformers@^3.0.0",
+    "jose": "npm:jose@^5.0.0",
+    "date-fns": "npm:date-fns@^3.0.0",
+    "@google/genai": "npm:@google/genai@^1.0.0"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "deno.unstable"]
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": [
+        "no-unused-vars",
+        "require-await",
+        "no-explicit-any",
+        "no-window",
+        "no-window-prefix",
+        "no-unversioned-import",
+        "prefer-const",
+        "no-control-regex"
+      ]
+    },
+    "exclude": ["web/"]
+  },
+  "nodeModulesDir": "none"
+}

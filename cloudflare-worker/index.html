@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chipp</title>
+    <!-- Inline critical CSS for instant splash screen -->
+    <style>
+      /* CSS variable defaults - Cloudflare Worker may inject overrides before this */
+      :root {
+        --app-brand-bg: #0a0a0a;
+        --app-brand-color: #F9DB00;
+      }
+      /* Full document reset before CSS bundle loads */
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow-x: hidden;
+      }
+      body {
+        min-height: 100vh;
+        min-height: 100dvh;
+        line-height: 1;
+      }
+      /* Prevent scrollbar shift during splash */
+      html.splash-active,
+      html.splash-active body {
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        height: 100%;
+      }
+      #app {
+        margin: 0;
+        padding: 0;
+      }
+      #initial-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--app-brand-bg);
+        overflow: hidden;
+      }
+      #initial-splash img {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        filter: grayscale(100%) brightness(0.8);
+        opacity: 0.6;
+        transform: scale(0.95);
+      }
+      #initial-splash.hidden {
+        display: none;
+      }
+    </style>
+    <script>
+      // Add splash-active class immediately to prevent scrollbar
+      document.documentElement.classList.add('splash-active');
+
+      // Apply app-specific branding for consumer chat pages
+      // This runs before components load to prevent flash of wrong colors.
+      // window.__APP_BRAND__ is injected by Cloudflare Worker for consumer routes.
+      // This is SEPARATE from whitelabel branding (platform-level --brand-color).
+      (function() {
+        var brand = window.__APP_BRAND__;
+        if (brand && brand.color) {
+          var root = document.documentElement.style;
+          // Only set --consumer-primary for app-specific branding
+          // DO NOT set --brand-color here - that's for platform whitelabeling
+          root.setProperty('--consumer-primary', brand.color);
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BPB814Vj.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/svelte-C2iL8trP.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DGDky2wK.css">
+  </head>
+  <body>
+    <!-- Instant splash screen - shows before JS loads -->
+    <div id="initial-splash">
+      <img src="/assets/chippylogo.svg" alt="Loading" />
+    </div>
+    <div id="app"></div>
+  </body>
+</html>

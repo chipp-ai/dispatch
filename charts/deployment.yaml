@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chipp-deno
+  labels:
+    app: chipp-deno
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chipp-deno
+  template:
+    metadata:
+      labels:
+        app: chipp-deno
+    spec:
+      imagePullSecrets:
+        - name: gcp-artifact-registry
+      containers:
+        - name: chipp-deno
+          image: us-central1-docker.pkg.dev/chippai-398019/chipp-deno/chipp-deno:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: chipp-deno
+          env:
+            - name: PORT
+              value: "8000"
+            - name: NODE_ENV
+              value: "production"

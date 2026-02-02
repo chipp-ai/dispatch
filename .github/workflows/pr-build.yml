@@ -1,0 +1,106 @@
+name: Chipp Deno PR Build
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  deno-build:
+    name: Deno Build & Test
+    runs-on: ubuntu-latest
+
+    # PostgreSQL service for integration tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: chipp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DENO_NO_PACKAGE_JSON: "1"
+      TEST_DATABASE_URL: postgresql://test:test@localhost:5432/chipp_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Test Database
+        run: |
+          PGPASSWORD=test psql -h localhost -U test -d chipp_test -f db/test-schema.sql
+
+      - name: Type Check
+        run: deno check main.ts
+
+      - name: Lint
+        run: deno lint
+
+      - name: Run Unit Tests
+        run: |
+          deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi \
+            src/__tests__/llm/normalization/ \
+            src/__tests__/llm/normalize_history_test.ts
+
+      - name: Run LLM Integration Tests (Stripe Token Billing)
+        env:
+          STRIPE_SANDBOX_KEY: ${{ secrets.STRIPE_SANDBOX_KEY }}
+        run: |
+          deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi \
+            src/__tests__/llm/stripe_token_billing_normalization_test.ts
+
+      - name: Run Integration Tests (DB required)
+        run: |
+          deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi \
+            src/__tests__/routes/ \
+            src/__tests__/services/
+        continue-on-error: true
+
+  svelte-build:
+    name: Svelte SPA Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Type Check (svelte-check)
+        working-directory: web
+        run: npm run check
+
+      - name: Build SPA
+        working-directory: web
+        run: npm run build
+
+  # Required by branch protection - provides "PR Build" status for chipp-deno-only PRs
+  pr-build-status:
+    name: PR Build
+    runs-on: ubuntu-latest
+    needs: [deno-build, svelte-build]
+    steps:
+      - name: All checks passed
+        run: echo "All chipp-deno checks passed"

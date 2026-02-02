@@ -1,0 +1,16 @@
+{
+  "name": "Chipp",
+  "short_name": "Chipp",
+  "description": "Build AI apps without code",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/assets/icons/chipp-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
