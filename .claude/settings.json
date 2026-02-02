@@ -1,0 +1,76 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git stash list:*)",
+      "Bash(git stash show:*)",
+      "Bash(git stash push:*)",
+      "Bash(git checkout -b:*)",
+      "Bash(git switch:*)",
+      "Bash(git pull:*)",
+      "Bash(git fetch:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(deno task test:*)",
+      "Bash(deno task check:*)",
+      "Bash(deno task lint:*)",
+      "Bash(deno task fmt:*)",
+      "Bash(deno check:*)",
+      "Bash(deno lint:*)",
+      "Bash(deno test:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run check:*)",
+      "Bash(npx tsc:*)",
+      "mcp__sentry__*",
+      "mcp__linear__*",
+      "mcp__vanta__*",
+      "mcp__browser-devtools__*",
+      "mcp__dev-server__*",
+      "mcp__chipp-db__*",
+      "mcp__stripe__*",
+      "mcp__github__*",
+      "mcp__kubernetes__*",
+      "mcp__temporal__*",
+      "mcp__redis__*"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Read(**/secrets/**)",
+      "Bash(git reset:*)",
+      "Bash(git checkout -- :*)",
+      "Bash(git checkout .:*)",
+      "Bash(git clean:*)",
+      "Bash(git rm:*)",
+      "Bash(git stash drop:*)",
+      "Bash(git stash clear:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git rebase:*)"
+    ]
+  },
+  "mcpServers": {
+    "dev-server": {
+      "command": "node",
+      "args": ["tools/mcp-dev-server/index.js"],
+      "env": {
+        "REPO_ROOT": "${workspaceFolder}"
+      }
+    }
+  }
+}
