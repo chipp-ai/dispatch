@@ -47,7 +47,8 @@
       "mcp__github__*",
       "mcp__kubernetes__*",
       "mcp__temporal__*",
-      "mcp__redis__*"
+      "mcp__redis__*",
+      "mcp__firecrawl__*"
     ],
     "deny": [
       "Bash(sudo:*)",
@@ -77,6 +78,14 @@
       "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
       "env": {
         "DATABASE_URL": "${DATABASE_URL}"
+      }
+    },
+    "browser-devtools": {
+      "command": "node",
+      "args": ["tools/mcp-browser-devtools/index.js"],
+      "env": {
+        "CDP_HOST": "localhost",
+        "CDP_PORT": "9222"
       }
     }
   }
