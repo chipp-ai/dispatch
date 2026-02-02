@@ -42,7 +42,7 @@
       "mcp__vanta__*",
       "mcp__browser-devtools__*",
       "mcp__dev-server__*",
-      "mcp__chipp-db__*",
+      "mcp__chipp-database__*",
       "mcp__stripe__*",
       "mcp__github__*",
       "mcp__kubernetes__*",
@@ -70,6 +70,13 @@
       "args": ["tools/mcp-dev-server/index.js"],
       "env": {
         "REPO_ROOT": "${workspaceFolder}"
+      }
+    },
+    "chipp-database": {
+      "command": "deno",
+      "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
       }
     }
   }
