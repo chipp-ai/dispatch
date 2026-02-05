@@ -270,31 +270,36 @@ export async function handleSlackMessage(
 
     // Create LLM adapter with billing
     const modelId = appConfig.model || DEFAULT_MODEL_ID;
-    const adapter = await createAdapterWithBilling(modelId, {
-      organizationId: billingContext.organizationId,
-      applicationId,
-      sessionId: session.id,
-      subscriptionTier: billingContext.subscriptionTier,
-      usageBasedBillingEnabled: billingContext.usageBasedBillingEnabled,
-    });
+    const adapter = await createAdapterWithBilling(modelId, billingContext);
 
     // Create tool registry
     const registry = createRegistry();
 
     // Register tools
-    registerCoreTools(registry);
+    registerCoreTools(registry, { appId: applicationId });
 
     if (hasKnowledge) {
-      registerRAGTools(registry, applicationId);
+      registerRAGTools(registry, {
+        appId: applicationId,
+        searchKnowledge: async (
+          appId: string,
+          query: string,
+          limit: number
+        ) => {
+          const { getRelevantChunks } = await import("./rag.service.ts");
+          const chunks = await getRelevantChunks(appId, query);
+          return chunks.slice(0, limit);
+        },
+      });
     }
 
     // Register custom actions
-    const customActions = await customActionService.list(applicationId);
+    const customActions = await customActionService.listForApp(applicationId);
     if (customActions.length > 0) {
       const execContext: ExecutionContext = {
         applicationId,
         sessionId: session.id,
-        consumerId: session.consumerId,
+        consumerId: session.consumerId ?? undefined,
       };
       registerCustomTools(registry, customActions, execContext);
     }
@@ -304,25 +309,17 @@ export async function handleSlackMessage(
 
     // Run agent loop
     console.log("[SlackChat] Running agent loop");
-    const response = await agentLoop({
-      adapter,
-      registry,
+    let responseText = "";
+    for await (const chunk of agentLoop(messages, registry, adapter, {
+      model: modelId,
+      temperature: appConfig.temperature ?? 0.7,
       systemPrompt,
-      messages,
       maxIterations: 10,
-    });
-
-    // Extract text response
-    const responseText =
-      typeof response.content === "string"
-        ? response.content
-        : response.content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                part.type === "text"
-            )
-            .map((part) => part.text)
-            .join("\n");
+    })) {
+      if (chunk.type === "text") {
+        responseText += chunk.delta;
+      }
+    }
 
     console.log("[SlackChat] Got response", {
       length: responseText.length,

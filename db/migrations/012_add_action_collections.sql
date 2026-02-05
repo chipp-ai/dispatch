@@ -1,6 +1,7 @@
 -- Migration: 012_add_action_collections
--- Description: Add action collections and contributions for shared actions
--- Created: 2025-01-XX
+-- Description: Extend action_collections with sharing/pro features, add contributions table
+-- Note: action_collections already exists from 001_initial_schema.sql with columns:
+--   id, name, description, developer_id, is_public, created_at, updated_at
 
 -- Collection sharing scope enum
 DO $$ BEGIN
@@ -41,46 +42,29 @@ EXCEPTION
   WHEN duplicate_object THEN null;
 END $$;
 
--- Action Collections table
-CREATE TABLE IF NOT EXISTS app.action_collections (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name VARCHAR(255) NOT NULL,
-  description TEXT NOT NULL,
-  slug VARCHAR(100) UNIQUE NOT NULL,
+-- Extend existing action_collections table with new columns
+-- Use ADD COLUMN IF NOT EXISTS to be idempotent
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS slug VARCHAR(100) UNIQUE;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS sharing_scope app.collection_sharing_scope NOT NULL DEFAULT 'PRIVATE';
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES app.workspaces(id) ON DELETE SET NULL;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS category app.pro_action_category;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT false;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS review_status app.pro_action_review_status;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS review_notes TEXT;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES app.users(id);
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS version VARCHAR(20) DEFAULT '1.0.0';
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS cover_image TEXT;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS icon VARCHAR(100);
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS install_count INT DEFAULT 0;
+ALTER TABLE app.action_collections ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
 
-  sharing_scope app.collection_sharing_scope NOT NULL DEFAULT 'PRIVATE',
+-- Make description NOT NULL (it was nullable in 001)
+ALTER TABLE app.action_collections ALTER COLUMN description SET NOT NULL;
 
-  -- Owner information
-  created_by UUID NOT NULL REFERENCES app.users(id),
-  workspace_id UUID REFERENCES app.workspaces(id) ON DELETE SET NULL,
-
-  -- Pro action fields (only used when sharing_scope = PUBLIC)
-  category app.pro_action_category,
-  is_premium BOOLEAN DEFAULT false,
-  is_featured BOOLEAN DEFAULT false,
-  review_status app.pro_action_review_status,
-  review_notes TEXT,
-  reviewed_by UUID REFERENCES app.users(id),
-  reviewed_at TIMESTAMPTZ,
-
-  -- Common fields
-  is_active BOOLEAN DEFAULT true,
-  version VARCHAR(20) DEFAULT '1.0.0',
-
-  -- Metadata
-  cover_image TEXT,
-  icon VARCHAR(100),
-  tags JSONB DEFAULT '[]'::jsonb,
-
-  -- Usage tracking
-  install_count INT DEFAULT 0,
-  last_used_at TIMESTAMPTZ,
-
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_action_collections_creator ON app.action_collections(created_by);
 CREATE INDEX IF NOT EXISTS idx_action_collections_workspace ON app.action_collections(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_action_collections_slug ON app.action_collections(slug);
 CREATE INDEX IF NOT EXISTS idx_action_collections_sharing ON app.action_collections(sharing_scope) WHERE is_active = true;
@@ -125,7 +109,6 @@ CREATE INDEX IF NOT EXISTS idx_action_contributions_contributor ON app.action_co
 CREATE INDEX IF NOT EXISTS idx_action_contributions_status ON app.action_contributions(status);
 
 -- Add foreign key from user_defined_tools to action_collections if not exists
--- (Note: This assumes the user_defined_tools table already exists)
 DO $$
 BEGIN
   IF NOT EXISTS (

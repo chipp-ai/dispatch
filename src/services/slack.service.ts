@@ -8,7 +8,7 @@
 import { db } from "@/src/db/client.ts";
 import { encrypt, decrypt } from "@/src/services/crypto.service.ts";
 import type {
-  SlackInstallation,
+  SlackInstallation as SlackInstallationType,
   SlackChatMapping,
   SlackOAuthState,
   SlackThreadContext,
@@ -18,6 +18,8 @@ import type {
 // ========================================
 // Types
 // ========================================
+
+export type SlackInstallation = SlackInstallationType;
 
 export interface SlackCredentials {
   slackClientId: string;
@@ -64,7 +66,7 @@ export interface SlackUserInfo {
 export async function getInstallationByTeamAndApp(
   teamId: string,
   appId: string
-): Promise<SlackInstallation | null> {
+): Promise<SlackInstallationType | null> {
   const result = await db
     .selectFrom("app.slack_installations")
     .selectAll()
@@ -87,7 +89,7 @@ export async function createInstallation(data: {
   slackClientId?: string;
   slackClientSecret?: string;
   installedById?: number;
-}): Promise<SlackInstallation> {
+}): Promise<SlackInstallationType> {
   // Encrypt sensitive fields
   const encryptedBotToken = await encrypt(data.botToken);
   const encryptedSigningSecret = data.signingSecret
@@ -127,7 +129,7 @@ export async function updateInstallation(
     slackClientId?: string;
     slackClientSecret?: string;
   }
-): Promise<SlackInstallation | null> {
+): Promise<SlackInstallationType | null> {
   const updateData: Record<string, unknown> = {};
 
   if (data.workspaceName !== undefined) {
@@ -168,7 +170,7 @@ export async function upsertInstallation(data: {
   slackClientId?: string;
   slackClientSecret?: string;
   installedById?: number;
-}): Promise<SlackInstallation> {
+}): Promise<SlackInstallationType> {
   const existing = await getInstallationByTeamAndApp(
     data.workspaceTeamId,
     data.slackAppId

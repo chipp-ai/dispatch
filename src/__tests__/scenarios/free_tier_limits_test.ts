@@ -162,7 +162,7 @@ async function inviteMember(
  * Returns true if successful, false if column doesn't exist.
  */
 async function setCreditsExhausted(
-  organizationId: number,
+  organizationId: string,
   exhausted: boolean
 ): Promise<boolean> {
   try {

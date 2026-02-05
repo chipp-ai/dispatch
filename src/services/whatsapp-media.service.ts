@@ -103,7 +103,7 @@ async function transcribeAudio(
     const filename = `audio${extension}`;
 
     // Create a File/Blob for the OpenAI SDK
-    const file = new File([buffer], filename, { type: mimeType });
+    const file = new File([buffer as BlobPart], filename, { type: mimeType });
 
     const transcription = await openai.audio.transcriptions.create({
       file,
@@ -111,12 +111,14 @@ async function transcribeAudio(
       response_format: "text",
     });
 
+    const transcriptionText = typeof transcription === "string" ? transcription : (transcription as { text: string }).text;
+
     console.log("[WhatsAppMedia] Audio transcribed successfully", {
       correlationId,
-      transcriptionLength: transcription.length,
+      transcriptionLength: transcriptionText.length,
     });
 
-    return transcription;
+    return transcriptionText;
   } catch (error) {
     console.error("[WhatsAppMedia] Audio transcription failed", {
       correlationId,

@@ -7,14 +7,14 @@
     "start": "DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi main.ts",
     "start:log": "mkdir -p ../../.scratch/logs && DENO_NO_PACKAGE_JSON=1 deno run --allow-net --allow-env --allow-read --allow-ffi main.ts 2>&1 | tee ../../.scratch/logs/deno-$(date +%Y%m%d-%H%M%S).log",
     "check": "DENO_NO_PACKAGE_JSON=1 deno check main.ts",
-    "test": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
-    "test:routes": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/",
-    "test:persistence": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/consumer_chat_persistence_test.ts",
-    "test:completion": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/agent/completion_test.ts",
+    "test": "DENO_NO_PACKAGE_JSON=1 deno test --env --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "test:routes": "DENO_NO_PACKAGE_JSON=1 deno test --env --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/",
+    "test:persistence": "DENO_NO_PACKAGE_JSON=1 deno test --env --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/routes/consumer_chat_persistence_test.ts",
+    "test:completion": "DENO_NO_PACKAGE_JSON=1 deno test --env --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/agent/completion_test.ts",
     "test:ci:streaming": "./scripts/test-streaming-persistence.sh",
-    "test:scenarios": "DENO_NO_PACKAGE_JSON=1 deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/scenarios/",
-    "test:watch": "DENO_NO_PACKAGE_JSON=1 deno test --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
-    "test:coverage": "DENO_NO_PACKAGE_JSON=1 deno test --coverage=coverage/ --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "test:scenarios": "DENO_NO_PACKAGE_JSON=1 deno test --env --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/scenarios/",
+    "test:watch": "DENO_NO_PACKAGE_JSON=1 deno test --env --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
+    "test:coverage": "DENO_NO_PACKAGE_JSON=1 deno test --env --coverage=coverage/ --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/",
     "fmt": "deno fmt",
     "lint": "deno lint",
     "db:migrate": "DENO_NO_PACKAGE_JSON=1 deno run --env --allow-net --allow-env --allow-read db/migrate.ts",
@@ -84,7 +84,7 @@
         "no-control-regex"
       ]
     },
-    "exclude": ["web/"]
+    "exclude": ["web/", "tools/"]
   },
   "nodeModulesDir": "none"
 }
