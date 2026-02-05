@@ -68,44 +68,57 @@ async function getTransport(): Promise<unknown | null> {
 // From-Email Resolution
 // ========================================
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function resolveFromAddress(context: EmailContext): Promise<FromAddress> {
   const defaultEmail = Deno.env.get("SMTP_FROM_EMAIL") || "noreply@chipp.ai";
   const defaultName = Deno.env.get("SMTP_FROM_NAME") || "Chipp";
 
+  // Skip DB lookups for non-UUID context values (e.g. "platform" for developer auth)
+  const hasUuidOrg = UUID_RE.test(context.organizationId);
+  const hasUuidApp = UUID_RE.test(context.appId);
+  if (!hasUuidOrg && !hasUuidApp) {
+    return { email: defaultEmail, name: defaultName };
+  }
+
   try {
-    // 1. Check whitelabel tenant
-    const tenant = await db
-      .selectFrom("app.whitelabel_tenants")
-      .select(["features"])
-      .where("organizationId", "=", context.organizationId)
-      .executeTakeFirst();
+    // 1. Check whitelabel tenant (only if org ID is a valid UUID)
+    if (hasUuidOrg) {
+      const tenant = await db
+        .selectFrom("app.whitelabel_tenants")
+        .select(["features"])
+        .where("organizationId", "=", context.organizationId)
+        .executeTakeFirst();
 
-    if (tenant) {
-      const features = typeof tenant.features === "string"
-        ? JSON.parse(tenant.features)
-        : (tenant.features ?? {});
+      if (tenant) {
+        const features = typeof tenant.features === "string"
+          ? JSON.parse(tenant.features)
+          : (tenant.features ?? {});
 
-      if (features.smtpFromEmail) {
-        return {
-          email: features.smtpFromEmail,
-          name: features.smtpFromName || context.appName,
-        };
+        if (features.smtpFromEmail) {
+          return {
+            email: features.smtpFromEmail,
+            name: features.smtpFromName || context.appName,
+          };
+        }
       }
     }
 
-    // 2. Check custom domain
-    const customDomain = await db
-      .selectFrom("app.custom_domains")
-      .select(["hostname"])
-      .where("appId", "=", context.appId)
-      .where("sslStatus", "=", "active")
-      .executeTakeFirst();
+    // 2. Check custom domain (only if app ID is a valid UUID)
+    if (hasUuidApp) {
+      const customDomain = await db
+        .selectFrom("app.custom_domains")
+        .select(["hostname"])
+        .where("appId", "=", context.appId)
+        .where("sslStatus", "=", "active")
+        .executeTakeFirst();
 
-    if (customDomain) {
-      return {
-        email: `noreply@${customDomain.hostname}`,
-        name: context.appName,
-      };
+      if (customDomain) {
+        return {
+          email: `noreply@${customDomain.hostname}`,
+          name: context.appName,
+        };
+      }
     }
   } catch (err) {
     console.error("[transactional-email] Error resolving from address:", err);
