@@ -11,11 +11,29 @@
       "startedAt": "2026-02-04T23:00:00Z",
       "completedAt": "2026-02-05T00:25:00Z",
       "summary": "Full webhook implementation: subscription handlers, invoice handlers, checkout handlers, billing alerts with auto-topup, disputes, refunds. Endpoint consolidated to /api/webhooks/stripe."
+    },
+    "whatsapp-integration": {
+      "status": "explore-complete",
+      "startedAt": "2026-02-05T00:30:00Z",
+      "completedAt": "2026-02-05T01:00:00Z",
+      "summary": "WhatsApp integration gap analysis: ChippDeno already has near-complete implementation. 10 gaps identified including localized media messages (30+ vs 3 languages), duplicate phone number validation, session timeout configuration, WhatsApp group support, webhook secret column, and tier gating enforcement. Report saved to docs/migrations/whatsapp-chippmono.md"
+    },
+    "integration-setup-visual-design": {
+      "status": "complete",
+      "startedAt": "2026-02-05T02:00:00Z",
+      "completedAt": "2026-02-05T02:30:00Z",
+      "summary": "Comprehensive visual design audit of ChippMono integration setup dialogs (WhatsApp, Slack, Email, PWA, Voice). Documented: constellation card CSS, dialog modal patterns, deploy card structure, info/status box color system, button layered shadows, sticky footer pattern, typography hierarchy, spacing patterns, copy-field component, loading states. ChippDeno already has constellation CSS ported. Report at docs/migrations/integration-setup-visual-design.md"
+    },
+    "chipp-design-language": {
+      "status": "complete",
+      "startedAt": "2026-02-05T03:00:00Z",
+      "completedAt": "2026-02-05T03:30:00Z",
+      "summary": "Deep visual design extraction from ProActionModal (MCPProviderGrid) and KnowledgeSourceModal (ConstellationGrid). Documented: gradient atmosphere backgrounds, category-colored card glow system with data-category attributes, staggered entrance animations (30-50ms increments), circuit SVG pattern overlay, scanning line animation (8s infinite sweep), icon container glass treatment (36-42px, 10px radius), header pulsing glow, connection dots, filter chips, dark/light variable strategy, typography scale (JetBrains Mono for tech labels), badge styling, grid responsiveness (2-5 columns), Svelte 5 implementation guide with slot-based card component, whitelabel compatibility notes. Report at docs/migrations/chipp-design-language.md"
     }
   },
 
-  "activeMigration": "stripe-webhooks",
-  "lastUpdated": "2026-02-04T22:45:00Z",
+  "activeMigration": "whatsapp-integration",
+  "lastUpdated": "2026-02-05T03:30:00Z",
 
   "stripe-webhooks": {
     "phases": {
@@ -180,5 +198,73 @@
     }
   },
 
-  "resumeInstructions": "STRIPE WEBHOOKS MIGRATION COMPLETE. All core phases done: Foundation, Core Handlers, Billing Alerts, Analytics/Compliance, Verification, QA. Deferred items: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service). Next migration: Pick another feature from ChippMono to migrate."
+  "whatsapp-integration": {
+    "phases": {
+      "explore": {
+        "status": "complete",
+        "components": {
+          "chippmono-whatsapp": {
+            "status": "complete",
+            "report": "docs/migrations/whatsapp-chippmono.md",
+            "completedAt": "2026-02-05T01:00:00Z",
+            "summary": "Comprehensive investigation of WhatsApp in ChippMono: 3 duplicate setup dialogs, config API with encryption, webhook handler with media processing, 30+ language support, session management, 4096 char truncation. ChippDeno already has near-complete implementation with better UX (multi-step wizard). 10 specific gaps identified."
+          }
+        }
+      },
+      "implement": {
+        "status": "pending",
+        "components": {
+          "localized-media-messages": {
+            "status": "pending",
+            "tasks": [
+              "Expand unsupported media messages from 3 to 30+ languages",
+              "Port language mapping from ChippMono unsupportedMediaMessages.ts"
+            ],
+            "priority": "medium"
+          },
+          "duplicate-phone-validation": {
+            "status": "pending",
+            "tasks": [
+              "Add cross-app duplicate phoneNumberId check in config POST endpoint"
+            ],
+            "priority": "high"
+          },
+          "session-timeout": {
+            "status": "pending",
+            "tasks": [
+              "Implement 90-day session timeout with new session creation logic",
+              "Add shouldStartNewChatSession() equivalent"
+            ],
+            "priority": "high"
+          },
+          "response-truncation": {
+            "status": "pending",
+            "tasks": [
+              "Add 4096-char truncation with semantic sentence-aware splitting",
+              "Port truncateWithSemanticMeaning() from ChippMono"
+            ],
+            "priority": "high"
+          },
+          "whatsapp-groups": {
+            "status": "pending",
+            "tasks": [
+              "Add WhatsAppGroup table and schema",
+              "Implement group message handling"
+            ],
+            "priority": "low"
+          },
+          "tier-gating": {
+            "status": "pending",
+            "tasks": [
+              "Add runtime tier check for WhatsApp config save",
+              "Add UI gating in deploy section"
+            ],
+            "priority": "medium"
+          }
+        }
+      }
+    }
+  },
+
+  "resumeInstructions": "WHATSAPP EXPLORATION COMPLETE. Report at docs/migrations/whatsapp-chippmono.md. ChippDeno already has a near-complete WhatsApp implementation with better UX than ChippMono. 10 gaps identified - most critical: duplicate phone validation, session timeout (90-day), response truncation (4096 chars), localized media messages (30+ languages). Implementation phase ready to start. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service)."
 }
