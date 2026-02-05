@@ -38,6 +38,7 @@
     "npm:kysely@~0.27.4": "0.27.4",
     "npm:livekit-server-sdk@^2.14.2": "2.15.0",
     "npm:mysql2@3.6.0": "3.6.0",
+    "npm:nodemailer@6": "6.10.1",
     "npm:openai@4": "4.52.0",
     "npm:openai@4.52.0": "4.52.0",
     "npm:postgres@3.4.4": "3.4.4",
@@ -2220,6 +2221,7 @@
         "package-json-from-dist",
         "path-scurry"
       ],
+      "deprecated": true,
       "bin": true
     },
     "global-agent@3.0.0": {
@@ -2551,6 +2553,9 @@
         "fetch-blob",
         "formdata-polyfill"
       ]
+    },
+    "nodemailer@6.10.1": {
+      "integrity": "sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA=="
     },
     "object-inspect@1.13.4": {
       "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew=="
@@ -2951,7 +2956,8 @@
         "minipass",
         "minizlib",
         "yallist"
-      ]
+      ],
+      "deprecated": true
     },
     "teeny-request@9.0.0": {
       "integrity": "sha512-resvxdc6Mgb7YEThw6G6bExlXKkv6+YbuzGg9xuXxSgxJF7Ozs+o8Y9+2R3sArdWdW8nOokoQb1yrpFB0pQK2g==",
@@ -3144,6 +3150,7 @@
       "npm:hono@^4.6.0",
       "npm:jose@5",
       "npm:kysely@~0.27.4",
+      "npm:nodemailer@6",
       "npm:openai@4",
       "npm:postgres@^3.4.4",
       "npm:stripe@17",

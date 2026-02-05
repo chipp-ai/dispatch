@@ -25,6 +25,8 @@ export interface ProvisionUserInput {
   picture?: string | null;
   oauthProvider?: string | null;
   oauthId?: string | null;
+  passwordHash?: string | null;
+  emailVerified?: boolean;
 }
 
 export interface ProvisionedUser {
@@ -48,7 +50,7 @@ class UserProvisioningService {
    * 4. Add user as OWNER in workspace_members
    */
   async provisionNewUser(input: ProvisionUserInput): Promise<ProvisionedUser> {
-    const { email, name, picture, oauthProvider, oauthId } = input;
+    const { email, name, picture, oauthProvider, oauthId, passwordHash, emailVerified } = input;
 
     // Generate names based on user's name or email
     const displayName = name || email.split("@")[0];
@@ -99,7 +101,8 @@ class UserProvisioningService {
           activeWorkspaceId: workspace.id,
           oauthProvider: oauthProvider || null,
           oauthId: oauthId || null,
-          emailVerified: oauthProvider !== null, // OAuth users are considered verified
+          passwordHash: passwordHash || null,
+          emailVerified: emailVerified ?? (oauthProvider !== null), // Explicit flag or default: OAuth users verified
         })
         .returning(["id", "email", "name", "role"])
         .executeTakeFirstOrThrow();
