@@ -43,6 +43,16 @@ DB_PORT=5436
 DB_USER=postgres
 DB_PASS=postgres
 DB_NAME=chipp_deno
+
+# Check postgres readiness - prefer pg_isready, fall back to TCP check
+check_postgres() {
+    if command -v pg_isready &> /dev/null; then
+        pg_isready -h localhost -p $DB_PORT -U $DB_USER -q 2>/dev/null
+    else
+        # Fall back: use docker exec to run pg_isready inside the container
+        docker exec chipp-deno-db-1 pg_isready -U $DB_USER -q 2>/dev/null
+    fi
+}
 DB_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:${DB_PORT}/${DB_NAME}"
 DB_BRANCH_FILE="$REPO_DIR/.scratch/.db-branch"
 
@@ -66,7 +76,7 @@ if ! command -v docker &> /dev/null; then
 else
     # Check if postgres container is reachable
     DB_REACHABLE=false
-    if pg_isready -h localhost -p $DB_PORT -U $DB_USER -q 2>/dev/null; then
+    if check_postgres; then
         DB_REACHABLE=true
     fi
 
@@ -83,7 +93,7 @@ else
             # Wait for postgres to be healthy (up to 30s)
             echo -n "  Waiting for PostgreSQL..."
             for i in $(seq 1 30); do
-                if pg_isready -h localhost -p $DB_PORT -U $DB_USER -q 2>/dev/null; then
+                if check_postgres; then
                     DB_REACHABLE=true
                     break
                 fi
