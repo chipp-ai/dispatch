@@ -6,23 +6,15 @@ set -e
 
 CDP_PORT="${CDP_PORT:-9222}"
 
-# Check if Chrome is already running with debugging
-if lsof -i ":$CDP_PORT" >/dev/null 2>&1; then
-    echo "Chrome DevTools already running on port $CDP_PORT"
-    echo "To restart, close Chrome first or use a different port:"
-    echo "  CDP_PORT=9223 ./tools/mcp-browser-devtools/start-chrome.sh"
-    exit 0
-fi
-
 # Detect OS and Chrome path
 case "$(uname -s)" in
     Darwin)
         CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        USER_DATA_DIR="$HOME/Library/Application Support/Google/Chrome"
+        USER_DATA_DIR="$HOME/Library/Application Support/Google/Chrome-DevTools"
         ;;
     Linux)
         CHROME_PATH=$(which google-chrome || which chromium-browser || which chromium)
-        USER_DATA_DIR="$HOME/.config/google-chrome"
+        USER_DATA_DIR="$HOME/.config/google-chrome-devtools"
         ;;
     *)
         echo "Unsupported OS. Please start Chrome manually with:"
@@ -37,28 +29,64 @@ if [ ! -f "$CHROME_PATH" ] && [ ! -x "$CHROME_PATH" ]; then
     exit 1
 fi
 
+# Check if Chrome DevTools is already running on the port
+if lsof -i ":$CDP_PORT" >/dev/null 2>&1; then
+    echo "Chrome DevTools already running on port $CDP_PORT"
+    exit 0
+fi
+
+# If Chrome is running without debugging, kill it and restart with DevTools
+if pgrep -x "Google Chrome" >/dev/null 2>&1 || pgrep -f "Google Chrome" >/dev/null 2>&1; then
+    echo "Chrome is running without DevTools. Restarting with debugging enabled..."
+    # Gracefully quit first, then force kill any stragglers (helpers, GPU, renderer)
+    case "$(uname -s)" in
+        Darwin)
+            osascript -e 'quit app "Google Chrome"' 2>/dev/null || true
+            sleep 2
+            # Force kill any remaining Chrome processes (helpers linger and block restart)
+            pkill -9 -f "Google Chrome" 2>/dev/null || true
+            ;;
+        *)
+            pkill -f "Google Chrome" 2>/dev/null || true
+            sleep 1
+            pkill -9 -f "Google Chrome" 2>/dev/null || true
+            ;;
+    esac
+    # Wait for all Chrome processes to be gone
+    for i in $(seq 1 10); do
+        if ! pgrep -f "Google Chrome" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.5
+    done
+    sleep 1
+fi
+
 echo "Starting Chrome with DevTools on port $CDP_PORT..."
-echo "Chrome will open with your existing profile."
 echo ""
 
 # Start Chrome in background with debugging enabled
-# Using existing profile so you have your bookmarks, extensions, etc.
+# Uses a separate data dir (Chrome requires non-default for remote debugging)
 "$CHROME_PATH" \
     --remote-debugging-port="$CDP_PORT" \
     --user-data-dir="$USER_DATA_DIR" \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-session-crashed-bubble \
+    --noerrdialogs \
     >/dev/null 2>&1 &
 
-# Wait a moment for Chrome to start
-sleep 2
+# Wait for Chrome to start listening on the debug port (up to 10 seconds)
+for i in $(seq 1 20); do
+    if lsof -i ":$CDP_PORT" >/dev/null 2>&1; then
+        echo "Chrome DevTools ready on port $CDP_PORT"
+        echo ""
+        echo "You can now use browser_* tools in Claude Code."
+        exit 0
+    fi
+    sleep 0.5
+done
 
-# Verify it started
-if lsof -i ":$CDP_PORT" >/dev/null 2>&1; then
-    echo "Chrome DevTools ready on port $CDP_PORT"
-    echo ""
-    echo "You can now use browser_* tools in Claude Code."
-    echo "Try: 'Check the browser console for errors'"
-else
-    echo "Failed to start Chrome with DevTools."
-    echo "Try starting manually:"
-    echo "  \"$CHROME_PATH\" --remote-debugging-port=$CDP_PORT"
-fi
+echo "Failed to start Chrome with DevTools."
+echo "Try starting manually:"
+echo "  \"$CHROME_PATH\" --remote-debugging-port=$CDP_PORT"
