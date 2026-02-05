@@ -214,7 +214,7 @@ Deno.test(
     });
     assertEquals(result.success, true);
     if (result.success) {
-      assertEquals(result.data.modelId, "gpt-4o");
+      assertEquals(result.data.modelId, "claude-sonnet-4-5");
       assertEquals(result.data.isPublic, false);
     }
   }

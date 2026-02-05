@@ -35,13 +35,21 @@ function extractAppSlug(host: string, baseHost: string): string | null {
     return null;
   }
 
-  // Extract subdomain
-  const subdomain = hostWithoutPort.slice(
-    0,
-    hostWithoutPort.length - baseHost.length - 1
-  );
+  // If the host is exactly the base host (no subdomain), return null
+  if (hostWithoutPort === baseHost) {
+    return null;
+  }
 
-  // No subdomain (e.g., just "localhost")
+  // Ensure there's a dot separator before the base host (proper subdomain format)
+  const expectedDotPosition = hostWithoutPort.length - baseHost.length - 1;
+  if (expectedDotPosition < 0 || hostWithoutPort[expectedDotPosition] !== ".") {
+    return null;
+  }
+
+  // Extract subdomain (everything before the dot)
+  const subdomain = hostWithoutPort.slice(0, expectedDotPosition);
+
+  // No subdomain (e.g., just ".localhost")
   if (!subdomain || subdomain.length === 0) {
     return null;
   }
@@ -321,7 +329,7 @@ describe("Local Vanity Middleware Integration", () => {
     // Mock vanity middleware
     app.use("*", async (c, next) => {
       const baseHost = "localhost";
-      const host = c.req.header("host");
+      const host = c.req.header("host") || new URL(c.req.url).host;
 
       if (!host) {
         await next();
@@ -331,8 +339,8 @@ describe("Local Vanity Middleware Integration", () => {
       const appSlug = extractAppSlug(host, baseHost);
 
       if (appSlug) {
-        // Set X-App-ID header
-        c.req.raw.headers.set("X-App-ID", appSlug);
+        // Store app ID in context (headers may be immutable in test mode)
+        c.set("xAppId", appSlug);
         c.set("vanityAppSlug", appSlug);
 
         const originalPath = new URL(c.req.url).pathname;
@@ -384,7 +392,7 @@ describe("Local Vanity Middleware Integration", () => {
     app.get("/test/vanity-info", (c) => {
       return c.json({
         vanityAppSlug: c.get("vanityAppSlug") || null,
-        xAppId: c.req.header("X-App-ID") || null,
+        xAppId: c.get("xAppId") || null,
         rewrittenPath: c.get("rewrittenPath") || null,
       });
     });
@@ -392,6 +400,19 @@ describe("Local Vanity Middleware Integration", () => {
     // Health check (should not be rewritten)
     app.get("/health", (c) => {
       return c.json({ status: "ok" });
+    });
+
+    // Catch-all: return vanity info for paths that would be rewritten
+    app.all("*", (c) => {
+      const rewrittenPath = c.get("rewrittenPath");
+      if (rewrittenPath) {
+        return c.json({
+          vanityAppSlug: c.get("vanityAppSlug") || null,
+          xAppId: c.get("xAppId") || null,
+          rewrittenPath,
+        });
+      }
+      return c.json({ error: "Not found" }, 404);
     });
 
     return { app, forwardedRequests };

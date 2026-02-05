@@ -539,7 +539,7 @@ Deno.test(
     assertEquals(data.data.name, "Minimal App");
     assertEquals(data.data.description, null);
     assertEquals(data.data.systemPrompt, null);
-    assertEquals(data.data.modelId, "gpt-4o"); // Default
+    assertEquals(data.data.modelId, "claude-sonnet-4-5"); // Default
     assertEquals(data.data.isPublic, false); // Default
   }
 );

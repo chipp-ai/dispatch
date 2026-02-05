@@ -8,10 +8,11 @@
 import postgres from "postgres";
 import { closeDatabase } from "../src/db/client.ts";
 
-// Test database configuration
+// Test database configuration - prefer TEST_DATABASE_URL, fall back to DATABASE_URL (dev db)
 const TEST_DATABASE_URL =
   Deno.env.get("TEST_DATABASE_URL") ||
-  "postgres://postgres:test@localhost:5432/chipp_test";
+  Deno.env.get("DATABASE_URL") ||
+  "postgresql://postgres:postgres@localhost:5436/chipp_deno";
 
 let testSql: ReturnType<typeof postgres> | null = null;
 

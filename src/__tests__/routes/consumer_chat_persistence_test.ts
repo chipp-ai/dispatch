@@ -22,7 +22,12 @@ const TEST_APP_ID = "33333333-3333-3333-3333-333333333333";
 const TEST_CONSUMER_ID = "44444444-4444-4444-4444-444444444444";
 const TEST_SESSION_ID = "55555555-5555-5555-5555-555555555555";
 
-describe("Consumer Chat Persistence", () => {
+describe({
+  name: "Consumer Chat Persistence",
+  // Database connection pool creates timers/TCP that outlive tests
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   beforeAll(async () => {
     // Clean up any existing test data
     await cleanupTestData();

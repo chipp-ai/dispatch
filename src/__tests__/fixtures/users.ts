@@ -30,6 +30,9 @@ import {
   generateTestToken,
 } from "../setup.ts";
 
+// Re-export TestUser type for convenience
+export type { TestUser };
+
 // ========================================
 // Pre-defined Test Users (Lazy-loaded)
 // ========================================

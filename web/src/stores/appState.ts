@@ -95,7 +95,7 @@ function collectStores(): StoreSnapshot[] {
   stores.push({ name: "isWorkspaceLoading", value: safeGet(isWorkspaceLoading, false) });
 
   // Dev panel stores
-  stores.push({ name: "devPanel", value: serialize(safeGet(devPanel, {})) });
+  stores.push({ name: "devPanel", value: serialize(safeGet(devPanel, { isEnabled: false, isOpen: false, environment: "development" })) });
   stores.push({ name: "isDevPanelEnabled", value: safeGet(isDevPanelEnabled, false) });
   stores.push({ name: "isDevPanelOpen", value: safeGet(isDevPanelOpen, false) });
   stores.push({ name: "devPanelEnvironment", value: safeGet(devPanelEnvironment, "development") });
@@ -113,22 +113,22 @@ function collectStores(): StoreSnapshot[] {
     if (chatState) {
       // Extract key chat state without full message content (too verbose)
       const chatSummary = {
-        sessionId: (chatState as Record<string, unknown>).sessionId,
-        messageCount: Array.isArray((chatState as Record<string, unknown>).messages)
-          ? ((chatState as Record<string, unknown>).messages as unknown[]).length
+        sessionId: (chatState as unknown as Record<string, unknown>).sessionId,
+        messageCount: Array.isArray((chatState as unknown as Record<string, unknown>).messages)
+          ? ((chatState as unknown as Record<string, unknown>).messages as unknown[]).length
           : 0,
-        isStreaming: (chatState as Record<string, unknown>).isStreaming,
-        responseGenerating: (chatState as Record<string, unknown>).responseGenerating,
-        error: (chatState as Record<string, unknown>).error,
-        lastError: (chatState as Record<string, unknown>).lastError,
-        userCredits: (chatState as Record<string, unknown>).userCredits,
-        subscriptionActive: (chatState as Record<string, unknown>).subscriptionActive,
-        stagedFilesCount: Array.isArray((chatState as Record<string, unknown>).stagedFiles)
-          ? ((chatState as Record<string, unknown>).stagedFiles as unknown[]).length
+        isStreaming: (chatState as unknown as Record<string, unknown>).isStreaming,
+        responseGenerating: (chatState as unknown as Record<string, unknown>).responseGenerating,
+        error: (chatState as unknown as Record<string, unknown>).error,
+        lastError: (chatState as unknown as Record<string, unknown>).lastError,
+        userCredits: (chatState as unknown as Record<string, unknown>).userCredits,
+        subscriptionActive: (chatState as unknown as Record<string, unknown>).subscriptionActive,
+        stagedFilesCount: Array.isArray((chatState as unknown as Record<string, unknown>).stagedFiles)
+          ? ((chatState as unknown as Record<string, unknown>).stagedFiles as unknown[]).length
           : 0,
-        conversationFrozen: (chatState as Record<string, unknown>).conversationFrozen,
-        currentAppId: (chatState as Record<string, unknown>).currentAppId,
-        currentAppNameId: (chatState as Record<string, unknown>).currentAppNameId,
+        conversationFrozen: (chatState as unknown as Record<string, unknown>).conversationFrozen,
+        currentAppId: (chatState as unknown as Record<string, unknown>).currentAppId,
+        currentAppNameId: (chatState as unknown as Record<string, unknown>).currentAppNameId,
       };
       stores.push({ name: "consumerChat", value: serialize(chatSummary) });
     }
@@ -164,11 +164,11 @@ function collectStores(): StoreSnapshot[] {
     const dashState = safeGet(dashboardStore, null);
     if (dashState) {
       const dashSummary = {
-        appsCount: Array.isArray((dashState as Record<string, unknown>).apps)
-          ? ((dashState as Record<string, unknown>).apps as unknown[]).length
+        appsCount: Array.isArray((dashState as unknown as Record<string, unknown>).apps)
+          ? ((dashState as unknown as Record<string, unknown>).apps as unknown[]).length
           : 0,
-        isLoading: (dashState as Record<string, unknown>).isLoading,
-        error: (dashState as Record<string, unknown>).error,
+        isLoading: (dashState as unknown as Record<string, unknown>).isLoading,
+        error: (dashState as unknown as Record<string, unknown>).error,
       };
       stores.push({ name: "dashboard", value: serialize(dashSummary) });
     }
@@ -181,10 +181,10 @@ function collectStores(): StoreSnapshot[] {
 
   // WebSocket
   try {
-    const ws = safeGet(wsState, { connectionState: "disconnected" });
+    const ws = safeGet(wsState, { connectionState: "disconnected", lastConnected: null, reconnectAttempts: 0 });
     stores.push({ name: "wsState", value: serialize(ws) });
   } catch {
-    stores.push({ name: "wsState", value: { connectionState: "disconnected" } });
+    stores.push({ name: "wsState", value: { connectionState: "disconnected", lastConnected: null, reconnectAttempts: 0 } });
   }
 
   return stores;
@@ -229,15 +229,15 @@ function collectState() {
       : null,
     organization: $org
       ? {
-          id: ($org as Record<string, unknown>).id,
-          name: ($org as Record<string, unknown>).name,
-          subscriptionTier: ($org as Record<string, unknown>).subscriptionTier,
+          id: ($org as unknown as Record<string, unknown>).id,
+          name: ($org as unknown as Record<string, unknown>).name,
+          subscriptionTier: ($org as unknown as Record<string, unknown>).subscriptionTier,
         }
       : null,
     workspace: $workspace
       ? {
-          id: ($workspace as Record<string, unknown>).id,
-          name: ($workspace as Record<string, unknown>).name,
+          id: ($workspace as unknown as Record<string, unknown>).id,
+          name: ($workspace as unknown as Record<string, unknown>).name,
         }
       : null,
     modelOverride: $modelOverride,

@@ -47,6 +47,8 @@ import { integrationRoutes } from "./src/api/routes/integrations/index.ts";
 import { devRoutes } from "./src/api/routes/dev/index.ts";
 import { stripeRoutes } from "./src/api/routes/stripe/index.ts";
 import { webhookRoutes } from "./src/api/routes/webhooks/index.ts";
+import { actionCollectionRoutes } from "./src/api/routes/action-collections/index.ts";
+import { marketplaceRoutes } from "./src/api/routes/marketplace/index.ts";
 
 // Create Hono app with typed environment
 export const app = new Hono<AppEnv>();
@@ -184,6 +186,9 @@ app.route("/generate", generateRoutes);
 // End-user authentication and chat for published apps
 app.route("/consumer", consumerRoutes);
 
+// Marketplace routes (public, no auth required)
+app.route("/api/marketplace", marketplaceRoutes);
+
 // ====================
 // WebSocket Endpoint
 // ====================
@@ -227,6 +232,7 @@ api.route("/voice", voiceRoutes);
 api.route("/import", importRoutes);
 api.route("/integrations", integrationRoutes);
 api.route("/stripe", stripeRoutes);
+api.route("/action-collections", actionCollectionRoutes);
 api.route("/", customActionRoutes);
 
 // Note: Dev routes (/api/dev/*) are mounted earlier without auth middleware

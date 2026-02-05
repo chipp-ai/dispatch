@@ -84,6 +84,17 @@ import {
 const TEST_STRIPE_WEBHOOK_SECRET = "whsec_test_secret_for_unit_tests";
 const TEST_TWILIO_AUTH_TOKEN = "test_twilio_auth_token";
 
+// Set env vars so the webhook middleware can read them at request time
+if (!Deno.env.get("STRIPE_WEBHOOK_SECRET_LIVE")) {
+  Deno.env.set("STRIPE_WEBHOOK_SECRET_LIVE", TEST_STRIPE_WEBHOOK_SECRET);
+}
+if (!Deno.env.get("STRIPE_WEBHOOK_SECRET_TEST")) {
+  Deno.env.set("STRIPE_WEBHOOK_SECRET_TEST", TEST_STRIPE_WEBHOOK_SECRET);
+}
+if (!Deno.env.get("TWILIO_AUTH_TOKEN")) {
+  Deno.env.set("TWILIO_AUTH_TOKEN", TEST_TWILIO_AUTH_TOKEN);
+}
+
 // ========================================
 // Helper Functions
 // ========================================
