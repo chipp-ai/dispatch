@@ -8,9 +8,10 @@
   import { initWorkspace } from "./stores/workspace";
   import { initOrganization } from "./stores/organization";
   import { appBooted, markAppBooted } from "./stores/app";
-  import { Toaster, ErrorBoundary } from "./lib/design-system";
+  import { Toaster, ErrorBoundary, DevPanel } from "./lib/design-system";
   import SplashScreen from "./lib/design-system/components/SplashScreen.svelte";
   import { initDevConsoleCapture } from "./lib/debug/devConsoleCapture";
+  import { initAppStateTracking } from "./stores/appState";
   import ConsumerChat from "./routes/consumer/ConsumerChat.svelte";
 
   // Dev console capture cleanup
@@ -73,6 +74,9 @@
         batchSize: 5,
         flushInterval: 300,
       });
+
+      // Initialize app state tracking for MCP tools
+      initAppStateTracking();
     }
 
     // Skip all admin initialization for vanity subdomain - consumer auth/theming
@@ -109,6 +113,7 @@
 
 <ErrorBoundary>
   <Toaster />
+  <DevPanel />
 
   {#if vanitySlug}
     <!-- Vanity subdomain: render consumer chat directly, skip developer auth -->

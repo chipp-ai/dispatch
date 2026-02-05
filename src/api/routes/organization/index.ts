@@ -127,9 +127,25 @@ organizationRoutes.patch(
  */
 organizationRoutes.get("/payment-method-status", async (c) => {
   const user = c.get("user");
-  const context = await billingService.getOrganizationBillingContext(user.id);
-  const status = await billingService.getPaymentMethodStatus(context);
-  return c.json(status);
+  try {
+    const context = await billingService.getOrganizationBillingContext(user.id);
+    const status = await billingService.getPaymentMethodStatus(context);
+    return c.json(status);
+  } catch (error) {
+    // Handle Stripe customer not found gracefully
+    if (
+      error instanceof Error &&
+      (error.message.includes("No such customer") ||
+        error.message.includes("resource_missing"))
+    ) {
+      return c.json({
+        hasPaymentMethod: false,
+        paymentMethod: null,
+        error: "no_billing_account",
+      });
+    }
+    throw error;
+  }
 });
 
 /**
@@ -183,9 +199,26 @@ organizationRoutes.get("/invoice-preview", async (c) => {
  */
 organizationRoutes.get("/billing-topups", async (c) => {
   const user = c.get("user");
-  const context = await billingService.getOrganizationBillingContext(user.id);
-  const settings = await billingService.getTopupSettings(context);
-  return c.json(settings);
+  try {
+    const context = await billingService.getOrganizationBillingContext(user.id);
+    const settings = await billingService.getTopupSettings(context);
+    return c.json(settings);
+  } catch (error) {
+    // Handle Stripe customer not found gracefully
+    if (
+      error instanceof Error &&
+      (error.message.includes("No such customer") ||
+        error.message.includes("resource_missing"))
+    ) {
+      return c.json({
+        enabled: false,
+        threshold: null,
+        amount: null,
+        error: "no_billing_account",
+      });
+    }
+    throw error;
+  }
 });
 
 /**
@@ -225,3 +258,91 @@ organizationRoutes.post(
     return c.json(result);
   }
 );
+
+// ========================================
+// Subscription Management
+// ========================================
+
+// Validators for subscription management
+const scheduleDowngradeSchema = z.object({
+  targetTier: z.enum(["FREE", "PRO", "TEAM", "BUSINESS"]),
+});
+
+/**
+ * POST /organization/schedule-downgrade
+ * Schedule a subscription downgrade at the end of the billing period
+ *
+ * For v2 subscriptions, sets the pending downgrade tier without immediate change.
+ * The actual tier change happens at billing period end via Stripe webhooks.
+ */
+organizationRoutes.post(
+  "/schedule-downgrade",
+  zValidator("json", scheduleDowngradeSchema),
+  async (c) => {
+    const user = c.get("user");
+    const body = c.req.valid("json");
+
+    const context = await billingService.getOrganizationBillingContext(user.id);
+    const result = await billingService.scheduleDowngrade(
+      context,
+      body.targetTier
+    );
+    return c.json(result);
+  }
+);
+
+/**
+ * POST /organization/undo-downgrade
+ * Cancel a scheduled subscription downgrade
+ *
+ * Removes the pending downgrade, keeping the current tier.
+ */
+organizationRoutes.post("/undo-downgrade", async (c) => {
+  const user = c.get("user");
+
+  const context = await billingService.getOrganizationBillingContext(user.id);
+  const result = await billingService.undoDowngrade(context);
+  return c.json(result);
+});
+
+/**
+ * POST /organization/cancel-subscription
+ * Schedule subscription cancellation at the end of the billing period
+ *
+ * Marks the subscription for cancellation but maintains access until period end.
+ */
+organizationRoutes.post("/cancel-subscription", async (c) => {
+  const user = c.get("user");
+
+  const context = await billingService.getOrganizationBillingContext(user.id);
+  const result = await billingService.cancelSubscription(context);
+  return c.json(result);
+});
+
+/**
+ * POST /organization/undo-cancellation
+ * Remove a scheduled subscription cancellation
+ *
+ * Restores the subscription to active status.
+ */
+organizationRoutes.post("/undo-cancellation", async (c) => {
+  const user = c.get("user");
+
+  const context = await billingService.getOrganizationBillingContext(user.id);
+  const result = await billingService.undoCancellation(context);
+  return c.json(result);
+});
+
+/**
+ * GET /organization/subscription-status
+ * Get the current subscription status including any pending changes
+ *
+ * Returns current tier, pending downgrade/cancellation info, and billing period details.
+ */
+organizationRoutes.get("/subscription-status", async (c) => {
+  const user = c.get("user");
+
+  const context = await billingService.getOrganizationBillingContext(user.id);
+  const status = await billingService.getSubscriptionStatus(context);
+  return c.json(status);
+});

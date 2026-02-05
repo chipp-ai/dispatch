@@ -433,7 +433,20 @@ consumerChatRoutes.post(
         );
       }
 
-      const modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      // Determine model to use - check for dev override header first
+      const devModelOverride = c.req.header("X-Dev-Model-Override");
+      const environment = Deno.env.get("ENVIRONMENT") || "development";
+      const isDevOrStaging = ["development", "local", "staging"].includes(
+        environment
+      );
+
+      let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      if (isDevOrStaging && devModelOverride) {
+        console.log(
+          `[consumer-chat] Using dev model override: ${devModelOverride} (app default: ${modelId})`
+        );
+        modelId = devModelOverride;
+      }
 
       // Handle audio input: send natively to audio-capable models, else transcribe via Whisper
       let messageText = body.message;
@@ -1004,7 +1017,20 @@ consumerChatRoutes.post(
       // Save user message
       await chatService.addMessage(sessionId, "user", body.message);
 
-      const modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      // Determine model to use - check for dev override header first
+      const devModelOverride = c.req.header("X-Dev-Model-Override");
+      const environment = Deno.env.get("ENVIRONMENT") || "development";
+      const isDevOrStaging = ["development", "local", "staging"].includes(
+        environment
+      );
+
+      let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      if (isDevOrStaging && devModelOverride) {
+        console.log(
+          `[consumer-chat-nonstream] Using dev model override: ${devModelOverride} (app default: ${modelId})`
+        );
+        modelId = devModelOverride;
+      }
 
       // Build system prompt with knowledge base hint and current time
       let systemPrompt = appConfig.systemPrompt || "";

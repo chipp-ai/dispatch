@@ -1,0 +1,9 @@
+{
+  "name": "chipp-agents",
+  "version": "1.0.0",
+  "description": "Chipp-deno specific agents for PR review, Sentry investigation, and test generation",
+  "author": {
+    "name": "Chipp Team",
+    "email": "team@chipp.ai"
+  }
+}

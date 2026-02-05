@@ -11,6 +11,7 @@ export interface Organization {
   id: string;
   name: string;
   subscriptionTier: "FREE" | "PRO" | "TEAM" | "BUSINESS" | "ENTERPRISE";
+  subscriptionTrialEndsAt?: string | null;
   createdAt: string;
   updatedAt: string;
   pictureUrl?: string | null;
