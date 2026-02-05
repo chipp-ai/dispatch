@@ -21,12 +21,19 @@ type Mode = "TEST" | "LIVE";
 export const STRIPE_V2_API_VERSION =
   "2025-05-28.basil;checkout_product_catalog_preview=v1";
 
-// Determine if we're using test mode
-const isTestMode =
-  Deno.env.get("USE_STRIPE_TEST_MODE") === "true" ||
-  Deno.env.get("ENVIRONMENT") !== "production";
+// Explicit mode toggle - overrides environment-based detection
+// Set STRIPE_USE_LIVE_MODE=true to force live pricing plans in any environment
+const STRIPE_USE_LIVE_MODE = Deno.env.get("STRIPE_USE_LIVE_MODE") === "true";
 
-const currentMode: Mode = isTestMode ? "TEST" : "LIVE";
+// Determine if we're using test mode
+// Priority: STRIPE_USE_LIVE_MODE=true forces live mode, otherwise check environment
+const isProduction = Deno.env.get("ENVIRONMENT") === "production";
+const useLiveMode = STRIPE_USE_LIVE_MODE || isProduction;
+
+const currentMode: Mode = useLiveMode ? "LIVE" : "TEST";
+
+// Export for other modules to check
+export { useLiveMode as isLiveMode };
 
 // ========================================
 // Legacy Subscription Prices (for backwards compatibility)
@@ -193,21 +200,23 @@ export function isV2BillingPriceId(priceId: string): boolean {
 /**
  * Get the Stripe API key based on the current mode
  *
+ * Mode is determined by:
+ * 1. STRIPE_USE_LIVE_MODE=true forces live mode
+ * 2. ENVIRONMENT=production forces live mode
+ * 3. Otherwise uses sandbox/test mode
+ *
  * IMPORTANT: v2 billing APIs (pricing plans with bpp_* IDs) require Stripe Sandboxes.
  * They do NOT work with test mode (sk_test_*). See:
  * https://docs.stripe.com/billing/subscriptions/usage-based/pricing-plans
- *
- * - In non-production: Use STRIPE_SANDBOX_KEY (sandbox where bpp_test_* plans exist)
- * - In production: Use STRIPE_CHIPP_KEY (live key where bpp_* plans exist)
  */
 export function getStripeApiKey(): string {
-  // Production: use the live key
-  if (!isTestMode) {
+  // Live mode: use the live key
+  if (useLiveMode) {
     return Deno.env.get("STRIPE_CHIPP_KEY") || "";
   }
 
-  // Non-production: use sandbox key for v2 billing
-  // v2 APIs require sandboxes, not test mode
+  // Test mode: use sandbox key for v2 billing (bpp_test_* plans)
+  // v2 APIs require sandboxes, not regular test mode
   const sandboxKey = Deno.env.get("STRIPE_SANDBOX_KEY");
   if (sandboxKey) {
     return sandboxKey;

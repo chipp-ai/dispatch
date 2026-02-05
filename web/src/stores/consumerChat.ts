@@ -19,6 +19,7 @@ import type {
   SSEEvent,
   StagedFile,
 } from "$lib/design-system/components/chat/types";
+import { modelOverride } from "./modelOverride";
 
 // Re-export StagedFile so existing imports from this module continue to work
 export type { StagedFile } from "$lib/design-system/components/chat/types";
@@ -579,7 +580,10 @@ function createConsumerChatStore() {
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({
@@ -1031,7 +1035,10 @@ function createConsumerChatStore() {
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({
@@ -1263,7 +1270,10 @@ function createConsumerChatStore() {
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({

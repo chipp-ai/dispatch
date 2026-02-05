@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=$(echo \"$TOOL_INPUT\" | jq -r '.file_path // empty'); if [[ -n \"$file\" ]]; then if [[ \"$file\" =~ \\.(ts|tsx)$ ]]; then deno fmt --quiet \"$file\" 2>/dev/null || true; elif [[ \"$file\" =~ \\.svelte$ ]]; then npx prettier --write \"$file\" 2>/dev/null || true; fi; fi"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Read",
@@ -86,6 +99,13 @@
       "env": {
         "CDP_HOST": "localhost",
         "CDP_PORT": "9222"
+      }
+    },
+    "firecrawl": {
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp"],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     }
   }

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { user } from "../../../stores/auth";
   import { currentWorkspace } from "../../../stores/workspace";
+  import { toasts } from "$lib/design-system";
   import { formatDistanceToNow } from "date-fns";
 
   interface Source {
@@ -131,7 +132,7 @@
       );
     } catch (err) {
       console.error("Error refreshing source:", err);
-      alert("Failed to refresh source");
+      toasts.error("Error", "Failed to refresh source");
     } finally {
       refreshingIds.delete(sourceId);
       refreshingIds = refreshingIds;
@@ -170,7 +171,7 @@
       deleteSourceName = null;
     } catch (err) {
       console.error("Error deleting source:", err);
-      alert("Failed to delete source");
+      toasts.error("Error", "Failed to delete source");
     } finally {
       isDeleting = false;
     }
@@ -198,7 +199,7 @@
       showBulkDeleteModal = false;
     } catch (err) {
       console.error("Error deleting sources:", err);
-      alert("Failed to delete some sources");
+      toasts.error("Error", "Failed to delete some sources");
     } finally {
       isBulkDeleting = false;
     }

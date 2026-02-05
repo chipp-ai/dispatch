@@ -44,6 +44,9 @@ import { voiceRoutes } from "./src/api/routes/voice/index.ts";
 import { importRoutes } from "./src/api/routes/import/index.ts";
 import streamingTestRoutes from "./src/api/routes/dev/streaming-test.ts";
 import { integrationRoutes } from "./src/api/routes/integrations/index.ts";
+import { devRoutes } from "./src/api/routes/dev/index.ts";
+import { stripeRoutes } from "./src/api/routes/stripe/index.ts";
+import { webhookRoutes } from "./src/api/routes/webhooks/index.ts";
 
 // Create Hono app with typed environment
 export const app = new Hono<AppEnv>();
@@ -145,8 +148,15 @@ app.route("/", health);
 // Auth routes (login, callback, etc.)
 app.route("/auth", auth);
 
-// Webhook routes (Stripe, Twilio - have their own signature auth)
-app.route("/webhooks", webhooks);
+// Legacy webhook routes - DEPRECATED
+// The legacy handler at /webhooks/stripe is kept for backwards compatibility
+// during the transition period. New integrations should use /api/webhooks/stripe
+// TODO: Remove after confirming all Stripe webhook endpoints are updated
+// app.route("/webhooks", webhooks);
+
+// Webhook routes (Stripe, Twilio, etc. - have their own signature auth)
+// Primary webhook endpoint: /api/webhooks/stripe
+app.route("/api/webhooks", webhookRoutes);
 
 // Debug routes - ONLY available in local development, never in production or staging
 const isLocalDev =
@@ -155,6 +165,16 @@ const isLocalDev =
 if (isLocalDev) {
   app.route("/debug", debugRoutes);
   app.route("/dev", streamingTestRoutes);
+}
+
+// Dev API routes - available in development and staging, no auth required
+// These are called by MCP tools for testing (dev_set_tier, dev_reset_credits, etc.)
+const isDevOrStaging =
+  Deno.env.get("ENVIRONMENT") === "development" ||
+  Deno.env.get("ENVIRONMENT") === "local" ||
+  Deno.env.get("ENVIRONMENT") === "staging";
+if (isDevOrStaging) {
+  app.route("/api/dev", devRoutes);
 }
 
 // AI generation routes (public, no auth required)
@@ -206,7 +226,11 @@ api.route("/profile", profileRoutes);
 api.route("/voice", voiceRoutes);
 api.route("/import", importRoutes);
 api.route("/integrations", integrationRoutes);
+api.route("/stripe", stripeRoutes);
 api.route("/", customActionRoutes);
+
+// Note: Dev routes (/api/dev/*) are mounted earlier without auth middleware
+// so MCP tools can call them directly
 
 // Mount API
 app.route("/api", api);

@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "browser-devtools": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/mcp-browser-devtools/index.js"],
+      "env": {
+        "CDP_HOST": "localhost",
+        "CDP_PORT": "9222"
+      }
+    },
+    "dev-server": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/mcp-dev-server/index.js"],
+      "env": {}
+    },
+    "chipp-database": {
+      "type": "stdio",
+      "command": "deno",
+      "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
+      "env": {
+        "DATABASE_URL": "postgresql://postgres:supersecret@localhost:5433/chipp"
+      }
+    }
+  }
+}
