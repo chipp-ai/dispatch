@@ -182,7 +182,7 @@
       const response = await fetch("/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, otpCode: code }),
+        body: JSON.stringify({ email, password, otp: code }),
         credentials: "include",
       });
 
