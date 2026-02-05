@@ -57,7 +57,8 @@
     "@huggingface/transformers": "npm:@huggingface/transformers@^3.0.0",
     "jose": "npm:jose@^5.0.0",
     "date-fns": "npm:date-fns@^3.0.0",
-    "@google/genai": "npm:@google/genai@^1.0.0"
+    "@google/genai": "npm:@google/genai@^1.0.0",
+    "nodemailer": "npm:nodemailer@^6.0.0"
   },
   "compilerOptions": {
     "strict": true,
