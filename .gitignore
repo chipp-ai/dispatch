@@ -47,3 +47,5 @@ dump.rdb
 chipp-deno-secret.yaml
 *.pem
 *.key
+# MCP local config with credentials
+.mcp.local.json

@@ -1,5 +1,22 @@
 /**
- * Webhook Routes
+ * @deprecated This webhook handler is deprecated.
+ * Use /api/webhooks/stripe instead (src/api/routes/webhooks/stripe.ts)
+ * This file is kept for reference only.
+ *
+ * The primary webhook handler provides:
+ * - Full billing service integration
+ * - Better error handling
+ * - Support for live/test mode via STRIPE_WEBHOOK_SECRET_LIVE and STRIPE_WEBHOOK_SECRET_TEST
+ * - More comprehensive event handling
+ *
+ * Migration: Update your Stripe webhook endpoint from:
+ *   https://your-domain.com/webhooks/stripe
+ * to:
+ *   https://your-domain.com/api/webhooks/stripe
+ */
+
+/**
+ * Webhook Routes (LEGACY)
  *
  * Handles incoming webhooks from external services.
  */

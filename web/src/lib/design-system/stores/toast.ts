@@ -66,8 +66,11 @@ function createToastStore() {
     // Convenience methods
     success: (title: string, description?: string, duration = 5000) =>
       add({ title, description, variant: "success", duration }),
-    error: (title: string, description?: string, duration = 5000) =>
-      add({ title, description, variant: "error", duration }),
+    error: (title: string, description?: string, duration = 15000) => {
+      // Log to console so e2e-flow-tester agents can detect errors
+      console.error(`[TOAST_ERROR] ${title}${description ? `: ${description}` : ""}`);
+      return add({ title, description, variant: "error", duration });
+    },
     warning: (title: string, description?: string, duration = 5000) =>
       add({ title, description, variant: "warning", duration }),
     info: (title: string, description?: string, duration = 5000) =>

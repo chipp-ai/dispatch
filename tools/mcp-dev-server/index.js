@@ -24,8 +24,180 @@ import { join } from "path";
 const REPO_ROOT = process.env.REPO_ROOT || process.cwd();
 const LOGS_DIR = join(REPO_ROOT, ".scratch", "logs");
 
+// App state file path
+const APP_STATE_FILE = join(REPO_ROOT, ".scratch", "app-state.md");
+
+// API base URL for dev server
+const API_BASE_URL = process.env.DEV_API_URL || "http://localhost:8000";
+
+// Helper to make authenticated API calls
+async function callDevApi(path, options = {}) {
+  const url = `${API_BASE_URL}${path}`;
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        // Note: In dev mode, we bypass auth for these endpoints
+        // or use a dev token. The API checks ENVIRONMENT !== 'production'
+        ...options.headers,
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return { error: data.error || `API returned ${response.status}`, status: response.status };
+    }
+
+    return data;
+  } catch (error) {
+    return { error: `Failed to call API: ${error.message}`, url };
+  }
+}
+
 // Tool definitions
 const tools = [
+  {
+    name: "dev_app_state",
+    description:
+      "Get the current state of the running SPA. Returns route, user, organization, subscription tier, workspace, and other context. Useful for understanding what page Claude is looking at.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "dev_set_tier",
+    description:
+      "Set the subscription tier for an organization. Useful for testing tier-gated features. Use dev_app_state first to get the organizationId of the logged-in user.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tier: {
+          type: "string",
+          enum: ["FREE", "PRO", "TEAM", "BUSINESS", "ENTERPRISE"],
+          description: "The subscription tier to set",
+        },
+        organizationId: {
+          type: "string",
+          description: "The organization ID to update. If not specified, updates the first organization in the database.",
+        },
+      },
+      required: ["tier"],
+    },
+  },
+  {
+    name: "dev_reset_credits",
+    description:
+      "Reset consumer credits for testing credit exhaustion flows. Sets the credit balance to the specified amount.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        credits: {
+          type: "number",
+          description: "Number of credits to set (default: 100)",
+        },
+      },
+    },
+  },
+  {
+    name: "dev_trigger_ws_event",
+    description:
+      "Trigger WebSocket events to test real-time UI updates. Events are sent to connected browser clients.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: {
+          type: "string",
+          enum: [
+            "message.new",
+            "typing.start",
+            "typing.stop",
+            "credits.updated",
+            "subscription.changed",
+          ],
+          description: "The event type to trigger",
+        },
+        payload: {
+          type: "object",
+          description:
+            "Optional payload data. For message.new: {content, sessionId}. For credits.updated: {balance, threshold}. For subscription.changed: {tier}.",
+        },
+        userId: {
+          type: "string",
+          description:
+            "Target user ID. If not provided, uses the authenticated user.",
+        },
+      },
+      required: ["event"],
+    },
+  },
+  {
+    name: "dev_simulate_webhook",
+    description:
+      "Simulate Stripe webhook events without going through Stripe. Calls the same handlers that real webhooks trigger.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: {
+          type: "string",
+          enum: [
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+            "invoice.payment_failed",
+            "invoice.paid",
+            "checkout.session.completed",
+            "billing.alert.triggered",
+            "charge.dispute.created",
+            "charge.dispute.closed",
+            "charge.refunded",
+          ],
+          description: "The Stripe webhook event to simulate",
+        },
+        customerId: {
+          type: "string",
+          description:
+            "Stripe customer ID (e.g., 'cus_xxx'). If provided, uses this real customer ID to find the organization in the database.",
+        },
+        data: {
+          type: "object",
+          description:
+            "Optional event data. Can include: subscriptionId, status, amountPaid, currency, priceId, tier, metadata.",
+        },
+      },
+      required: ["event"],
+    },
+  },
+  {
+    name: "dev_inject_error",
+    description:
+      "Inject errors for testing error handling UI. The injected error affects API calls for the specified duration.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["rate_limit", "auth_failure", "network_timeout", "server_error"],
+          description:
+            "Error type: rate_limit (429), auth_failure (401), network_timeout (30s delay), server_error (500)",
+        },
+        duration: {
+          type: "number",
+          description: "Duration in milliseconds (default: 5000, max: 60000)",
+        },
+      },
+      required: ["type"],
+    },
+  },
+  {
+    name: "dev_clear_errors",
+    description: "Clear all injected errors immediately.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
   {
     name: "dev_server_restart",
     description:
@@ -70,6 +242,11 @@ const tools = [
           type: "string",
           description: "Search pattern (case-insensitive regex)",
         },
+        file: {
+          type: "string",
+          enum: ["server", "browser", "all"],
+          description: "Which log file to search: server, browser, or all (default: server)",
+        },
         limit: {
           type: "number",
           description: "Maximum number of matches to return (default: 50)",
@@ -89,6 +266,11 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
+        file: {
+          type: "string",
+          enum: ["server", "browser", "all"],
+          description: "Which log file to check: server, browser, or all (default: all)",
+        },
         limit: {
           type: "number",
           description: "Maximum number of errors to return (default: 20)",
@@ -104,10 +286,15 @@ const tools = [
   {
     name: "dev_logs_tail",
     description:
-      "Get the last N lines from the most recent log file. Good for seeing current activity.",
+      "Get the last N lines from a log file. Good for seeing current activity.",
     inputSchema: {
       type: "object",
       properties: {
+        file: {
+          type: "string",
+          enum: ["server", "browser"],
+          description: "Which log file to tail: server (default) or browser",
+        },
         lines: {
           type: "number",
           description: "Number of lines to return (default: 100)",
@@ -277,6 +464,184 @@ function findErrors(filePath, limit = 20) {
 // Tool handlers
 async function handleTool(name, args) {
   switch (name) {
+    case "dev_set_tier": {
+      const { tier, organizationId } = args;
+      if (!tier) {
+        return { error: "tier is required" };
+      }
+
+      const body = { tier };
+      if (organizationId) body.organizationId = organizationId;
+
+      const result = await callDevApi("/api/dev/set-tier", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        tier,
+        organization: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_reset_credits": {
+      const credits = args.credits ?? 100;
+
+      const result = await callDevApi("/api/dev/reset-credits", {
+        method: "POST",
+        body: JSON.stringify({ credits }),
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        credits,
+        data: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_trigger_ws_event": {
+      const { event, payload, userId } = args;
+      if (!event) {
+        return { error: "event is required" };
+      }
+
+      const body = { event };
+      if (payload) body.payload = payload;
+      if (userId) body.userId = userId;
+
+      const result = await callDevApi("/api/dev/trigger-ws-event", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        event,
+        data: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_simulate_webhook": {
+      const { event, customerId, data } = args;
+      if (!event) {
+        return { error: "event is required" };
+      }
+
+      const body = { event };
+      if (customerId) body.customerId = customerId;
+      if (data) body.data = data;
+
+      const result = await callDevApi("/api/dev/simulate-webhook", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        event,
+        customerId: customerId || result.data?.customerId,
+        data: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_inject_error": {
+      const { type, duration } = args;
+      if (!type) {
+        return { error: "type is required" };
+      }
+
+      const body = { type };
+      if (duration !== undefined) body.duration = duration;
+
+      const result = await callDevApi("/api/dev/inject-error", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        type,
+        data: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_clear_errors": {
+      const result = await callDevApi("/api/dev/inject-error", {
+        method: "DELETE",
+      });
+
+      if (result.error) {
+        return result;
+      }
+
+      return {
+        success: true,
+        data: result.data,
+        message: result.message,
+      };
+    }
+
+    case "dev_app_state": {
+      // Read the app state file written by the SPA
+      if (!existsSync(APP_STATE_FILE)) {
+        return {
+          error: "App state file not found",
+          hint: "Open the SPA in a browser to populate app state. The SPA writes its state to .scratch/app-state.md",
+          file: APP_STATE_FILE,
+        };
+      }
+
+      try {
+        const stat = statSync(APP_STATE_FILE);
+        const content = readFileSync(APP_STATE_FILE, "utf-8");
+        const ageMs = Date.now() - stat.mtime.getTime();
+        const ageSeconds = Math.floor(ageMs / 1000);
+
+        // Add staleness warning if file is old
+        let staleness = "";
+        if (ageSeconds > 60) {
+          const ageMinutes = Math.floor(ageSeconds / 60);
+          staleness = `\n\n> **Warning:** State is ${ageMinutes} minute${ageMinutes > 1 ? "s" : ""} old. The SPA may not be running or state tracking may not be initialized.`;
+        } else if (ageSeconds > 10) {
+          staleness = `\n\n> State updated ${ageSeconds} seconds ago.`;
+        }
+
+        return {
+          markdown: content + staleness,
+          lastModified: stat.mtime.toISOString(),
+          ageSeconds,
+        };
+      } catch (e) {
+        return { error: `Failed to read app state: ${e.message}` };
+      }
+    }
+
     case "dev_server_restart": {
       const component = args.component || "all";
       const results = { components: [], success: true };
@@ -435,10 +800,19 @@ async function handleTool(name, args) {
       const pattern = args.pattern;
       const limit = args.limit || 50;
       const context = args.context || 2;
+      const fileFilter = args.file || "server";
 
-      const files = getLogFiles();
+      // Get files based on filter
+      let files = getLogFiles();
+      if (fileFilter === "server") {
+        files = files.filter(f => f.name === "server.log");
+      } else if (fileFilter === "browser") {
+        files = files.filter(f => f.name === "browser.log");
+      }
+      // "all" uses all files
+
       if (files.length === 0) {
-        return { error: "No log files found", logsDir: LOGS_DIR };
+        return { error: `No ${fileFilter} log files found`, logsDir: LOGS_DIR };
       }
 
       const results = [];
@@ -474,15 +848,24 @@ async function handleTool(name, args) {
     case "dev_logs_errors": {
       const limit = args.limit || 20;
       const since = parseTimeAgo(args.since);
+      const fileFilter = args.file || "all";
 
       let files = getLogFiles();
+
+      // Filter by file type
+      if (fileFilter === "server") {
+        files = files.filter(f => f.name === "server.log");
+      } else if (fileFilter === "browser") {
+        files = files.filter(f => f.name === "browser.log");
+      }
+      // "all" uses all files
 
       if (since) {
         files = files.filter((f) => f.modified >= since);
       }
 
       if (files.length === 0) {
-        return { error: "No matching log files found", logsDir: LOGS_DIR };
+        return { error: `No matching ${fileFilter} log files found`, logsDir: LOGS_DIR };
       }
 
       const allErrors = [];
@@ -508,22 +891,23 @@ async function handleTool(name, args) {
 
     case "dev_logs_tail": {
       const lines = args.lines || 100;
+      const fileType = args.file || "server";
+      const fileName = fileType === "browser" ? "browser.log" : "server.log";
+      const filePath = join(LOGS_DIR, fileName);
 
-      const files = getLogFiles();
-      if (files.length === 0) {
-        return { error: "No log files found", logsDir: LOGS_DIR };
+      if (!existsSync(filePath)) {
+        return { error: `Log file not found: ${fileName}`, logsDir: LOGS_DIR };
       }
 
-      const file = files[0]; // Most recent
-
       try {
-        const content = readFileSync(file.path, "utf-8");
+        const stat = statSync(filePath);
+        const content = readFileSync(filePath, "utf-8");
         const allLines = content.split("\n");
         const tailLines = allLines.slice(-lines);
 
         return {
-          file: file.name,
-          modified: file.modified.toISOString(),
+          file: fileName,
+          modified: stat.mtime.toISOString(),
           totalLines: allLines.length,
           showing: tailLines.length,
           content: tailLines.join("\n"),

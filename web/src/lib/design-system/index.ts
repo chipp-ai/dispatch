@@ -84,6 +84,9 @@ export { default as TableCaption } from "./components/TableCaption.svelte";
 export { default as Toast } from "./components/Toast.svelte";
 export { default as Toaster } from "./components/Toaster.svelte";
 
+// Dev tools
+export { default as DevPanel } from "./components/DevPanel.svelte";
+
 // Error handling
 export { default as ErrorBoundary } from "./components/ErrorBoundary.svelte";
 export {
