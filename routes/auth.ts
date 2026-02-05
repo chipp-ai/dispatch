@@ -47,7 +47,10 @@ const COOKIE_DOMAIN =
   Deno.env.get("ENVIRONMENT") === "production" ? ".chipp.ai" : undefined;
 
 // Internal API key for server-to-server authentication
-const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY");
+// Read at request time (not module load time) so tests can set it after import
+function getInternalApiKey(): string | undefined {
+  return Deno.env.get("INTERNAL_API_KEY");
+}
 
 // ============================================================
 // Embedded Context Detection (for iframe auth)
@@ -1434,7 +1437,8 @@ auth.post("/provision", async (c) => {
   try {
     // Verify internal API key for server-to-server authentication
     const internalAuth = c.req.header("X-Internal-Auth");
-    if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+    const apiKey = getInternalApiKey();
+    if (!apiKey || internalAuth !== apiKey) {
       throw new HTTPException(401, {
         message: "Internal authentication required",
       });
@@ -1489,7 +1493,8 @@ auth.post("/session-create", async (c) => {
   try {
     // Verify internal API key for server-to-server authentication
     const internalAuth = c.req.header("X-Internal-Auth");
-    if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+    const apiKey = getInternalApiKey();
+    if (!apiKey || internalAuth !== apiKey) {
       throw new HTTPException(401, {
         message: "Internal authentication required",
       });

@@ -9,7 +9,8 @@ if (!Deno.env.get("DENO_DATABASE_URL") && !Deno.env.get("PG_DATABASE_URL")) {
   Deno.env.set(
     "DENO_DATABASE_URL",
     Deno.env.get("TEST_DATABASE_URL") ||
-      "postgres://postgres:test@localhost:5432/chipp_test"
+      Deno.env.get("DATABASE_URL") ||
+      "postgresql://postgres:postgres@localhost:5436/chipp_deno"
   );
 }
 
@@ -124,7 +125,7 @@ describe("Application Service", () => {
         creatorId: user.id,
       });
 
-      assertEquals(app.model, "gpt-4o"); // Default from schema
+      assertEquals(app.model, "claude-sonnet-4-5"); // Default from config/models.ts
     });
   });
 

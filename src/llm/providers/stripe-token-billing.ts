@@ -1135,7 +1135,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
           content: m.content,
         };
       })
-      .filter((m): m is NonNullable<typeof m> => m !== null);
+      .filter((m): m is NonNullable<typeof m> => m !== null) as unknown as OpenAI.Chat.ChatCompletionMessageParam[];
   }
 
   private formatTools(tools: Tool[]): OpenAI.Chat.ChatCompletionTool[] {

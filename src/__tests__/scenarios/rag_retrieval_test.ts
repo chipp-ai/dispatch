@@ -612,8 +612,8 @@ describe("RAG Retrieval Scenarios", () => {
 
       assert(chunks.length > 0);
       // Verify content is preserved
-      const allContent = chunks
-        .map((c: { content: string }) => c.content)
+      const allContent = (chunks as unknown as Array<{ content: string }>)
+        .map((c) => c.content)
         .join(" ");
       assert(
         allContent.includes("Machine learning") ||

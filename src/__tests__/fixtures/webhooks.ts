@@ -55,6 +55,7 @@ export interface SlackWebhookEvent {
     ts: string;
     channel: string;
     event_ts: string;
+    thread_ts?: string;
   };
   type: string;
   event_id: string;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Claude Code startup script for chipp-deno - handles auth and proxies
-# Usage: ./scripts/claude-start.sh [--yolo] [--continue|-c]
+# Usage: ./scripts/claude-start.sh [--yolo] [--continue|-c] [--check]
 
 set -e
 
@@ -13,6 +13,8 @@ NC='\033[0m' # No Color
 YOLO_MODE=false
 CONTINUE_MODE=false
 
+CHECK_MODE=false
+
 for arg in "$@"; do
     case $arg in
         --yolo)
@@ -20,6 +22,9 @@ for arg in "$@"; do
             ;;
         --continue|-c)
             CONTINUE_MODE=true
+            ;;
+        --check)
+            CHECK_MODE=true
             ;;
     esac
 done
@@ -32,14 +37,145 @@ GKE_CLUSTER="production"
 GKE_REGION="us-central1"
 PROJECT_ID="chippai-398019"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+DB_PORT=5436
+DB_USER=postgres
+DB_PASS=postgres
+DB_NAME=chipp_deno
+DB_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:${DB_PORT}/${DB_NAME}"
+DB_BRANCH_FILE="$REPO_DIR/.scratch/.db-branch"
+
 echo "=========================================="
 echo " Claude Code Startup (chipp-deno)"
 echo "=========================================="
 
 # ============================================
-# 1. Check GCloud Auth (Service Account preferred)
+# 1. Local Database (Docker + Migrations)
 # ============================================
-echo -e "\n${YELLOW}[1/7] Checking GCloud authentication...${NC}"
+echo -e "\n${YELLOW}[1/8] Checking local database...${NC}"
+
+# Ensure .scratch directory exists
+mkdir -p "$REPO_DIR/.scratch"
+
+# Check if Docker is available
+if ! command -v docker &> /dev/null; then
+    echo -e "${RED}ERROR: Docker not installed. Database requires Docker.${NC}"
+    echo -e "${RED}Install Docker Desktop: https://www.docker.com/products/docker-desktop${NC}"
+    # Non-fatal - continue without database
+else
+    # Check if postgres container is reachable
+    DB_REACHABLE=false
+    if pg_isready -h localhost -p $DB_PORT -U $DB_USER -q 2>/dev/null; then
+        DB_REACHABLE=true
+    fi
+
+    if ! $DB_REACHABLE; then
+        echo -e "${YELLOW}Database not reachable on port ${DB_PORT}. Starting Docker...${NC}"
+
+        # Check if Docker daemon is running
+        if ! docker info &> /dev/null 2>&1; then
+            echo -e "${RED}Docker daemon not running. Please start Docker Desktop.${NC}"
+        else
+            # Start the dev database containers
+            (cd "$REPO_DIR" && docker compose -f docker-compose.dev.yml up -d 2>&1 | tail -3)
+
+            # Wait for postgres to be healthy (up to 30s)
+            echo -n "  Waiting for PostgreSQL..."
+            for i in $(seq 1 30); do
+                if pg_isready -h localhost -p $DB_PORT -U $DB_USER -q 2>/dev/null; then
+                    DB_REACHABLE=true
+                    break
+                fi
+                echo -n "."
+                sleep 1
+            done
+            echo ""
+
+            if $DB_REACHABLE; then
+                echo -e "${GREEN}PostgreSQL ready on port ${DB_PORT}${NC}"
+            else
+                echo -e "${RED}PostgreSQL failed to start within 30s${NC}"
+            fi
+        fi
+    else
+        echo -e "${GREEN}PostgreSQL already running on port ${DB_PORT}${NC}"
+    fi
+
+    # Run migrations if database is reachable
+    if $DB_REACHABLE; then
+        CURRENT_BRANCH=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        LAST_MIGRATED_BRANCH=""
+        if [[ -f "$DB_BRANCH_FILE" ]]; then
+            LAST_MIGRATED_BRANCH=$(cat "$DB_BRANCH_FILE")
+        fi
+
+        # Detect branch switch
+        BRANCH_SWITCHED=false
+        if [[ -n "$LAST_MIGRATED_BRANCH" ]] && [[ "$LAST_MIGRATED_BRANCH" != "$CURRENT_BRANCH" ]]; then
+            BRANCH_SWITCHED=true
+            echo -e "${YELLOW}Branch changed: ${LAST_MIGRATED_BRANCH} -> ${CURRENT_BRANCH}${NC}"
+        fi
+
+        # Ensure DATABASE_URL is in .env for deno task db:migrate (which uses --env)
+        if [[ -f "$REPO_DIR/.env" ]]; then
+            if ! grep -q "^DATABASE_URL=.*localhost:${DB_PORT}" "$REPO_DIR/.env" 2>/dev/null; then
+                # Update DATABASE_URL to point to local dev database
+                if grep -q "^DATABASE_URL=" "$REPO_DIR/.env"; then
+                    sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=${DB_URL}|" "$REPO_DIR/.env"
+                else
+                    echo "DATABASE_URL=${DB_URL}" >> "$REPO_DIR/.env"
+                fi
+                echo -e "${YELLOW}Updated .env DATABASE_URL to local dev database${NC}"
+            fi
+        fi
+
+        # Run migrations
+        echo -e "  Applying pending migrations..."
+        MIGRATE_OUTPUT=$(cd "$REPO_DIR" && DENO_NO_PACKAGE_JSON=1 DATABASE_URL="$DB_URL" deno task db:migrate 2>&1)
+        MIGRATE_EXIT=$?
+
+        if [[ $MIGRATE_EXIT -eq 0 ]]; then
+            if echo "$MIGRATE_OUTPUT" | grep -q "No pending migrations"; then
+                echo -e "${GREEN}Database up to date (no pending migrations)${NC}"
+            else
+                APPLIED_COUNT=$(echo "$MIGRATE_OUTPUT" | grep -c "✓ Applied:" || true)
+                echo -e "${GREEN}Applied ${APPLIED_COUNT} migration(s)${NC}"
+            fi
+            # Record successful migration branch
+            echo "$CURRENT_BRANCH" > "$DB_BRANCH_FILE"
+        else
+            echo -e "${RED}Migration failed!${NC}"
+            if $BRANCH_SWITCHED; then
+                echo -e "${YELLOW}This likely happened because branch '${LAST_MIGRATED_BRANCH}' had different migrations.${NC}"
+                echo -e "${YELLOW}Resetting local database (no real data to lose)...${NC}"
+
+                # Reset: drop and recreate database, then re-migrate
+                PGPASSWORD=$DB_PASS psql -h localhost -p $DB_PORT -U $DB_USER -c "DROP DATABASE IF EXISTS ${DB_NAME};" 2>/dev/null
+                PGPASSWORD=$DB_PASS psql -h localhost -p $DB_PORT -U $DB_USER -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null
+
+                RETRY_OUTPUT=$(cd "$REPO_DIR" && DENO_NO_PACKAGE_JSON=1 DATABASE_URL="$DB_URL" deno task db:migrate 2>&1)
+                RETRY_EXIT=$?
+
+                if [[ $RETRY_EXIT -eq 0 ]]; then
+                    echo -e "${GREEN}Database reset and migrations applied successfully${NC}"
+                    echo "$CURRENT_BRANCH" > "$DB_BRANCH_FILE"
+                else
+                    echo -e "${RED}Migration failed even after reset. Check migration files:${NC}"
+                    echo "$RETRY_OUTPUT" | tail -5
+                fi
+            else
+                echo -e "${RED}Migration error (same branch). Check migration files:${NC}"
+                echo "$MIGRATE_OUTPUT" | tail -5
+            fi
+        fi
+    fi
+fi
+
+# ============================================
+# 2. Check GCloud Auth (Service Account preferred)
+# ============================================
+echo -e "\n${YELLOW}[2/8] Checking GCloud authentication...${NC}"
 
 # Check if gcloud is installed
 if ! command -v gcloud &> /dev/null; then
@@ -86,9 +222,9 @@ if [[ "$CURRENT_PROJECT" != "chippai-398019" ]]; then
 fi
 
 # ============================================
-# 2. Check 1Password Auth (optional)
+# 3. Check 1Password Auth (optional)
 # ============================================
-echo -e "\n${YELLOW}[2/7] Checking 1Password authentication...${NC}"
+echo -e "\n${YELLOW}[3/8] Checking 1Password authentication...${NC}"
 
 if command -v op &> /dev/null; then
     # Try to list vaults - if it fails, we need to sign in
@@ -109,9 +245,9 @@ else
 fi
 
 # ============================================
-# 3. Configure kubectl (GKE access)
+# 4. Configure kubectl (GKE access)
 # ============================================
-echo -e "\n${YELLOW}[3/7] Configuring kubectl for GKE...${NC}"
+echo -e "\n${YELLOW}[4/8] Configuring kubectl for GKE...${NC}"
 
 if command -v kubectl &> /dev/null; then
     # Check if we have the new service account with GKE permissions
@@ -135,9 +271,9 @@ else
 fi
 
 # ============================================
-# 4. Set up GitHub Token for MCP
+# 5. Set up GitHub Token for MCP
 # ============================================
-echo -e "\n${YELLOW}[4/7] Setting up GitHub token for MCP...${NC}"
+echo -e "\n${YELLOW}[5/8] Setting up GitHub token for MCP...${NC}"
 
 if command -v gh &> /dev/null; then
     if gh auth status &> /dev/null 2>&1; then
@@ -155,12 +291,9 @@ else
 fi
 
 # ============================================
-# 5. Install MCP Tool Dependencies
+# 6. Install MCP Tool Dependencies
 # ============================================
-echo -e "\n${YELLOW}[5/7] Checking MCP tool dependencies...${NC}"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
+echo -e "\n${YELLOW}[6/8] Checking MCP tool dependencies...${NC}"
 
 # Install dependencies for local MCP tools (if not already installed)
 MCP_TOOLS=("tools/mcp-browser-devtools" "tools/mcp-dev-server")
@@ -176,9 +309,9 @@ done
 echo -e "${GREEN}MCP tools ready${NC}"
 
 # ============================================
-# 6. Start Chrome with DevTools (for browser MCP tools)
+# 7. Start Chrome with DevTools (for browser MCP tools)
 # ============================================
-echo -e "\n${YELLOW}[6/7] Starting Chrome with DevTools...${NC}"
+echo -e "\n${YELLOW}[7/8] Starting Chrome with DevTools...${NC}"
 
 CHROME_SCRIPT="$REPO_DIR/tools/mcp-browser-devtools/start-chrome.sh"
 if [[ -x "$CHROME_SCRIPT" ]]; then
@@ -194,9 +327,9 @@ else
 fi
 
 # ============================================
-# 7. Configure Vanta MCP Server (optional)
+# 8. Configure Vanta MCP Server (optional)
 # ============================================
-echo -e "\n${YELLOW}[7/7] Checking Vanta MCP server...${NC}"
+echo -e "\n${YELLOW}[8/8] Checking Vanta MCP server...${NC}"
 
 VANTA_SETUP_SCRIPT="$REPO_DIR/scripts/setup-vanta-mcp.sh"
 VANTA_CREDENTIALS="$HOME/.config/vanta/credentials.json"
@@ -220,6 +353,11 @@ fi
 # ============================================
 # Launch Claude Code
 # ============================================
+if $CHECK_MODE; then
+    echo -e "\n${GREEN}All checks passed. (--check mode, not launching Claude)${NC}"
+    exit 0
+fi
+
 echo -e "\n${GREEN}Launching Claude Code...${NC}"
 echo ""
 

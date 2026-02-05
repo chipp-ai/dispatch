@@ -154,7 +154,7 @@ function truncateWithSemanticMeaning(text: string, maxLength: number): string {
 async function shouldStartNewSession(sessionId: string): Promise<boolean> {
   const SESSION_TIMEOUT_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
-  const messages = await chatService.getSessionMessages(sessionId, 1);
+  const messages = await chatService.getSessionMessages(sessionId);
   if (messages.length === 0) return false;
 
   const lastMessage = messages[0];
@@ -241,7 +241,7 @@ export async function handleWhatsAppMessage(
   try {
     // Get app config first (needed for language)
     const appConfig = await chatService.getAppConfig(applicationId);
-    const language = appConfig.language || "EN";
+    const language = "EN";
 
     // Check if this is a text message or media message
     const { type: mediaType, media: mediaObject } =
@@ -358,7 +358,7 @@ export async function handleWhatsAppMessage(
     });
 
     // Get previous messages (last 10, like chipp-admin)
-    const history = await chatService.getSessionMessages(sessionId, 10);
+    const history = await chatService.getSessionMessages(sessionId);
     const hasKnowledge = await hasKnowledgeSources(applicationId);
 
     // Save user message
@@ -414,26 +414,31 @@ export async function handleWhatsAppMessage(
 
     // Create LLM adapter with billing
     const modelId = appConfig.model || DEFAULT_MODEL_ID;
-    const adapter = await createAdapterWithBilling(modelId, {
-      organizationId: billingContext.organizationId,
-      applicationId,
-      sessionId,
-      subscriptionTier: billingContext.subscriptionTier,
-      usageBasedBillingEnabled: billingContext.usageBasedBillingEnabled,
-    });
+    const adapter = await createAdapterWithBilling(modelId, billingContext);
 
     // Create tool registry
     const registry = createRegistry();
 
     // Register tools
-    registerCoreTools(registry);
+    registerCoreTools(registry, { appId: applicationId });
 
     if (hasKnowledge) {
-      registerRAGTools(registry, applicationId);
+      registerRAGTools(registry, {
+        appId: applicationId,
+        searchKnowledge: async (
+          appId: string,
+          query: string,
+          limit: number
+        ) => {
+          const { getRelevantChunks } = await import("./rag.service.ts");
+          const chunks = await getRelevantChunks(appId, query);
+          return chunks.slice(0, limit);
+        },
+      });
     }
 
     // Register custom actions
-    const customActions = await customActionService.list(applicationId);
+    const customActions = await customActionService.listForApp(applicationId);
     if (customActions.length > 0) {
       const execContext: ExecutionContext = {
         applicationId,
@@ -448,25 +453,17 @@ export async function handleWhatsAppMessage(
 
     // Run agent loop
     console.log("[WhatsAppChat] Running agent loop", { correlationId });
-    const response = await agentLoop({
-      adapter,
-      registry,
+    let responseText = "";
+    for await (const chunk of agentLoop(messages, registry, adapter, {
+      model: modelId,
+      temperature: appConfig.temperature ?? 0.7,
       systemPrompt,
-      messages,
       maxIterations: 10,
-    });
-
-    // Extract text response
-    const responseText =
-      typeof response.content === "string"
-        ? response.content
-        : response.content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                part.type === "text"
-            )
-            .map((part) => part.text)
-            .join("\n");
+    })) {
+      if (chunk.type === "text") {
+        responseText += chunk.delta;
+      }
+    }
 
     console.log("[WhatsAppChat] Got response", {
       correlationId,

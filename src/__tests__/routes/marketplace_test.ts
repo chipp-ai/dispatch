@@ -795,9 +795,9 @@ describe("Marketplace API", () => {
       const responses = await Promise.all(requests);
 
       // All should succeed or fail consistently
-      const statuses = responses.map((r) => r.status);
+      const statuses = responses.map((r: Response) => r.status);
       assert(
-        statuses.every((s) => s === 200 || s === 404),
+        statuses.every((s: number) => s === 200 || s === 404),
         "All concurrent requests should complete successfully"
       );
     });
