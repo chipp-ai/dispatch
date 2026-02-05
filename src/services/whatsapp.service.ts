@@ -186,6 +186,27 @@ export async function upsertConfig(data: {
 }
 
 /**
+ * Check if a phone number is already in use by another application.
+ * Returns the conflicting applicationId if found, null otherwise.
+ */
+export async function checkDuplicatePhoneNumber(
+  phoneNumberId: string,
+  excludeApplicationId: string
+): Promise<string | null> {
+  const encryptedPhoneNumberId = await encrypt(phoneNumberId);
+
+  const existing = await db
+    .selectFrom("app.whatsapp_configs")
+    .select("applicationId")
+    .where("phoneNumberId", "=", encryptedPhoneNumberId)
+    .where("applicationId", "!=", excludeApplicationId)
+    .where("isDeleted", "=", false)
+    .executeTakeFirst();
+
+  return existing?.applicationId ?? null;
+}
+
+/**
  * Soft delete a WhatsApp config
  */
 export async function softDeleteConfig(applicationId: string): Promise<void> {
@@ -375,6 +396,7 @@ export const whatsappService = {
   upsertConfig,
   softDeleteConfig,
   getDecryptedCredentials,
+  checkDuplicatePhoneNumber,
 
   // WhatsApp API
   sendTextMessage,

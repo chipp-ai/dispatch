@@ -817,7 +817,7 @@ export interface SlackUserTable {
 // ========================================
 
 export interface WhatsAppConfigTable {
-  id: Generated<number>;
+  id: Generated<string>;
   applicationId: string; // UUID reference to Application
   phoneNumberId: string; // Encrypted - WhatsApp Phone Number ID
   businessAccountId: string; // Encrypted - WhatsApp Business Account ID
