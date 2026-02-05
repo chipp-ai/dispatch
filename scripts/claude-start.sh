@@ -93,8 +93,14 @@ echo -e "\n${YELLOW}[2/7] Checking 1Password authentication...${NC}"
 if command -v op &> /dev/null; then
     # Try to list vaults - if it fails, we need to sign in
     if ! op vault list &> /dev/null 2>&1; then
-        echo -e "${YELLOW}1Password session expired. Please authenticate:${NC}"
-        eval $(op signin)
+        if [[ -n "$OP_PASSWORD" ]]; then
+            echo -e "${YELLOW}Signing in to 1Password using OP_PASSWORD...${NC}"
+            eval $(echo "$OP_PASSWORD" | op signin 2>/dev/null) || eval $(op signin)
+        else
+            echo -e "${YELLOW}1Password session expired. Please authenticate:${NC}"
+            echo -e "${YELLOW}TIP: Set OP_PASSWORD in your shell to skip this prompt${NC}"
+            eval $(op signin)
+        fi
     else
         echo -e "${GREEN}1Password auth valid${NC}"
     fi
@@ -177,7 +183,7 @@ echo -e "\n${YELLOW}[6/7] Starting Chrome with DevTools...${NC}"
 CHROME_SCRIPT="$REPO_DIR/tools/mcp-browser-devtools/start-chrome.sh"
 if [[ -x "$CHROME_SCRIPT" ]]; then
     # Run start-chrome.sh but capture output to avoid cluttering the startup
-    CHROME_OUTPUT=$("$CHROME_SCRIPT" 2>&1)
+    CHROME_OUTPUT=$("$CHROME_SCRIPT" 2>&1) || true
     if echo "$CHROME_OUTPUT" | grep -q "already running\|DevTools ready"; then
         echo -e "${GREEN}Chrome DevTools ready on port 9222${NC}"
     else
