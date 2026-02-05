@@ -9,6 +9,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it, beforeEach } from "jsr:@std/testing/bdd";
 import {
   sendOtpEmail,
+  sendPasswordResetEmail,
   _testing,
   type EmailContext,
 } from "./transactional-email.service.ts";
@@ -134,6 +135,110 @@ describe("Transactional Email Service", { sanitizeResources: false, sanitizeOps:
         // Check that the log includes the subject format
         const subjectLog = logs.find((l) => l.includes("555555") && l.includes("Test App"));
         assertEquals(!!subjectLog, true, `Expected log with '555555' and 'Test App', got: ${logs.join(" | ")}`);
+      } finally {
+        console.log = origLog;
+        if (origHost) Deno.env.set("SMTP_HOST", origHost);
+        if (origUser) Deno.env.set("SMTP_USERNAME", origUser);
+        if (origPass) Deno.env.set("SMTP_PASSWORD", origPass);
+        _testing.resetTransport();
+      }
+    });
+  });
+
+  describe("passwordResetTemplate", () => {
+    it("generates HTML with the reset URL as a button", () => {
+      const result = _testing.passwordResetTemplate("https://example.com/reset?token=abc123", defaultContext);
+
+      assertStringIncludes(result.html, "https://example.com/reset?token=abc123");
+      assertStringIncludes(result.html, "Reset Your Password");
+      assertStringIncludes(result.html, "Reset Password");
+      assertStringIncludes(result.html, "1 hour");
+    });
+
+    it("uses brand color for the reset button", () => {
+      const result = _testing.passwordResetTemplate("https://example.com/reset", defaultContext);
+
+      assertStringIncludes(result.html, "background-color: #FF5733");
+    });
+
+    it("falls back to black when no brand color provided", () => {
+      const noBrandContext = { ...defaultContext, brandColor: "" };
+      const result = _testing.passwordResetTemplate("https://example.com/reset", noBrandContext);
+
+      assertStringIncludes(result.html, "background-color: #000000");
+    });
+
+    it("includes app name in footer", () => {
+      const result = _testing.passwordResetTemplate("https://example.com/reset", defaultContext);
+
+      assertStringIncludes(result.html, "Test App");
+      assertStringIncludes(result.text, "Test App");
+    });
+
+    it("generates plain text fallback with reset URL", () => {
+      const result = _testing.passwordResetTemplate("https://example.com/reset?token=xyz", defaultContext);
+
+      assertStringIncludes(result.text, "https://example.com/reset?token=xyz");
+      assertStringIncludes(result.text, "Reset Your Password");
+      assertStringIncludes(result.text, "1 hour");
+    });
+
+    it("includes timer emoji before expiry message", () => {
+      const result = _testing.passwordResetTemplate("https://example.com/reset", defaultContext);
+
+      assertStringIncludes(result.html, "\u23F1\uFE0F This link expires in 1 hour");
+    });
+  });
+
+  describe("sendPasswordResetEmail (no SMTP configured)", () => {
+    it("returns true when SMTP is not configured (dev fallback)", async () => {
+      const origHost = Deno.env.get("SMTP_HOST");
+      const origUser = Deno.env.get("SMTP_USERNAME");
+      const origPass = Deno.env.get("SMTP_PASSWORD");
+      Deno.env.delete("SMTP_HOST");
+      Deno.env.delete("SMTP_USERNAME");
+      Deno.env.delete("SMTP_PASSWORD");
+
+      try {
+        const result = await sendPasswordResetEmail({
+          to: "user@example.com",
+          resetUrl: "https://example.com/reset?token=test",
+          context: defaultContext,
+        });
+
+        assertEquals(result, true);
+      } finally {
+        if (origHost) Deno.env.set("SMTP_HOST", origHost);
+        if (origUser) Deno.env.set("SMTP_USERNAME", origUser);
+        if (origPass) Deno.env.set("SMTP_PASSWORD", origPass);
+        _testing.resetTransport();
+      }
+    });
+
+    it("formats subject with app name", async () => {
+      const logs: string[] = [];
+      const origLog = console.log;
+      console.log = (...args: unknown[]) => {
+        logs.push(JSON.stringify(args));
+      };
+
+      const origHost = Deno.env.get("SMTP_HOST");
+      const origUser = Deno.env.get("SMTP_USERNAME");
+      const origPass = Deno.env.get("SMTP_PASSWORD");
+      Deno.env.delete("SMTP_HOST");
+      Deno.env.delete("SMTP_USERNAME");
+      Deno.env.delete("SMTP_PASSWORD");
+      _testing.resetTransport();
+
+      try {
+        await sendPasswordResetEmail({
+          to: "user@example.com",
+          resetUrl: "https://example.com/reset?token=test",
+          context: defaultContext,
+        });
+
+        const subjectLog = logs.find((l) => l.includes("Reset your Test App password"));
+        assertEquals(!!subjectLog, true, `Expected log with 'Reset your Test App password', got: ${logs.join(" | ")}`);
       } finally {
         console.log = origLog;
         if (origHost) Deno.env.set("SMTP_HOST", origHost);
