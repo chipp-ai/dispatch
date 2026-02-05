@@ -22,6 +22,23 @@
       "env": {
         "DATABASE_URL": "postgresql://postgres:supersecret@localhost:5433/chipp"
       }
+    },
+    "kubernetes": {
+      "type": "stdio",
+      "command": "mcp-server-kubernetes",
+      "env": {
+        "ALLOW_ONLY_NON_DESTRUCTIVE_TOOLS": "false"
+      }
+    },
+    "sentry": {
+      "_note": "Sentry MCP for error monitoring. Auth token from: https://sentry.io/settings/account/api/auth-tokens/",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-sentry@latest"],
+      "env": {
+        "SENTRY_AUTH_TOKEN": "${SENTRY_AUTH_TOKEN}",
+        "SENTRY_ORG": "chippai"
+      }
     }
   }
 }
