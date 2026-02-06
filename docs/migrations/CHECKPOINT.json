@@ -35,6 +35,12 @@
       "startedAt": "2026-02-05T04:00:00Z",
       "completedAt": "2026-02-05T04:30:00Z",
       "summary": "Comprehensive Slack integration exploration: 6 database models (SlackInstallation, SlackChatMapping, SlackOAuthState, SlackThreadContext, SlackUser, SlackChatSessionUser), OAuth v2 flow with per-app credentials, ~2000-line event handler with signature verification/deduplication/thread management/LLM emoji reactions/channel context enrichment/Slack-specific tools, interactive admin actions (ban/block), manifest generation, markdown-to-mrkdwn conversion. ChippDeno already has near-complete implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment, Slack-specific tools. Report at docs/migrations/slack-chippmono.md"
+    },
+    "email-integration": {
+      "status": "explore-complete",
+      "startedAt": "2026-02-05T21:00:00Z",
+      "completedAt": "2026-02-05T21:30:00Z",
+      "summary": "Email integration gap analysis: ChippDeno already has near-complete implementation with better architecture (fire-and-forget vs Temporal workflows) and better UI (multi-step wizard vs tabbed dialog). 7 gaps identified: missing whitelist table verification, duplicate inbound email validation, consumer upsert for email senders, credential encryption at rest, thread message count updates, feature flag gating, deduplication scalability. Report saved to docs/migrations/email-chippmono.md"
     }
   },
 
@@ -59,8 +65,8 @@
     "summary": "Comprehensive developer/builder signup flow: 3 auth paths (email+password, OTP, OAuth), entity creation sequence (Developer->Workspace->WorkspaceHQ->Organization->StripeCustomer->FreeSubscription), post-login provisioning, onboarding v2 (4-step wizard), signup tracking/analytics, domain intelligence, white-label support, all 12 key source files documented."
   },
 
-  "activeMigration": "slack-integration",
-  "lastUpdated": "2026-02-05T20:00:00Z",
+  "activeMigration": "email-integration",
+  "lastUpdated": "2026-02-05T21:30:00Z",
 
   "stripe-webhooks": {
     "phases": {
@@ -363,5 +369,61 @@
     }
   },
 
-  "resumeInstructions": "SLACK EXPLORATION COMPLETE. Report at docs/migrations/slack-chippmono.md. ChippDeno already has near-complete Slack implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment (LLM decides whether to fetch channel history), Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory). WhatsApp implementation gaps also pending. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service). Feature survey at docs/migrations/feature-survey.md (40 features). Developer signup flow refactored to use userProvisioningService + SMTP2GO emails."
+  "email-integration": {
+    "phases": {
+      "explore": {
+        "status": "complete",
+        "components": {
+          "chippmono-email": {
+            "status": "complete",
+            "report": "docs/migrations/email-chippmono.md",
+            "completedAt": "2026-02-05T21:30:00Z",
+            "summary": "Full exploration of ChippMono email: Postmark-based, 2 infrastructure modes (shared/custom domain), Temporal 4-step workflow, encrypted credentials, feature flag gating, whitelist, RFC 5322 threading, consumer upsert. ChippDeno already has near-complete implementation with better architecture. 7 gaps identified."
+          }
+        }
+      },
+      "implement": {
+        "status": "pending",
+        "components": {
+          "whitelist-table-verification": {
+            "status": "pending",
+            "tasks": ["Verify app.email_whitelist table exists or create migration"],
+            "priority": "high"
+          },
+          "duplicate-email-validation": {
+            "status": "pending",
+            "tasks": ["Ensure POST /config checks inbound_email_address uniqueness across apps"],
+            "priority": "high"
+          },
+          "consumer-upsert": {
+            "status": "pending",
+            "tasks": ["Add consumer record creation for email senders in handleEmailMessage()"],
+            "priority": "medium"
+          },
+          "credential-encryption": {
+            "status": "pending",
+            "tasks": ["Encrypt postmark_server_token, webhook_username, webhook_password at rest"],
+            "priority": "medium"
+          },
+          "thread-count-update": {
+            "status": "pending",
+            "tasks": ["Increment message_count after successful reply"],
+            "priority": "low"
+          },
+          "feature-flag-gating": {
+            "status": "pending",
+            "tasks": ["Add feature flag or tier gating if needed"],
+            "priority": "low"
+          },
+          "dedup-scalability": {
+            "status": "pending",
+            "tasks": ["Move deduplication from in-memory Set to database/shared cache"],
+            "priority": "low"
+          }
+        }
+      }
+    }
+  },
+
+  "resumeInstructions": "EMAIL EXPLORATION COMPLETE. Report at docs/migrations/email-chippmono.md. SLACK EXPLORATION COMPLETE. Report at docs/migrations/slack-chippmono.md. ChippDeno already has near-complete Slack implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment (LLM decides whether to fetch channel history), Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory). WhatsApp implementation gaps also pending. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service). Feature survey at docs/migrations/feature-survey.md (40 features). Developer signup flow refactored to use userProvisioningService + SMTP2GO emails."
 }
