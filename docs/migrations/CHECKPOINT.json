@@ -38,8 +38,29 @@
     }
   },
 
+  "featureSurvey": {
+    "status": "complete",
+    "completedAt": "2026-02-05T10:00:00Z",
+    "report": "docs/migrations/feature-survey.md",
+    "summary": "Comprehensive survey of 40 feature areas in ChippMono. 10 high priority, 16 medium priority, 14 low priority. Many features have partial foundations in ChippDeno."
+  },
+
+  "otp-authentication": {
+    "status": "explore-complete",
+    "startedAt": "2026-02-05T18:00:00Z",
+    "report": "docs/migrations/otp-authentication.md",
+    "summary": "Comprehensive OTP auth system documentation: 3 contexts (developer, consumer, landing), SMTP email with HTML templates, white-label branding, i18n, feature flags. ChippDeno consumer flow already implemented but missing email sending. Developer OTP not yet built."
+  },
+
+  "developer-signup-flow": {
+    "status": "explore-complete",
+    "startedAt": "2026-02-05T20:00:00Z",
+    "report": "docs/migrations/developer-signup-flow.md",
+    "summary": "Comprehensive developer/builder signup flow: 3 auth paths (email+password, OTP, OAuth), entity creation sequence (Developer->Workspace->WorkspaceHQ->Organization->StripeCustomer->FreeSubscription), post-login provisioning, onboarding v2 (4-step wizard), signup tracking/analytics, domain intelligence, white-label support, all 12 key source files documented."
+  },
+
   "activeMigration": "slack-integration",
-  "lastUpdated": "2026-02-05T04:30:00Z",
+  "lastUpdated": "2026-02-05T20:00:00Z",
 
   "stripe-webhooks": {
     "phases": {
@@ -342,5 +363,5 @@
     }
   },
 
-  "resumeInstructions": "SLACK EXPLORATION COMPLETE. Report at docs/migrations/slack-chippmono.md. ChippDeno already has near-complete Slack implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment (LLM decides whether to fetch channel history), Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory). WhatsApp implementation gaps also pending. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service)."
+  "resumeInstructions": "SLACK EXPLORATION COMPLETE. Report at docs/migrations/slack-chippmono.md. ChippDeno already has near-complete Slack implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment (LLM decides whether to fetch channel history), Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory). WhatsApp implementation gaps also pending. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service). Feature survey at docs/migrations/feature-survey.md (40 features). Developer signup flow refactored to use userProvisioningService + SMTP2GO emails."
 }
