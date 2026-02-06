@@ -58,6 +58,23 @@ function getSplashScreenMediaQuery(size: SplashScreenSize): string {
 }
 
 /**
+ * Safely parse brandStyles which may be returned as a JSON string from the DB.
+ * See CLAUDE.md "JSON Columns Return as Strings" for context.
+ */
+// deno-lint-ignore no-explicit-any
+function parseBrandStyles(brandStyles: unknown): Record<string, any> {
+  if (!brandStyles) return {};
+  if (typeof brandStyles === "string") {
+    try {
+      return JSON.parse(brandStyles);
+    } catch {
+      return {};
+    }
+  }
+  return brandStyles as Record<string, any>;
+}
+
+/**
  * Check if text should be light on this background
  */
 function shouldUseLightText(bgColor: string): boolean {
@@ -209,7 +226,36 @@ function generateFallbackSVG(
 }
 
 /**
- * Generate simple splash screen SVG
+ * Determine if a color should use a dark background for splash screens.
+ * Hue-aware: warm colors (yellow/orange, hue 25-65) use a lower threshold
+ * because they appear visually lighter than their luminance suggests.
+ */
+function shouldUseDarkBackground(hex: string): boolean {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+  // Calculate hue for warm color detection
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let hue = 0;
+  if (max !== min) {
+    const d = max - min;
+    if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) hue = ((b - r) / d + 2) * 60;
+    else hue = ((r - g) / d + 4) * 60;
+  }
+
+  // Warm colors (yellow-orange, hue 25-65) get lower threshold
+  const threshold = hue >= 25 && hue <= 65 ? 0.35 : 0.5;
+  return luminance > threshold;
+}
+
+/**
+ * Generate splash screen SVG with grid pattern and radial gradient atmosphere.
+ * Matches ChippMono's visual fidelity with 60px grid overlay and dual gradient glow.
  */
 function generateSplashSVG(
   width: number,
@@ -218,26 +264,73 @@ function generateSplashSVG(
   appName: string,
   logoUrl?: string
 ): string {
-  const bgColor = shouldUseLightText(primaryColor) ? "#FFFFFF" : "#000000";
-  const textColor = shouldUseLightText(primaryColor) ? "#000000" : "#FFFFFF";
-  const logoSize = Math.min(width, height) * 0.2;
-  const fontSize = Math.min(width, height) * 0.05;
+  const useDarkBg = shouldUseDarkBackground(primaryColor);
+  const bgColor = useDarkBg ? "#0A0A0A" : "#FFFFFF";
+  const gridStroke = useDarkBg
+    ? "rgba(255,255,255,0.3)"
+    : "rgba(0,0,0,0.3)";
+  const logoSize = Math.min(width, height) * 0.3;
+  const logoRadius = logoSize * 0.2;
 
   // Sanitize user inputs to prevent XSS
-  const safeAppName = escapeForXML(appName);
   const safeInitial = escapeForXML(appName.charAt(0).toUpperCase());
   const sanitizedLogoUrl = sanitizeImageUrl(logoUrl);
 
-  // If we have a valid logo URL, include it
+  const logoX = (width - logoSize) / 2;
+  const logoY = (height - logoSize) / 2;
+
+  // Logo element - image with rounded clip, or letter-in-square fallback
+  const clipId = "logoClip";
   const logoElement = sanitizedLogoUrl
-    ? `<image href="${sanitizedLogoUrl}" x="${(width - logoSize) / 2}" y="${(height - logoSize) / 2 - fontSize}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" />`
-    : `<rect x="${(width - logoSize) / 2}" y="${(height - logoSize) / 2 - fontSize}" width="${logoSize}" height="${logoSize}" rx="${logoSize * 0.15}" fill="${primaryColor}" />
-       <text x="${width / 2}" y="${height / 2 - fontSize / 2}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="${logoSize * 0.4}" font-weight="600" fill="white" text-anchor="middle" dominant-baseline="central">${safeInitial}</text>`;
+    ? `<defs>
+        <clipPath id="${clipId}">
+          <rect x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}" rx="${logoRadius}" />
+        </clipPath>
+      </defs>
+      <image href="${sanitizedLogoUrl}" x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" clip-path="url(#${clipId})" />`
+    : `<rect x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}" rx="${logoRadius}" fill="${primaryColor}" />
+       <text x="${width / 2}" y="${logoY + logoSize / 2}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="${logoSize * 0.4}" font-weight="600" fill="white" text-anchor="middle" dominant-baseline="central">${safeInitial}</text>`;
 
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
     <rect width="${width}" height="${height}" fill="${bgColor}" />
+
+    <!-- Grid pattern overlay (60px grid, matches ChippMono) -->
+    <defs>
+      <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+        <path d="M 60 0 L 0 0 0 60" fill="none" stroke="${gridStroke}" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <rect width="${width}" height="${height}" fill="url(#grid)" opacity="0.75"/>
+
+    <!-- Bottom-left radial gradient (brand color atmosphere) -->
+    <defs>
+      <radialGradient id="blGrad" cx="0%" cy="100%" r="65%">
+        <stop offset="0%" stop-color="${primaryColor}" stop-opacity="0.352"/>
+        <stop offset="20%" stop-color="${primaryColor}" stop-opacity="0.307"/>
+        <stop offset="30%" stop-color="${primaryColor}" stop-opacity="0.201"/>
+        <stop offset="45%" stop-color="${primaryColor}" stop-opacity="0.106"/>
+        <stop offset="70%" stop-color="${primaryColor}" stop-opacity="0.008"/>
+        <stop offset="80%" stop-color="${primaryColor}" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect width="${width}" height="${height}" fill="url(#blGrad)" />
+
+    <!-- Top-right radial gradient (brand color atmosphere) -->
+    <defs>
+      <radialGradient id="trGrad" cx="100%" cy="0%" r="75%">
+        <stop offset="0%" stop-color="${primaryColor}" stop-opacity="0.462"/>
+        <stop offset="20%" stop-color="${primaryColor}" stop-opacity="0.347"/>
+        <stop offset="40%" stop-color="${primaryColor}" stop-opacity="0.231"/>
+        <stop offset="60%" stop-color="${primaryColor}" stop-opacity="0.116"/>
+        <stop offset="80%" stop-color="${primaryColor}" stop-opacity="0.058"/>
+        <stop offset="100%" stop-color="${primaryColor}" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect width="${width}" height="${height}" fill="url(#trGrad)" />
+
+    <!-- Logo (centered) -->
     ${logoElement}
-    <text x="${width / 2}" y="${height / 2 + logoSize / 2 + fontSize}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="${fontSize}" font-weight="500" fill="${textColor}" text-anchor="middle">${safeAppName}</text>
   </svg>`;
 }
 
@@ -255,11 +348,16 @@ pwaRoutes.get("/:appNameId/manifest.json", async (c) => {
     const application = await resolveApp(appNameId);
     if (!application) {
       console.error("[pwa] Application not found for manifest", { appNameId });
+      Sentry.captureMessage("[consumer-pwa] Application not found for manifest", {
+        level: "error",
+        tags: { source: "consumer-pwa", feature: "manifest" },
+        extra: { appNameId },
+      });
       return c.json({ error: "Application not found" }, 404);
     }
 
     const primaryColor =
-      (application.brandStyles as any)?.primaryColor || "#F9DB00";
+      parseBrandStyles(application.brandStyles).primaryColor || "#F9DB00";
     const backgroundColor = shouldUseLightText(primaryColor)
       ? "#FFFFFF"
       : "#000000";
@@ -392,8 +490,8 @@ pwaRoutes.get("/:appNameId/pwa/icon/:size", async (c) => {
     }
 
     const primaryColor =
-      (application.brandStyles as any)?.primaryColor || "#F9DB00";
-    const logoUrl = (application.brandStyles as any)?.logoUrl;
+      parseBrandStyles(application.brandStyles).primaryColor || "#F9DB00";
+    const logoUrl = parseBrandStyles(application.brandStyles).logoUrl;
 
     // If app has a logo, try to proxy it
     // SECURITY: Validate URL before fetching to prevent SSRF attacks
@@ -491,8 +589,8 @@ pwaRoutes.get("/:appNameId/pwa/splash/:dimensions", async (c) => {
     }
 
     const primaryColor =
-      (application.brandStyles as any)?.primaryColor || "#F9DB00";
-    const logoUrl = (application.brandStyles as any)?.logoUrl;
+      parseBrandStyles(application.brandStyles).primaryColor || "#F9DB00";
+    const logoUrl = parseBrandStyles(application.brandStyles).logoUrl;
     const appName = application.name || "App";
 
     // Check for pre-generated splash screens

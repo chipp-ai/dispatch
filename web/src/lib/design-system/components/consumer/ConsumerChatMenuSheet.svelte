@@ -6,6 +6,7 @@
    * Rendered at page level to avoid z-index stacking issues with the header.
    */
   import { createEventDispatcher } from 'svelte';
+  import { captureException } from '$lib/sentry';
   import Sheet from '../Sheet.svelte';
   import ChatHistoryView from './ChatHistoryView.svelte';
   import InstallAppButton from './InstallAppButton.svelte';
@@ -126,7 +127,10 @@
       await navigator.clipboard.writeText(shareUrl);
       dispatch('shareChat');
     } catch (e) {
-      console.error('Failed to copy share link:', e);
+      captureException(e, {
+        tags: { feature: "consumer-chat-menu" },
+        extra: { action: "copy-share-link", sessionId },
+      });
     }
     closeMenu();
   }
@@ -158,7 +162,10 @@
         window.location.href = data.url;
       }
     } catch (e) {
-      console.error('Failed to open billing portal:', e);
+      captureException(e, {
+        tags: { feature: "consumer-chat-menu" },
+        extra: { action: "open-billing-portal", appNameId },
+      });
     } finally {
       manageLoading = false;
     }

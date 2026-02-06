@@ -358,3 +358,10 @@ hr {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Mobile bottom nav spacing - prevents content from being hidden behind fixed bottom nav */
+@media (max-width: 767px) {
+  body {
+    padding-bottom: 56px;
+  }
+}

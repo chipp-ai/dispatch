@@ -6,6 +6,7 @@
  */
 
 import { writable, derived, get } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 // ========================================
 // Types
@@ -16,6 +17,9 @@ export type TaskStatus = "pending" | "active" | "completed";
 export interface TaskItem {
   id: string;
   name: string;
+  pendingName: string;
+  activeName: string;
+  completedName: string;
   description: string;
   icon: string;
   status: TaskStatus;
@@ -69,50 +73,71 @@ export const ANIMATION_TIMING = {
 
 const DEFAULT_TASKS: TaskItem[] = [
   {
-    id: "analyze",
-    name: "Analyze Your Idea",
+    id: "app-details",
+    name: "Create Your App",
+    pendingName: "Create Your App",
+    activeName: "Creating Your App",
+    completedName: "Created Your App",
     description: "Understanding your vision",
     icon: "💡",
     status: "pending",
   },
   {
-    id: "design",
-    name: "Design Logo Concept",
+    id: "logo-description",
+    name: "Design Your Logo",
+    pendingName: "Design Your Logo",
+    activeName: "Designing Your Logo",
+    completedName: "Designed Your Logo",
     description: "Creating visual identity",
     icon: "🎨",
     status: "pending",
   },
   {
-    id: "personality",
-    name: "Craft AI Personality",
+    id: "system-prompt",
+    name: "Build AI Personality",
+    pendingName: "Build AI Personality",
+    activeName: "Building AI Personality",
+    completedName: "Built AI Personality",
     description: "Defining capabilities",
     icon: "🤖",
     status: "pending",
   },
   {
-    id: "starters",
+    id: "conversation-starters",
     name: "Add Conversation Starters",
+    pendingName: "Add Conversation Starters",
+    activeName: "Adding Conversation Starters",
+    completedName: "Added Conversation Starters",
     description: "Suggested questions",
     icon: "💬",
     status: "pending",
   },
   {
-    id: "welcome",
-    name: "Create Welcome Message",
+    id: "starting-message",
+    name: "Craft Welcome Message",
+    pendingName: "Craft Welcome Message",
+    activeName: "Crafting Welcome Message",
+    completedName: "Crafted Welcome Message",
     description: "First impression",
     icon: "👋",
     status: "pending",
   },
   {
-    id: "logo",
-    name: "Generate Logo",
-    description: "AI-powered design",
+    id: "create-app",
+    name: "Build Your App",
+    pendingName: "Build Your App",
+    activeName: "Building Your App",
+    completedName: "Built Your App",
+    description: "AI-powered creation",
     icon: "✨",
     status: "pending",
   },
   {
     id: "finalize",
     name: "Finalize Your App",
+    pendingName: "Finalize Your App",
+    activeName: "Finalizing Your App",
+    completedName: "Finalized Your App",
     description: "Bringing it all together",
     icon: "🚀",
     status: "pending",
@@ -263,18 +288,36 @@ async function createApplication(params: {
   description: string;
   workspaceId: string;
   systemPrompt: string;
-  suggestions?: string[];
+  primaryColor?: string;
+  suggestedMessages?: string[];
+  welcomeMessages?: string[];
+  creationSource?: string;
 }): Promise<{ id: string; [key: string]: any }> {
+  const body: Record<string, unknown> = {
+    name: params.name,
+    description: params.description,
+    workspaceId: params.workspaceId,
+    systemPrompt: params.systemPrompt,
+  };
+
+  if (params.primaryColor) {
+    body.brandStyles = { primaryColor: params.primaryColor };
+  }
+  if (params.suggestedMessages?.length) {
+    body.suggestedMessages = params.suggestedMessages;
+  }
+  if (params.welcomeMessages?.length) {
+    body.welcomeMessages = params.welcomeMessages;
+  }
+  if (params.creationSource) {
+    body.creationSource = params.creationSource;
+  }
+
   const response = await fetch("/api/applications", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({
-      name: params.name,
-      description: params.description,
-      workspaceId: params.workspaceId,
-      systemPrompt: params.systemPrompt,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -384,7 +427,7 @@ function createAppGeneratorStore() {
         description: appDetailsData.appDescription,
         primaryColor: appDetailsData.primaryColor,
       });
-      updateTask("analyze", "completed", appDetailsData.appTitle);
+      updateTask("app-details", "completed", appDetailsData.appTitle);
 
       // Step 2: Design logo concept
       await new Promise((r) =>
@@ -403,7 +446,7 @@ function createAppGeneratorStore() {
         primaryColor: appDetailsData.primaryColor,
       });
       updateAppDetails({ logoDescription: logoDesc.logoDescription });
-      updateTask("design", "completed");
+      updateTask("logo-description", "completed");
 
       // Step 3: Craft AI personality
       await new Promise((r) =>
@@ -414,7 +457,7 @@ function createAppGeneratorStore() {
 
       const promptData = await generateSystemPrompt(userPrompt);
       updateAppDetails({ systemPrompt: promptData.prompt });
-      updateTask("personality", "completed");
+      updateTask("system-prompt", "completed");
 
       // Step 4: Conversation starters
       await new Promise((r) =>
@@ -430,7 +473,7 @@ function createAppGeneratorStore() {
         systemPrompt: promptData.prompt,
       });
       updateAppDetails({ conversationStarters: starters.conversationStarters });
-      updateTask("starters", "completed");
+      updateTask("conversation-starters", "completed");
 
       // Step 5: Welcome message
       await new Promise((r) =>
@@ -449,7 +492,7 @@ function createAppGeneratorStore() {
         startingMessage: messageData.startingMessage,
         shouldHaveStartingMessage: messageData.shouldHaveStartingMessage,
       });
-      updateTask("welcome", "completed");
+      updateTask("starting-message", "completed");
 
       // Step 6: Create the app
       await new Promise((r) =>
@@ -463,10 +506,15 @@ function createAppGeneratorStore() {
         description: appDetailsData.appDescription,
         workspaceId,
         systemPrompt: promptData.prompt,
-        suggestions: starters.conversationStarters,
+        primaryColor: appDetailsData.primaryColor,
+        suggestedMessages: starters.conversationStarters,
+        welcomeMessages: messageData.startingMessage
+          ? [messageData.startingMessage]
+          : undefined,
+        creationSource: "landing-generator",
       });
 
-      updateTask("logo", "completed");
+      updateTask("create-app", "completed");
 
       // Step 7: Finalize
       await new Promise((r) =>
@@ -503,7 +551,7 @@ function createAppGeneratorStore() {
         onComplete(newApp.id);
       }
     } catch (error) {
-      console.error("App generation error:", error);
+      captureException(error, { tags: { source: "app-generator" }, extra: { action: "startGeneration", userPrompt } });
       setError(
         error instanceof Error ? error.message : "Failed to generate app"
       );

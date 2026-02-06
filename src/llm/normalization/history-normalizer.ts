@@ -14,6 +14,7 @@
  * - Fallback to text conversion only when data is malformed
  */
 
+import * as Sentry from "@sentry/deno";
 import type {
   UnifiedMessage,
   UnifiedContentPart,
@@ -98,6 +99,10 @@ export function normalizeHistory(
       `[normalize-history] Conversion failed, falling back to text:`,
       error
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "llm", feature: "history-normalizer" },
+      extra: { targetProvider, sourceProvider, messageCount: messages.length },
+    });
     return fallbackToTextConversion(messages);
   }
 }

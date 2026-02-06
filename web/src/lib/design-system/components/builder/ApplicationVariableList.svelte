@@ -9,6 +9,7 @@
   import { slide } from "svelte/transition";
   import { Input, Select, SelectItem, Button, toasts } from "$lib/design-system";
   import { api } from "$lib/api";
+  import { captureException } from "$lib/sentry";
 
   export let applicationId: string;
 
@@ -46,7 +47,10 @@
       );
       variables = response.data;
     } catch (error) {
-      console.error("Error fetching variables:", error);
+      captureException(error, {
+        tags: { feature: "application-variables" },
+        extra: { applicationId },
+      });
       toasts.error("Failed to load variables");
     } finally {
       loading = false;
@@ -86,7 +90,10 @@
       isAddingVariable = false;
       toasts.success("Variable created");
     } catch (error) {
-      console.error("Error creating variable:", error);
+      captureException(error, {
+        tags: { feature: "application-variables" },
+        extra: { applicationId, variableName: newVariable.name },
+      });
       toasts.error("Failed to create variable");
     } finally {
       saving = false;
@@ -107,7 +114,10 @@
       });
       toasts.success("Variable updated");
     } catch (error) {
-      console.error("Error updating variable:", error);
+      captureException(error, {
+        tags: { feature: "application-variables" },
+        extra: { variableId: variable.id },
+      });
       toasts.error("Failed to update variable");
       fetchVariables(); // Refresh to get original values
     } finally {
@@ -121,7 +131,10 @@
       variables = variables.filter(v => v.id !== variable.id);
       toasts.success("Variable deleted");
     } catch (error) {
-      console.error("Error deleting variable:", error);
+      captureException(error, {
+        tags: { feature: "application-variables" },
+        extra: { variableId: variable.id },
+      });
       toasts.error("Failed to delete variable");
     }
   }

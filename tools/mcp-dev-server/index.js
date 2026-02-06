@@ -116,13 +116,17 @@ const tools = [
             "typing.stop",
             "credits.updated",
             "subscription.changed",
+            "notification.push",
+            "conversation.started",
+            "conversation.activity",
+            "conversation.ended",
           ],
           description: "The event type to trigger",
         },
         payload: {
           type: "object",
           description:
-            "Optional payload data. For message.new: {content, sessionId}. For credits.updated: {balance, threshold}. For subscription.changed: {tier}.",
+            "Optional payload data. For message.new: {content, sessionId}. For credits.updated: {balance, threshold}. For subscription.changed: {tier}. For notification.push: {notificationType, category, title, body, actionUrl, actionLabel}. For conversation.started/activity/ended: {sessionId, applicationId, consumerEmail, consumerName, messagePreview}.",
         },
         userId: {
           type: "string",
@@ -313,6 +317,73 @@ const tools = [
           description: "Maximum number of files to list (default: 20)",
         },
       },
+    },
+  },
+  {
+    name: "dev_multiplayer_sessions",
+    description:
+      "List active multiplayer chat sessions. Shows session IDs, participants, and share tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "dev_multiplayer_join",
+    description:
+      "Simulate a participant joining a multiplayer session. Creates a fake participant with an anonymous name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID to join",
+        },
+        displayName: {
+          type: "string",
+          description:
+            "Optional display name. If not provided, generates a random name like 'Sparkly Otter'.",
+        },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "dev_multiplayer_message",
+    description:
+      "Simulate a participant sending a message in a multiplayer session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID",
+        },
+        participantId: {
+          type: "string",
+          description: "The participant ID sending the message",
+        },
+        content: {
+          type: "string",
+          description: "The message content",
+        },
+      },
+      required: ["sessionId", "participantId", "content"],
+    },
+  },
+  {
+    name: "dev_multiplayer_stop",
+    description:
+      "Simulate stopping an AI response in a multiplayer session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID",
+        },
+      },
+      required: ["sessionId"],
     },
   },
 ];
@@ -933,6 +1004,35 @@ async function handleTool(name, args) {
     }
 
     default:
+    case "dev_multiplayer_sessions": {
+      return await callDevApi("/api/dev/multiplayer/sessions", "GET");
+    }
+
+    case "dev_multiplayer_join": {
+      return await callDevApi("/api/dev/multiplayer/simulate-join", "POST", {
+        sessionId: args.sessionId,
+        displayName: args.displayName,
+      });
+    }
+
+    case "dev_multiplayer_message": {
+      return await callDevApi(
+        "/api/dev/multiplayer/simulate-message",
+        "POST",
+        {
+          sessionId: args.sessionId,
+          participantId: args.participantId,
+          content: args.content,
+        }
+      );
+    }
+
+    case "dev_multiplayer_stop": {
+      return await callDevApi("/api/dev/multiplayer/simulate-stop", "POST", {
+        sessionId: args.sessionId,
+      });
+    }
+
       throw new Error(`Unknown tool: ${name}`);
   }
 }

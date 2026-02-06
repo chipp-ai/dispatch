@@ -107,19 +107,31 @@ export async function publishToUser(
   userId: string,
   event: WebSocketEvent
 ): Promise<boolean> {
-  if (!pubClient) {
-    console.warn("[pubsub] Not initialized, cannot publish");
-    return false;
+  // If Redis is available, publish through it (cross-pod delivery)
+  if (pubClient) {
+    try {
+      const payload: EventPayload = { userId, event };
+      await pubClient.publish(EVENTS_CHANNEL, JSON.stringify(payload));
+      return true;
+    } catch (error) {
+      console.error("[pubsub] Error publishing event:", error);
+      Sentry.captureException(error, {
+        tags: { source: "websocket-pubsub", feature: "publish-event" },
+        extra: { userId, eventType: event.type },
+      });
+      // Fall through to local delivery
+    }
   }
 
+  // Local delivery fallback (no Redis or Redis publish failed)
   try {
-    const payload: EventPayload = { userId, event };
-    await pubClient.publish(EVENTS_CHANNEL, JSON.stringify(payload));
-    return true;
+    const { localSendToUser } = await import("./handler.ts");
+    const sent = localSendToUser(userId, event);
+    return sent > 0;
   } catch (error) {
-    console.error("[pubsub] Error publishing event:", error);
-    Sentry.captureException(error, {
-      tags: { source: "websocket-pubsub", feature: "publish-event" },
+    console.error("[pubsub] Local delivery fallback failed:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "pubsub", feature: "local-delivery-fallback" },
       extra: { userId, eventType: event.type },
     });
     return false;
@@ -145,6 +157,31 @@ export async function publishBroadcast(
     Sentry.captureException(error, {
       tags: { source: "websocket-pubsub", feature: "broadcast" },
       extra: { eventType: event.type },
+    });
+    return false;
+  }
+}
+
+/**
+ * Publish an event to all WebSocket clients in a multiplayer session.
+ * Uses local delivery (consumer-handler's sendToSession).
+ * For multi-pod, would route through Redis.
+ */
+export async function publishToSession(
+  sessionId: string,
+  event: unknown,
+  excludeParticipantId?: string
+): Promise<boolean> {
+  try {
+    const { sendToSession } = await import("./consumer-handler.ts");
+    // deno-lint-ignore no-explicit-any
+    const sent = sendToSession(sessionId, event as any, excludeParticipantId);
+    return sent > 0;
+  } catch (error) {
+    console.error("[pubsub] Error publishing to session:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "pubsub", feature: "publish-session" },
+      extra: { sessionId },
     });
     return false;
   }
@@ -178,6 +215,9 @@ export async function closePubSub(): Promise<void> {
     console.log("[pubsub] Disconnected");
   } catch (error) {
     console.error("[pubsub] Error closing connections:", error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "pubsub", feature: "close" },
+    });
   }
 }
 

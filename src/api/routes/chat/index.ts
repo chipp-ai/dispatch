@@ -179,6 +179,23 @@ export const chatRoutes = new Hono<AppContext>();
  * - page: Page number (1-based)
  * - limit: Results per page (max 100)
  */
+
+/**
+ * GET /:appId/sessions/active
+ * Get currently active sessions (last activity within 2 minutes).
+ * Used by the builder chats UI to show "Live Now" indicators.
+ */
+chatRoutes.get("/:appId/sessions/active", async (c) => {
+  const user = c.get("user");
+  const appId = c.req.param("appId");
+
+  await chatService.verifyAppAccess(appId, user.id);
+
+  const activeSessions = await chatService.getActiveSessions(appId);
+
+  return c.json({ data: activeSessions });
+});
+
 chatRoutes.get(
   "/:appId/sessions",
   zValidator("query", listSessionsQuerySchema),
@@ -643,6 +660,10 @@ chatRoutes.post(
             return url;
           } catch (err) {
             console.error("[chat] Failed to upload audio to GCS:", err);
+            Sentry.captureException(err, {
+              tags: { source: "builder-chat", feature: "audio-upload" },
+              extra: { sessionId, appId },
+            });
             return null;
           }
         })();
@@ -674,6 +695,10 @@ chatRoutes.post(
               .execute();
           } catch (err) {
             console.error("[chat] Failed to patch audio URL:", err);
+            Sentry.captureException(err, {
+              tags: { source: "builder-chat", feature: "audio-url-patch" },
+              extra: { sessionId, appId, messageId: userMessage.id },
+            });
           }
         });
       }
@@ -783,6 +808,14 @@ chatRoutes.post(
               ) {
                 console.error(
                   `[chat] CORRUPTED DATA: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls in msg ${msg.id?.slice(0, 8)}. Limiting to ${maxToolResults}. This indicates a data storage bug!`
+                );
+                Sentry.captureMessage(
+                  `[builder-chat] Corrupted tool data: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls`,
+                  {
+                    level: "error",
+                    tags: { source: "builder-chat", feature: "history-reconstruction" },
+                    extra: { appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults },
+                  }
                 );
               }
 
@@ -1010,6 +1043,14 @@ chatRoutes.post(
               console.error(
                 `[chat] STORAGE CORRUPTION PREVENTION: Limiting ${result.toolCalls.length} toolCalls and ${result.toolResults.length} toolResults to ${STORAGE_LIMIT} each`
               );
+              Sentry.captureMessage(
+                `[builder-chat] Storage corruption prevention: ${result.toolCalls.length} toolCalls, ${result.toolResults.length} toolResults`,
+                {
+                  level: "error",
+                  tags: { source: "builder-chat", feature: "storage-corruption-prevention" },
+                  extra: { appId, sessionId, model: modelId, toolCallsCount: result.toolCalls.length, toolResultsCount: result.toolResults.length, storageLimit: STORAGE_LIMIT },
+                }
+              );
               toolCallsToStore = result.toolCalls.slice(0, STORAGE_LIMIT);
               toolResultsToStore = result.toolResults.slice(0, STORAGE_LIMIT);
             }
@@ -1041,7 +1082,8 @@ chatRoutes.post(
                 .catch((err) => {
                   console.error("[chat] Failed to record token usage:", err);
                   Sentry.captureException(err, {
-                    extra: { appId, sessionId, model: modelId },
+                    tags: { source: "builder-chat", feature: "token-usage" },
+                    extra: { appId, sessionId, model: modelId, userId: user.id },
                   });
                 });
             }
@@ -1344,6 +1386,7 @@ chatRoutes.post(
 
           // Report to Sentry
           Sentry.captureException(error, {
+            tags: { source: "builder-chat", feature: "stream" },
             extra: {
               requestId,
               appId,
@@ -1369,6 +1412,7 @@ chatRoutes.post(
       console.error("[chat] Setup error:", error);
 
       Sentry.captureException(error, {
+        tags: { source: "builder-chat", feature: "setup" },
         extra: {
           requestId,
           appId,
@@ -1528,6 +1572,10 @@ chatRoutes.post(
             return url;
           } catch (err) {
             console.error("[chat] Failed to upload audio to GCS:", err);
+            Sentry.captureException(err, {
+              tags: { source: "builder-chat", feature: "audio-upload" },
+              extra: { sessionId, appId },
+            });
             return null;
           }
         })();
@@ -1557,6 +1605,10 @@ chatRoutes.post(
               .execute();
           } catch (err) {
             console.error("[chat] Failed to patch audio URL:", err);
+            Sentry.captureException(err, {
+              tags: { source: "builder-chat", feature: "audio-url-patch" },
+              extra: { sessionId, appId, messageId: userMessage2.id },
+            });
           }
         });
       }
@@ -1663,6 +1715,14 @@ chatRoutes.post(
               ) {
                 console.error(
                   `[chat] CORRUPTED DATA: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls in msg ${msg.id?.slice(0, 8)}. Limiting to ${maxToolResults}. This indicates a data storage bug!`
+                );
+                Sentry.captureMessage(
+                  `[builder-chat] Corrupted tool data: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls`,
+                  {
+                    level: "error",
+                    tags: { source: "builder-chat", feature: "history-reconstruction" },
+                    extra: { appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults },
+                  }
                 );
               }
 
@@ -1834,7 +1894,10 @@ chatRoutes.post(
           })
           .catch((err) => {
             console.error("[chat] Failed to record token usage:", err);
-            Sentry.captureException(err);
+            Sentry.captureException(err, {
+              tags: { source: "builder-chat", feature: "token-usage" },
+              extra: { appId, sessionId, model: modelId, userId: user.id },
+            });
           });
       }
 
@@ -1846,7 +1909,8 @@ chatRoutes.post(
     } catch (error) {
       console.error("[chat] Error:", error);
       Sentry.captureException(error, {
-        extra: { requestId, appId, userId: user.id },
+        tags: { source: "builder-chat", feature: "non-streaming" },
+        extra: { requestId, appId, userId: user.id, sessionId: body.sessionId },
       });
       throw error;
     }

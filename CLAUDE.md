@@ -20,6 +20,31 @@ Consumer app for Chipp AI chatbots. Deno + Hono API, Svelte 5 SPA, Cloudflare Wo
 - Use `.scratch/` for ephemeral files
 - **ALWAYS use `./scripts/dev.sh`** - logs go to `.scratch/logs/`
 
+## Error Handling (Critical)
+
+**Never use bare `console.error`.** Every error must go to Sentry with context.
+
+**Server-side** (Deno): Keep `console.error` for dev logs, AND add `Sentry.captureException`:
+```typescript
+import * as Sentry from "@sentry/deno";
+
+console.error("[Feature] Something failed:", error);
+Sentry.captureException(error, {
+  tags: { source: "feature-area", feature: "specific-feature" },
+  extra: { userId, applicationId, relevantData },
+});
+```
+
+**Client-side** (Svelte): Use `captureException` from `$lib/sentry` — it does both console.error AND Sentry:
+```typescript
+import { captureException } from "$lib/sentry";
+
+captureException(error, {
+  tags: { feature: "specific-feature" },
+  extra: { relevantData },
+});
+```
+
 ## Common Pitfalls
 
 ### JSON Columns Return as Strings

@@ -13,6 +13,7 @@
    * - Gradient background that expands with audio energy
    */
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { captureException } from '$lib/sentry';
   import * as THREE from 'three';
   import Spinner from '../Spinner.svelte';
 
@@ -45,7 +46,9 @@
    */
   async function initializeWebRTC(): Promise<void> {
     if (!peerConnection) {
-      console.error('[ParticleAudio] No peer connection available');
+      captureException(new Error('[ParticleAudio] No peer connection available'), {
+        tags: { feature: "voice-agent" },
+      });
       return;
     }
 
@@ -75,13 +78,15 @@
         tokenResponse = await fetch(sessionUrl, { credentials: 'include' });
         console.log('[ParticleAudio] Fetch completed, status:', tokenResponse.status);
       } catch (fetchError) {
-        console.error('[ParticleAudio] Fetch failed:', fetchError);
+        captureException(fetchError, {
+          tags: { feature: "voice-agent" },
+          extra: { action: "fetch-ephemeral-token", sessionUrl },
+        });
         throw fetchError;
       }
 
       if (!tokenResponse.ok) {
         const errorText = await tokenResponse.text();
-        console.error('[ParticleAudio] Session API error response:', errorText);
 
         let userMessage = 'Failed to connect';
         try {
@@ -141,10 +146,9 @@
 
       console.log('[ParticleAudio] WebRTC connection established with OpenAI Realtime API');
     } catch (error) {
-      console.error('[ParticleAudio] Error during WebRTC initialization:', error);
-      console.error('[ParticleAudio] Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+      captureException(error, {
+        tags: { feature: "voice-agent" },
+        extra: { action: "webrtc-initialization", applicationId },
       });
 
       const errorMessage = error instanceof Error ? error.message : 'Connection failed';
@@ -198,7 +202,9 @@
           peerConnection!.addTrack(track, stream);
         });
       } else {
-        console.error('[ParticleAudio] No peer connection available to add tracks');
+        captureException(new Error('[ParticleAudio] No peer connection available to add tracks'), {
+          tags: { feature: "voice-agent" },
+        });
       }
 
       // Attach to hidden audio element
@@ -218,7 +224,10 @@
 
       console.log('[ParticleAudio] Microphone enabled and WebRTC handshake initiated');
     } catch (err) {
-      console.error('[ParticleAudio] Error accessing microphone:', err);
+      captureException(err, {
+        tags: { feature: "voice-agent" },
+        extra: { action: "microphone-access" },
+      });
 
       const errorMessage = err instanceof Error ? err.message : 'Microphone access failed';
       connectionError = errorMessage;
@@ -420,7 +429,10 @@
     });
 
     dc.addEventListener('error', (error) => {
-      console.error('[ParticleAudio] Data channel error:', error);
+      captureException(new Error('[ParticleAudio] Data channel error'), {
+        tags: { feature: "voice-agent" },
+        extra: { error },
+      });
     });
 
     dc.addEventListener('message', async (e) => {
@@ -486,7 +498,10 @@
               toolExecuting = false;
             }
           } catch (err) {
-            console.error('[ParticleAudio] Error executing function:', err);
+            captureException(err, {
+              tags: { feature: "voice-agent" },
+              extra: { action: "execute-function", functionName: name, call_id },
+            });
             toolExecuting = false;
 
             // Send error back to OpenAI
@@ -507,7 +522,10 @@
           }
         }
       } catch (err) {
-        console.error('[ParticleAudio] Error parsing realtime event:', err);
+        captureException(err, {
+          tags: { feature: "voice-agent" },
+          extra: { action: "parse-realtime-event" },
+        });
       }
     });
 
@@ -523,7 +541,9 @@
 
       const remoteStream = event.streams[0];
       if (!remoteStream) {
-        console.error('[ParticleAudio] No remote stream available');
+        captureException(new Error('[ParticleAudio] No remote stream available'), {
+          tags: { feature: "voice-agent" },
+        });
         return;
       }
 
@@ -534,7 +554,10 @@
         remoteAudio
           .play()
           .then(() => console.log('[ParticleAudio] Remote audio playing'))
-          .catch((err) => console.error('[ParticleAudio] Remote audio play error:', err));
+          .catch((err) => captureException(err, {
+            tags: { feature: "voice-agent" },
+            extra: { action: "remote-audio-play" },
+          }));
       }
 
       // Setup audio analysis
@@ -547,7 +570,10 @@
         source.connect(remoteAnalyser);
         console.log('[ParticleAudio] Audio analyser connected');
       } catch (err) {
-        console.error('[ParticleAudio] Failed to setup audio analyser:', err);
+        captureException(err, {
+          tags: { feature: "voice-agent" },
+          extra: { action: "setup-audio-analyser" },
+        });
       }
     };
 

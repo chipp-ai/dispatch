@@ -7,6 +7,7 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { billingService } from "../../../services/billing.service.ts";
 import { createPortalSessionSchema } from "../../validators/billing.ts";
@@ -18,13 +19,82 @@ export const billingRoutes = new Hono<AuthContext>();
  * Get current credit status for the user's organization
  *
  * Returns credit balance and warning state for UI banners.
- * Note: Actual credit balance requires Stripe API integration.
+ * Supports ?_test=exhausted|low|ok on localhost for development testing.
  */
 billingRoutes.get("/credits", async (c) => {
+  // Test mode for development
+  const testMode = c.req.query("_test");
+  const isLocal = Deno.env.get("ENVIRONMENT") !== "production";
+  if (testMode && isLocal) {
+    const mockStates: Record<string, any> = {
+      exhausted: {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: 0,
+        isExhausted: true,
+        isLow: false,
+        showWarning: true,
+        warningSeverity: "exhausted",
+        creditBalanceFormatted: "$0.00",
+        hasDefaultPaymentMethod: true,
+      },
+      low: {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: 50,
+        isExhausted: false,
+        isLow: true,
+        showWarning: true,
+        warningSeverity: "low",
+        creditBalanceFormatted: "$0.50",
+        hasDefaultPaymentMethod: true,
+      },
+      ok: {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: 500,
+        isExhausted: false,
+        isLow: false,
+        showWarning: false,
+        warningSeverity: "none",
+        creditBalanceFormatted: "$5.00",
+        hasDefaultPaymentMethod: true,
+      },
+    };
+    return c.json({ data: mockStates[testMode] || mockStates.ok });
+  }
+
   const user = c.get("user");
   const organizationId = await billingService.getOrganizationIdForUser(user.id);
   const creditStatus = await billingService.getCreditStatus(organizationId);
   return c.json({ data: creditStatus });
+});
+
+/**
+ * GET /billing/usage-analytics
+ * Get usage analytics grouped by dimension
+ *
+ * Query params:
+ *   - startDate: ISO 8601 (optional, defaults to 30 days ago)
+ *   - endDate: ISO 8601 (optional, defaults to now)
+ *   - groupBy: "app" | "model" | "agentType" (optional, defaults to "model")
+ */
+billingRoutes.get("/usage-analytics", async (c) => {
+  const user = c.get("user");
+  const organizationId = await billingService.getOrganizationIdForUser(user.id);
+
+  const startDate = c.req.query("startDate");
+  const endDate = c.req.query("endDate");
+  const groupBy = c.req.query("groupBy") as
+    | "app"
+    | "model"
+    | "agentType"
+    | undefined;
+
+  const analytics = await billingService.getUsageAnalytics(organizationId, {
+    startDate: startDate ? new Date(startDate) : undefined,
+    endDate: endDate ? new Date(endDate) : undefined,
+    groupBy: groupBy || "model",
+  });
+
+  return c.json({ data: analytics });
 });
 
 /**
@@ -150,6 +220,10 @@ billingRoutes.post(
       });
     } catch (error) {
       console.error("[billing] Failed to create portal session:", error);
+      Sentry.captureException(error, {
+        tags: { source: "billing-api", feature: "portal-session" },
+        extra: { userId: user.id },
+      });
       return c.json(
         {
           error: "Failed to create portal session",

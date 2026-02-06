@@ -35,6 +35,18 @@ import ChatMessage from '$lib/design-system/components/chat/ChatMessage.svelte';
 - `toasts` - Notifications: `success()`, `error()`, `loading()`
 - `themes/` - Chat theme configs (chatThemes.ts)
 
+## Error Handling
+
+Never use bare `console.error` in components. Use `captureException` from `$lib/sentry`:
+```typescript
+import { captureException } from "$lib/sentry";
+
+captureException(error, {
+  tags: { feature: "component-name" },
+  extra: { relevantProps },
+});
+```
+
 ## CSS Files
 - `tokens.css` - Design tokens (colors, spacing, typography, shadows)
 - `base.css` - Resets, markdown, `.constellation-bg` gradient

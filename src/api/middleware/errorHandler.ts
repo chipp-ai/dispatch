@@ -10,6 +10,7 @@ console.log("=== ERROR HANDLER MODULE LOADED V2 ===");
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "./auth.ts";
 import {
   AppError,
@@ -37,6 +38,16 @@ export const errorHandler = createMiddleware<AuthContext>(async (c, next) => {
 
     // Log error for debugging
     console.error(`[${requestId}] Error:`, error);
+    if (error instanceof Error) {
+      Sentry.captureException(error, {
+        tags: { source: "error-handler" },
+        extra: {
+          requestId,
+          route: c.req.path,
+          method: c.req.method,
+        },
+      });
+    }
 
     // Handle Zod validation errors
     if (error instanceof ZodError) {
@@ -78,8 +89,31 @@ export const errorHandler = createMiddleware<AuthContext>(async (c, next) => {
       willHandle:
         typeof err?.statusCode === "number" && typeof err?.code === "string",
     });
+    Sentry.captureMessage("[errorHandler] DUCK TYPE CHECK", {
+      level: "error",
+      tags: { source: "error-handler" },
+      extra: {
+        requestId,
+        route: c.req.path,
+        method: c.req.method,
+        statusCode: err?.statusCode,
+        code: err?.code,
+      },
+    });
     if (typeof err?.statusCode === "number" && typeof err?.code === "string") {
       console.error("[errorHandler] RETURNING:", err.statusCode);
+      Sentry.captureMessage(`[errorHandler] Returning ${err.statusCode}`, {
+        level: "error",
+        tags: { source: "error-handler" },
+        extra: {
+          requestId,
+          route: c.req.path,
+          method: c.req.method,
+          statusCode: err.statusCode,
+          code: err.code,
+          errorName: err.name,
+        },
+      });
       const statusCode = err.statusCode as
         | 400
         | 401
@@ -100,6 +134,15 @@ export const errorHandler = createMiddleware<AuthContext>(async (c, next) => {
       );
     }
     console.error("[errorHandler] FALLING THROUGH TO 500");
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "error-handler" },
+      extra: {
+        requestId,
+        route: c.req.path,
+        method: c.req.method,
+        statusCode: 500,
+      },
+    });
 
     // Unknown errors - don't leak internal details
     const isDev = Deno.env.get("DENO_ENV") === "development";

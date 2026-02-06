@@ -18,6 +18,7 @@
   } from "../stores/legacySession";
   import { push } from "svelte-spa-router";
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   // Generate floating particles with random properties
   const particleColors = ['blue', 'purple', 'yellow', 'orange'] as const;
@@ -151,7 +152,7 @@
       toasts.success("Welcome back!", "You have been logged in");
       push("/");
     } catch (error) {
-      console.error("Login error:", error);
+      captureException(error, { tags: { page: "login", feature: "login-submit" } });
       toasts.error("Login failed", "Please try again later");
     } finally {
       isLoading = false;

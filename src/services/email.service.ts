@@ -9,6 +9,7 @@ import { db } from "@/src/db/client.ts";
 import { encrypt, decrypt } from "@/src/services/crypto.service.ts";
 import type { EmailConfig, EmailThread } from "@/src/db/schema.ts";
 import { chatService } from "./chat.service.ts";
+import * as Sentry from "@sentry/deno";
 
 // ========================================
 // Types
@@ -337,6 +338,11 @@ export async function getDecryptedCredentials(
   } catch {
     // If decryption fails, return null
     console.error("[Email] Failed to decrypt credentials");
+    Sentry.captureMessage("Failed to decrypt email credentials", {
+      level: "error",
+      tags: { source: "email", feature: "credential-decryption" },
+      extra: { applicationId },
+    });
     return null;
   }
 }
@@ -648,6 +654,16 @@ export async function sendReply(
     console.error("[Email] Postmark send error", {
       errorCode: result.ErrorCode,
       message: result.Message,
+    });
+    Sentry.captureMessage("Postmark send error", {
+      level: "error",
+      tags: { source: "email", feature: "postmark-send" },
+      extra: {
+        errorCode: result.ErrorCode,
+        errorMessage: result.Message,
+        to: params.to,
+        subject: params.subject,
+      },
     });
   }
 

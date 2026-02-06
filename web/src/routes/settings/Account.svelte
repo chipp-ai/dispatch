@@ -3,6 +3,7 @@
   import GlobalNavBar from "../../lib/design-system/components/GlobalNavBar.svelte";
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
   import { Card, Button, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { user } from "../../stores/auth";
   import { ArrowLeft, Camera } from "lucide-svelte";
 
@@ -46,7 +47,10 @@
 
       toasts.success("Success", "Profile updated successfully");
     } catch (e) {
-      console.error("Failed to update profile:", e);
+      captureException(e, {
+        tags: { feature: "settings-account" },
+        extra: { userId: $user?.id, action: "updateProfile" },
+      });
       toasts.error("Error", "Failed to update profile");
     } finally {
       isSaving = false;

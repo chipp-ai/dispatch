@@ -15,6 +15,7 @@
   } from "$lib/design-system/components/chat/types";
   import { link } from "svelte-spa-router";
   import { onMount, tick } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId: string; sessionId: string } = {
     appId: "",
@@ -113,7 +114,7 @@
         return chatMsg;
       });
     } catch (e) {
-      console.error("Failed to load session:", e);
+      captureException(e, { tags: { page: "chat-session", feature: "load-session" } });
       loadError = "Failed to load chat session";
     } finally {
       isLoading = false;
@@ -248,7 +249,7 @@
         updateMessageText(assistantIndex, currentTextContent, false);
       }
     } catch (e) {
-      console.error("Chat error:", e);
+      captureException(e, { tags: { page: "chat-session", feature: "send-message" } });
       messages[assistantIndex].content = `Error: ${e instanceof Error ? e.message : "Failed to send message"}`;
       messages = [...messages];
     } finally {

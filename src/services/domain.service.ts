@@ -361,12 +361,50 @@ export const domainService = {
       }
     }
 
-    // Enrich with tenant data (from WhitelabelSettings or similar)
+    // Enrich with full tenant data from whitelabel_tenants table
     if (domain.type === "dashboard" && domain.tenantId) {
-      // For now, use cached brandStyles from domain
-      // In the future, could join with whitelabel_settings table
-      mapping.tenantId = domain.tenantId;
-      mapping.brandStyles = (domain.brandStyles as BrandStyles) ?? undefined;
+      const tenant = await db
+        .selectFrom("app.whitelabel_tenants")
+        .select([
+          "id",
+          "slug",
+          "name",
+          "primaryColor",
+          "secondaryColor",
+          "logoUrl",
+          "faviconUrl",
+          "features",
+        ])
+        .where("id", "=", domain.tenantId)
+        .executeTakeFirst();
+
+      if (tenant) {
+        mapping.tenantId = tenant.id;
+        mapping.tenantSlug = tenant.slug;
+        mapping.brandStyles = {
+          primaryColor: tenant.primaryColor ?? undefined,
+          logoUrl: tenant.logoUrl ?? undefined,
+          faviconUrl: tenant.faviconUrl ?? undefined,
+          companyName: tenant.name,
+        };
+
+        const features =
+          typeof tenant.features === "string"
+            ? JSON.parse(tenant.features)
+            : tenant.features;
+        if (features) {
+          mapping.features = {
+            isGoogleAuthDisabled: features.isGoogleAuthDisabled,
+            isMicrosoftAuthDisabled: features.isMicrosoftAuthDisabled,
+            isBillingDisabled: features.isBillingDisabled,
+            isMarketplaceDisabled: features.isMarketplaceDisabled,
+          };
+        }
+      } else {
+        // Fallback to cached brandStyles from domain row
+        mapping.tenantId = domain.tenantId;
+        mapping.brandStyles = (domain.brandStyles as BrandStyles) ?? undefined;
+      }
     }
 
     return mapping;

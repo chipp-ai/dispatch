@@ -544,6 +544,10 @@ export async function handleWhatsAppMessage(
         error:
           sendError instanceof Error ? sendError.message : String(sendError),
       });
+      Sentry.captureException(sendError, {
+        tags: { source: "whatsapp", feature: "chat", operation: "send-error-message" },
+        extra: { correlationId, applicationId, recipientPhone: message.from },
+      });
     }
   }
 }

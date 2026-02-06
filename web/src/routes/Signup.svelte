@@ -19,6 +19,7 @@
   } from "../stores/legacySession";
   import { push } from "svelte-spa-router";
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   type Step = "email" | "password" | "otp";
 
@@ -131,7 +132,7 @@
       // Move to password step
       step = "password";
     } catch (error) {
-      console.error("Email check error:", error);
+      captureException(error, { tags: { page: "signup", feature: "email-check" } });
       toasts.error("Error", "Please try again");
     } finally {
       isLoading = false;
@@ -160,7 +161,7 @@
       toasts.success("Verification code sent", "Please check your email");
       step = "otp";
     } catch (error) {
-      console.error("Send OTP error:", error);
+      captureException(error, { tags: { page: "signup", feature: "send-otp" } });
       toasts.error("Error", "Please try again");
     } finally {
       isLoading = false;
@@ -202,7 +203,7 @@
       toasts.success("Account created!", "Welcome to Chipp");
       push("/");
     } catch (error) {
-      console.error("Signup error:", error);
+      captureException(error, { tags: { page: "signup", feature: "signup-submit" } });
       toasts.error("Error", "Please try again");
     } finally {
       isLoading = false;
@@ -269,7 +270,7 @@
       otpValues = ["", "", "", "", "", ""];
       otpError = "";
     } catch (error) {
-      console.error("Resend OTP error:", error);
+      captureException(error, { tags: { page: "signup", feature: "resend-otp" } });
       toasts.error("Error", "Please try again");
     } finally {
       isLoading = false;

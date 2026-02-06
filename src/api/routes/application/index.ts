@@ -109,6 +109,10 @@ applicationRoutes.post(
       organizationId: user.organizationId,
       modelId: body.modelId,
       isPublic: body.isPublic,
+      brandStyles: body.brandStyles,
+      suggestedMessages: body.suggestedMessages,
+      welcomeMessages: body.welcomeMessages,
+      creationSource: body.creationSource,
     });
 
     return c.json({ data: application }, 201);
@@ -1094,6 +1098,10 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/start", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     console.error("[Campaign Start] Error:", error);
+    Sentry.captureException(error, {
+      tags: { source: "application-api", feature: "campaign-start" },
+      extra: { appId: id, userId: user.id, campaignId },
+    });
     return c.json({ error: "Failed to start campaign" }, 500);
   }
 });
@@ -1115,6 +1123,10 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/pause", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     console.error("[Campaign Pause] Error:", error);
+    Sentry.captureException(error, {
+      tags: { source: "application-api", feature: "campaign-pause" },
+      extra: { appId: id, userId: user.id, campaignId },
+    });
     return c.json({ error: "Failed to pause campaign" }, 500);
   }
 });
@@ -1136,6 +1148,10 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/cancel", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     console.error("[Campaign Cancel] Error:", error);
+    Sentry.captureException(error, {
+      tags: { source: "application-api", feature: "campaign-cancel" },
+      extra: { appId: id, userId: user.id, campaignId },
+    });
     return c.json({ error: "Failed to cancel campaign" }, 500);
   }
 });

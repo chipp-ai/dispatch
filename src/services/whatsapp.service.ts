@@ -8,6 +8,7 @@
 import { db } from "@/src/db/client.ts";
 import { encrypt, decrypt } from "@/src/services/crypto.service.ts";
 import type { WhatsAppConfig } from "@/src/db/schema.ts";
+import * as Sentry from "@sentry/deno";
 
 // ========================================
 // Types
@@ -305,6 +306,11 @@ export async function downloadMedia(
         mediaId,
         status: mediaInfoResponse.status,
       });
+      Sentry.captureMessage("[WhatsApp] Failed to get media info", {
+        level: "error",
+        tags: { source: "whatsapp", feature: "media-download" },
+        extra: { mediaId, status: mediaInfoResponse.status },
+      });
       return null;
     }
 
@@ -314,6 +320,11 @@ export async function downloadMedia(
 
     if (!downloadUrl) {
       console.error("[WhatsApp] No download URL in media info", { mediaId });
+      Sentry.captureMessage("[WhatsApp] No download URL in media info", {
+        level: "error",
+        tags: { source: "whatsapp", feature: "media-download" },
+        extra: { mediaId },
+      });
       return null;
     }
 
@@ -328,6 +339,11 @@ export async function downloadMedia(
       console.error("[WhatsApp] Failed to download media", {
         mediaId,
         status: downloadResponse.status,
+      });
+      Sentry.captureMessage("[WhatsApp] Failed to download media", {
+        level: "error",
+        tags: { source: "whatsapp", feature: "media-download" },
+        extra: { mediaId, status: downloadResponse.status },
       });
       return null;
     }
@@ -345,6 +361,10 @@ export async function downloadMedia(
     console.error("[WhatsApp] Error downloading media", {
       mediaId,
       error: error instanceof Error ? error.message : String(error),
+    });
+    Sentry.captureException(error, {
+      tags: { source: "whatsapp", feature: "media-download" },
+      extra: { mediaId },
     });
     return null;
   }

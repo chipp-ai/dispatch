@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import PlanCard from "../../../lib/design-system/components/PlanCard.svelte";
   import { Card, Button, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentOrganization, fetchOrganization } from "../../../stores/organization";
   import { BadgeCheck, ExternalLink } from "lucide-svelte";
   import {
@@ -179,7 +180,10 @@
         };
       }
     } catch (error) {
-      console.error("Failed to fetch subscription status:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "fetchSubscriptionStatus" },
+      });
     } finally {
       isLoadingStatus = false;
     }
@@ -202,12 +206,18 @@
         window.location.href = url;
       } else {
         const errorData = await response.json();
-        console.error("Failed to create billing portal session:", errorData);
+        captureException(new Error("Failed to create billing portal session"), {
+          tags: { feature: "settings-billing-plan" },
+          extra: { action: "handleManageSubscription", errorData },
+        });
         toasts.error("Error", "Failed to open billing portal");
         isLoadingPortal = false;
       }
     } catch (error) {
-      console.error("Error opening billing portal:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleManageSubscription" },
+      });
       toasts.error("Error", "Failed to open billing portal");
       isLoadingPortal = false;
     }
@@ -241,7 +251,10 @@
       const data = await response.json();
       window.location.href = data.url;
     } catch (error) {
-      console.error("Error generating payment URL:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handlePlanClick", tier },
+      });
       toasts.error("Error", "Failed to generate payment URL. Please try again.");
       loadingTier = null;
     }
@@ -271,7 +284,10 @@
         toasts.error("Error", errorData.error || "Failed to schedule downgrade");
       }
     } catch (error) {
-      console.error("Error scheduling downgrade:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleConfirmDowngrade", downgradeTargetTier },
+      });
       toasts.error("Error", "Failed to schedule downgrade. Please try again.");
     } finally {
       isSchedulingDowngrade = false;
@@ -301,7 +317,10 @@
         toasts.error("Error", errorData.error || "Failed to cancel subscription");
       }
     } catch (error) {
-      console.error("Error canceling subscription:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleConfirmCancellation" },
+      });
       toasts.error("Error", "Failed to cancel subscription. Please try again.");
     } finally {
       isCanceling = false;
@@ -325,7 +344,10 @@
         toasts.error("Error", errorData.error || "Failed to undo downgrade");
       }
     } catch (error) {
-      console.error("Error undoing downgrade:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleUndoDowngrade" },
+      });
       toasts.error("Error", "Failed to undo downgrade. Please try again.");
     } finally {
       isUndoing = false;
@@ -349,7 +371,10 @@
         toasts.error("Error", errorData.error || "Failed to undo cancellation");
       }
     } catch (error) {
-      console.error("Error undoing cancellation:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleUndoCancellation" },
+      });
       toasts.error("Error", "Failed to undo cancellation. Please try again.");
     } finally {
       isUndoing = false;

@@ -6,6 +6,7 @@
   import GlobalSearchModal from "../lib/design-system/components/GlobalSearchModal.svelte";
   import { openSearch, isSearchOpen } from "../stores/globalSearch";
   import { toasts } from "../lib/design-system/stores/toast";
+  import { captureException } from "$lib/sentry";
 
   // Eagerly import all tab content components
   import BuilderBuildContent from "./builder/BuilderBuildContent.svelte";
@@ -126,7 +127,7 @@
       const data = await response.json();
       app = data.data;
     } catch (error) {
-      console.error("Error loading app:", error);
+      captureException(error, { tags: { page: "app-builder-layout", feature: "load-app" }, extra: { appId: params.appId } });
       push("/apps");
     } finally {
       isLoading = false;
@@ -145,7 +146,7 @@
         app = data.data;
       }
     } catch (error) {
-      console.error("Error reloading app:", error);
+      captureException(error, { tags: { page: "app-builder-layout", feature: "reload-app" }, extra: { appId: params.appId } });
     }
   }
 
@@ -180,7 +181,7 @@
 
       await reloadApp();
     } catch (error) {
-      console.error("Error publishing application:", error);
+      captureException(error, { tags: { page: "app-builder-layout", feature: "publish" }, extra: { appId: params.appId } });
       toasts.error("Failed to publish", "Something went wrong. Please try again.");
     } finally {
       isPublishing = false;
@@ -222,6 +223,7 @@
   <div class="main-content">
     <BuilderHeader
       appName={app?.name || ""}
+      appId={params.appId || ""}
       appLogoUrl={app?.brandStyles?.logoUrl || ""}
       {currentPage}
       onShare={handleShare}

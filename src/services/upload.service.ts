@@ -333,6 +333,10 @@ async function getBillingContextForApp(
       applicationId,
       error: error instanceof Error ? error.message : String(error),
     });
+    Sentry.captureException(error, {
+      tags: { source: "upload", feature: "billing-context" },
+      extra: { applicationId },
+    });
     return null;
   }
 }
@@ -484,6 +488,10 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
               pageError instanceof Error
                 ? pageError.message
                 : String(pageError),
+          });
+          Sentry.captureException(pageError, {
+            tags: { source: "upload", feature: "crawl-page-processing" },
+            extra: { knowledgeSourceId, applicationId, pageUrl, crawlId },
           });
           // Continue processing other pages
         }

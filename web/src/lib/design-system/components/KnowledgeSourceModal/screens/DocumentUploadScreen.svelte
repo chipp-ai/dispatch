@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, FileText, Upload, X, Loader2, File as FileIcon } from 'lucide-svelte';
+  import { captureException } from '$lib/sentry';
 
   export let applicationId: string;
 
@@ -159,7 +160,10 @@
       }, 1500);
 
     } catch (e) {
-      console.error('Error uploading documents:', e);
+      captureException(e, {
+        tags: { feature: "document-upload" },
+        extra: { applicationId },
+      });
       error = e instanceof Error ? e.message : 'Upload failed';
       isUploading = false;
     }

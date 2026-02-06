@@ -6,6 +6,7 @@
    * Used for displaying source references in chat messages.
    */
   import { createEventDispatcher } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { Markdown } from "$lib/design-system";
   import type { CitationMetadata } from "./types";
 
@@ -98,7 +99,10 @@
       const data = await response.json();
       textChunk = data;
     } catch (error) {
-      console.error("Failed to fetch text chunk:", error);
+      captureException(error, {
+        tags: { feature: "source-citation" },
+        extra: { chunkId: id, applicationId },
+      });
       loadError = true;
       textChunk = null;
     } finally {

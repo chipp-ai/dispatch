@@ -7,6 +7,7 @@
  */
 
 import { Hono } from "hono";
+import * as Sentry from "@sentry/deno";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { whatsappService } from "../../../services/whatsapp.service.ts";
 import { handleWhatsAppMessage } from "../../../services/whatsapp-chat.service.ts";
@@ -233,6 +234,10 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
       console.error("[WhatsAppWebhook] Error processing message", {
         correlationId,
         error: err instanceof Error ? err.message : String(err),
+      });
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+        tags: { source: "whatsapp-webhook" },
+        extra: { correlationId, applicationId, messageId: message.id, messageType: message.type },
       });
     });
 

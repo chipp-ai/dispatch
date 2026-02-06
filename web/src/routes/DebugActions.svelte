@@ -8,6 +8,7 @@
 
   import { onMount } from "svelte";
   import { params as routeParams } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import { api } from "../lib/api";
   import { currentUser } from "../stores/auth";
   import { currentWorkspace } from "../stores/workspace";
@@ -115,7 +116,7 @@
 
       console.log(`[DEBUG] Found ${actions.length} actions at ${foundLocation}`);
     } catch (err) {
-      console.error("[DEBUG] Import error:", err);
+      captureException(err, { tags: { page: "debug", feature: "import-parse" } });
       importErrors = [err instanceof Error ? err.message : "Failed to parse JSON"];
       rawData = null;
       parsedActions = [];
@@ -158,7 +159,7 @@
         } catch (err) {
           const msg = `Failed to create ${action.name}: ${err instanceof Error ? err.message : "Unknown error"}`;
           errors.push(msg);
-          console.error("[DEBUG] Error creating tool:", err);
+          captureException(err, { tags: { page: "debug", feature: "create-tool" } });
         }
       }
 
@@ -290,7 +291,7 @@
         await api.delete(`/api/applications/${appId}/tools/${tool.id}`);
         successCount++;
       } catch (err) {
-        console.error(`Failed to delete tool ${tool.name}:`, err);
+        captureException(err, { tags: { page: "debug", feature: "delete-tool" }, extra: { toolName: tool.name } });
         errorCount++;
       }
     }

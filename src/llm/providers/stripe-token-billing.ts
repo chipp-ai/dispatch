@@ -324,6 +324,10 @@ export class StripeTokenBillingProvider implements LLMProvider {
               console.error(
                 "[stripe-token-billing] Failed to parse tool call arguments"
               );
+              Sentry.captureException(parseError instanceof Error ? parseError : new Error(String(parseError)), {
+                tags: { source: "llm", feature: "token-billing", operation: "tool-call-parse" },
+                extra: { model: mappedModel, customerId },
+              });
               // Still emit the tool call with empty args
               yield {
                 type: "tool_call",
@@ -391,6 +395,10 @@ export class StripeTokenBillingProvider implements LLMProvider {
                 error: parseError,
               }
             );
+            Sentry.captureException(parseError instanceof Error ? parseError : new Error(String(parseError)), {
+              tags: { source: "llm", feature: "token-billing", operation: "final-tool-call-parse" },
+              extra: { model: mappedModel, customerId, rawArguments: currentToolCall.rawArguments },
+            });
             // Still emit the tool call with empty args rather than failing
             yield {
               type: "tool_call",

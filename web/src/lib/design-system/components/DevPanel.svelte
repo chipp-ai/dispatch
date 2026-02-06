@@ -1055,6 +1055,12 @@
     transition: all 0.2s ease;
   }
 
+  @media (max-width: 767px) {
+    .dev-panel-toggle {
+      display: none;
+    }
+  }
+
   .dev-panel-toggle:hover {
     width: 36px;
     background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);

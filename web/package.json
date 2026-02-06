@@ -16,6 +16,7 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "@tsconfig/svelte": "^5.0.4",
+    "@types/canvas-confetti": "^1.9.0",
     "svelte": "^5.2.0",
     "svelte-check": "^4.0.0",
     "tslib": "^2.7.0",
@@ -23,8 +24,10 @@
     "vite": "^5.4.0"
   },
   "dependencies": {
+    "@sentry/svelte": "^10.38.0",
     "@types/katex": "^0.16.7",
     "@types/three": "^0.182.0",
+    "canvas-confetti": "^1.9.4",
     "date-fns": "^3.6.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.9",

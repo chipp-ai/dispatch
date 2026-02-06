@@ -7,6 +7,7 @@
 
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { uploadService } from "../../../services/upload.service.ts";
 import { zValidator } from "@hono/zod-validator";
@@ -137,6 +138,10 @@ uploadRoutes.post("/documents", async (c) => {
     return c.json({ data: results });
   } catch (error) {
     console.error("[upload] Error uploading documents:", error);
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "document-upload" },
+      extra: { applicationId, userId: user.id },
+    });
     return c.json(
       {
         error: "Upload failed",
@@ -204,6 +209,10 @@ uploadRoutes.post("/logo", async (c) => {
     return c.json({ data: { url } });
   } catch (error) {
     console.error("[upload] Error uploading logo:", error);
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "logo-upload" },
+      extra: { applicationId, userId: user.id },
+    });
     return c.json(
       {
         error: "Upload failed",
@@ -304,6 +313,10 @@ uploadRoutes.post("/image", async (c) => {
     return c.json({ url });
   } catch (error) {
     console.error("[upload] Error uploading image:", error);
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "image-upload" },
+      extra: { subfolder },
+    });
     return c.json(
       {
         error: "Upload failed",
@@ -374,6 +387,10 @@ uploadRoutes.post("/video", async (c) => {
     return c.json({ url });
   } catch (error) {
     console.error("[upload] Error uploading video:", error);
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "video-upload" },
+      extra: { subfolder },
+    });
     return c.json(
       {
         error: "Upload failed",
@@ -475,6 +492,10 @@ uploadRoutes.get("/url", async (c) => {
     });
   } catch (error) {
     console.error("[upload] Error uploading URL:", error);
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "url-upload" },
+      extra: { applicationId, url, crawlLinks },
+    });
     return c.json(
       {
         error: "Upload failed",
@@ -516,6 +537,10 @@ async function getCrawlLimitsForApp(
     console.error("[upload] Failed to get crawl limits", {
       applicationId,
       error: error instanceof Error ? error.message : String(error),
+    });
+    Sentry.captureException(error, {
+      tags: { source: "upload-api", feature: "crawl-limits" },
+      extra: { applicationId },
     });
     return CRAWL_LIMITS.FREE;
   }
