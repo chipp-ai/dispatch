@@ -3,6 +3,7 @@
   import GlobalNavBar from "../../lib/design-system/components/GlobalNavBar.svelte";
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
   import { Card, Button, Label, Input, Textarea, Select, SelectItem, Switch, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace } from "../../stores/workspace";
   import { user } from "../../stores/auth";
   import { ArrowLeft, Globe, Lock, CreditCard, Copy, ExternalLink, Upload, X, Image as ImageIcon } from "lucide-svelte";
@@ -87,7 +88,10 @@
         enableDuplication = data.enableDuplication || false;
       }
     } catch (e) {
-      console.error("Failed to load HQ data:", e);
+      captureException(e, {
+        tags: { feature: "settings-hq" },
+        extra: { workspaceId: $currentWorkspace?.id, action: "loadHQData" },
+      });
     } finally {
       isLoading = false;
     }
@@ -262,7 +266,10 @@
 
       toasts.success("Success", "HQ updated successfully");
     } catch (e) {
-      console.error("Failed to update HQ:", e);
+      captureException(e, {
+        tags: { feature: "settings-hq" },
+        extra: { workspaceId: $currentWorkspace?.id, action: "updateHQ" },
+      });
       toasts.error("Error", "Failed to update HQ");
     } finally {
       isSaving = false;

@@ -38,6 +38,13 @@ export interface CreateApplicationParams {
   organizationId: string;
   modelId?: string;
   isPublic?: boolean;
+  brandStyles?: {
+    primaryColor?: string;
+    logoUrl?: string;
+  };
+  suggestedMessages?: string[];
+  welcomeMessages?: string[];
+  creationSource?: string;
 }
 
 export interface UpdateApplicationParams {
@@ -326,6 +333,24 @@ export const applicationService = {
         isDeleted: false,
         isActive: true,
         temperature: 0.7,
+        ...(params.brandStyles
+          ? { brandStyles: JSON.stringify(params.brandStyles) }
+          : {}),
+        ...(params.suggestedMessages
+          ? {
+              suggestedMessages: JSON.stringify(params.suggestedMessages),
+            }
+          : {}),
+        ...(params.welcomeMessages
+          ? { welcomeMessages: JSON.stringify(params.welcomeMessages) }
+          : {}),
+        ...(params.creationSource
+          ? {
+              settings: JSON.stringify({
+                creationSource: params.creationSource,
+              }),
+            }
+          : {}),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -337,7 +362,7 @@ export const applicationService = {
         slug: app.appNameId,
         name: app.name,
         description: app.description ?? undefined,
-        brandStyles: null, // New apps don't have brand styles yet
+        brandStyles: (params.brandStyles as SyncAppBrandingParams["brandStyles"]) ?? null,
       })
       .catch((err) => {
         console.error("[ApplicationService] Brand sync failed on create:", err);

@@ -13,6 +13,7 @@
 import { db } from "../db/client.ts";
 import type { Consumer, ConsumerSession } from "../db/schema.ts";
 import { generateId } from "../utils/id.ts";
+import { notificationService } from "./notifications/notification.service.ts";
 
 // Constants
 const OTP_EXPIRY_MINUTES = 10;
@@ -277,6 +278,28 @@ export const consumerAuthService = {
         })
         .returningAll()
         .executeTakeFirstOrThrow();
+
+      // Fire-and-forget consumer_signup notification
+      try {
+        const appInfo = await db
+          .selectFrom("app.applications as a")
+          .innerJoin("app.workspaces as w", "w.id", "a.workspaceId")
+          .select(["a.name as appName", "w.organizationId"])
+          .where("a.id", "=", applicationId)
+          .executeTakeFirst();
+
+        if (appInfo) {
+          notificationService.send({
+            type: "consumer_signup",
+            organizationId: appInfo.organizationId,
+            data: {
+              consumerEmail: normalizedEmail,
+              appName: appInfo.appName || "App",
+              appId: applicationId,
+            },
+          }).catch(() => {});
+        }
+      } catch { /* fire-and-forget */ }
     }
 
     // Generate OTP for email verification

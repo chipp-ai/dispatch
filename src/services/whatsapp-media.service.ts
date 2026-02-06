@@ -124,6 +124,10 @@ async function transcribeAudio(
       correlationId,
       error: error instanceof Error ? error.message : String(error),
     });
+    Sentry.captureException(error, {
+      tags: { source: "whatsapp", feature: "media", mediaFeature: "audio-transcription" },
+      extra: { correlationId },
+    });
     throw error;
   }
 }

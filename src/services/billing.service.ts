@@ -21,6 +21,10 @@ import {
   getTierFromPriceId,
   isV2BillingPriceId,
 } from "./stripe.constants.ts";
+import { calculateCredits } from "./billing/credit-calculator.ts";
+import { TIER_CREDIT_ALLOWANCE } from "./billing/subscription-tiers.ts";
+import { creditNotificationService } from "./billing/credit-notifications.ts";
+import { notificationService } from "./notifications/notification.service.ts";
 
 // ========================================
 // Types
@@ -41,6 +45,37 @@ export interface CreditStatus {
   warningSeverity: "none" | "low" | "exhausted";
   /** Human-readable credit balance */
   creditBalanceFormatted: string;
+  /** Whether the org has a default payment method configured */
+  hasDefaultPaymentMethod?: boolean;
+}
+
+export interface UsageAnalyticsResult {
+  data: Array<{
+    dimension: string;
+    dimensionId?: string;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalRequests: number;
+    estimatedCostCents: number;
+  }>;
+  totals: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalRequests: number;
+    estimatedCostCents: number;
+  };
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface NotificationSettings {
+  enabled: boolean;
+  defaultPercentage: number;
+  thresholds: number[];
+  tierAllowanceCents: number;
+  subscriptionTier: string;
 }
 
 export interface UsageSummary {
@@ -316,13 +351,75 @@ export interface ChargeRefundedParams {
 
 export const billingService = {
   /**
-   * Get credit status for an organization
-   * Note: In production, credit balance would come from Stripe API.
-   * This implementation provides the local database state.
+   * Fetch credit balance from Stripe for a customer.
+   * Returns balance in cents (positive = credits available, 0 = exhausted).
+   * Returns null on error (fail-open).
+   */
+  async fetchCreditBalance(
+    customerId: string,
+    useSandbox: boolean
+  ): Promise<number | null> {
+    const stripeKey = getStripeApiKey(useSandbox);
+    if (!stripeKey) return null;
+
+    try {
+      const balanceParams = new URLSearchParams({
+        customer: customerId,
+        "filter[type]": "applicability_scope",
+        "filter[applicability_scope][price_type]": "metered",
+      });
+
+      const balanceRes = await fetch(
+        `https://api.stripe.com/v1/billing/credit_balance_summary?${balanceParams.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${stripeKey}`,
+            "Content-Type": "application/json",
+            "Stripe-Version": STRIPE_V2_API_VERSION,
+          },
+        }
+      );
+
+      if (!balanceRes.ok) {
+        const errText = await balanceRes.text();
+        console.error("[billing] Failed to fetch credit balance:", errText);
+        Sentry.captureMessage("[billing] Failed to fetch credit balance", {
+          level: "error",
+          tags: { source: "billing", feature: "credit-balance" },
+          extra: { customerId, useSandbox, responseText: errText },
+        });
+        return null;
+      }
+
+      const balanceData = (await balanceRes.json()) as {
+        balances?: Array<{
+          available_balance?: { monetary?: { value?: number } };
+        }>;
+      };
+      return balanceData?.balances?.[0]?.available_balance?.monetary?.value ?? 0;
+    } catch (error) {
+      console.error("[billing] Error fetching credit balance:", error);
+      Sentry.captureException(error, {
+        tags: { source: "billing", feature: "credit-balance" },
+        extra: { customerId, useSandbox },
+      });
+      return null;
+    }
+  },
+
+  /**
+   * Get credit status for an organization.
+   * Fetches real credit balance from Stripe credit_balance_summary API.
+   * Falls back to DB flags on Stripe errors (fail-open).
    */
   async getCreditStatus(organizationId: string): Promise<CreditStatus> {
     const result = await sql`
-      SELECT id
+      SELECT
+        id,
+        stripe_customer_id,
+        stripe_sandbox_customer_id,
+        credits_exhausted,
+        subscription_tier
       FROM app.organizations
       WHERE id = ${organizationId}
     `;
@@ -331,21 +428,63 @@ export const billingService = {
       throw new NotFoundError("Organization", String(organizationId));
     }
 
-    // Usage-based billing is always enabled
-    // Note: In a full implementation, we would fetch the actual credit balance
-    // from Stripe's credit_grants API. For now, assume not exhausted.
-    const isExhausted = false;
-    const isLow = false;
-    const showWarning = false;
+    const org = result[0];
+    const useSandbox = Deno.env.get("USE_STRIPE_SANDBOX") === "true";
+    const customerId = useSandbox
+      ? org.stripe_sandbox_customer_id
+      : org.stripe_customer_id;
+    const dbExhausted = org.credits_exhausted === true;
+
+    // No Stripe customer - return based on DB state only
+    if (!customerId) {
+      return {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: 0,
+        isExhausted: dbExhausted,
+        isLow: false,
+        showWarning: dbExhausted,
+        warningSeverity: dbExhausted ? "exhausted" : "none",
+        creditBalanceFormatted: dbExhausted ? "$0.00" : "Unknown",
+      };
+    }
+
+    // Fetch real balance from Stripe
+    const creditBalanceCents = await this.fetchCreditBalance(
+      customerId,
+      useSandbox
+    );
+
+    // Stripe call failed - fall back to DB flag
+    if (creditBalanceCents === null) {
+      return {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: -1,
+        isExhausted: dbExhausted,
+        isLow: false,
+        showWarning: dbExhausted,
+        warningSeverity: dbExhausted ? "exhausted" : "none",
+        creditBalanceFormatted: "Unknown",
+      };
+    }
+
+    const isExhausted = creditBalanceCents <= 0;
+    const isLow =
+      !isExhausted && creditBalanceCents < LOW_CREDITS_THRESHOLD_CENTS;
+    const showWarning = isExhausted || isLow;
+    const warningSeverity: "none" | "low" | "exhausted" = isExhausted
+      ? "exhausted"
+      : isLow
+        ? "low"
+        : "none";
 
     return {
       usageBasedBillingEnabled: true,
-      creditBalanceCents: -1, // -1 indicates unknown (would need Stripe API)
+      creditBalanceCents,
       isExhausted,
       isLow,
       showWarning,
-      warningSeverity: "none",
-      creditBalanceFormatted: "Unknown",
+      warningSeverity,
+      creditBalanceFormatted: `$${(Math.abs(creditBalanceCents) / 100).toFixed(2)}`,
     };
   },
 
@@ -742,6 +881,23 @@ export const billingService = {
           newTier,
         },
       });
+
+      // Fire-and-forget notification
+      const appUrl = Deno.env.get("APP_URL") || "http://localhost:5174";
+      const changeType = newTier === "FREE" ? "canceled" as const :
+        (currentTier === "FREE" || ["PRO", "TEAM", "BUSINESS", "ENTERPRISE"].indexOf(newTier!) >
+         ["PRO", "TEAM", "BUSINESS", "ENTERPRISE"].indexOf(currentTier)) ? "upgraded" as const : "downgraded" as const;
+      notificationService.send({
+        type: "subscription_changed",
+        organizationId: String(org.id),
+        data: {
+          organizationName: org.name,
+          previousTier: currentTier,
+          newTier,
+          changeType,
+          billingUrl: `${appUrl}/#/settings/billing/plan`,
+        },
+      }).catch(() => {});
     }
 
     // Handle status transitions
@@ -1259,26 +1415,40 @@ export const billingService = {
         subscriptionId,
         timestamp: new Date().toISOString(),
       });
+      Sentry.captureMessage("Payment review required - multiple failures", {
+        level: "error",
+        tags: { source: "billing", feature: "payment-failure" },
+        extra: {
+          organizationId: org.id,
+          organizationName: org.name,
+          attemptCount: attempts,
+          totalAmountDue: amountDue,
+          currency,
+          invoiceId,
+          subscriptionId,
+        },
+      });
 
       // TODO: Consider suspending access or downgrading tier
       // This should be a business decision - for now we just flag it
     }
 
     // Send payment failed notification
-    // TODO: Implement email notification when email service supports transactional billing emails
-    // For now, log the notification intent
-    console.log("[invoice.payment_failed] NOTIFICATION_INTENT", {
+    const appUrl = Deno.env.get("APP_URL") || "http://localhost:5174";
+    const amountFormatted = `$${((amountDue ?? 0) / 100).toFixed(2)}`;
+    notificationService.send({
       type: "payment_failed",
-      organizationId: org.id,
-      organizationName: org.name,
-      attemptCount: attempts,
-      amountDue,
-      currency,
-      nextRetryDate: nextPaymentAttempt
-        ? new Date(nextPaymentAttempt * 1000).toISOString()
-        : null,
-      failureReason: lastFinalizationError,
-    });
+      organizationId: String(org.id),
+      data: {
+        organizationName: org.name,
+        amountFormatted,
+        attemptCount: attempts,
+        nextRetryDate: nextPaymentAttempt
+          ? new Date(nextPaymentAttempt * 1000).toLocaleDateString()
+          : undefined,
+        billingUrl: `${appUrl}/#/settings/billing/payment`,
+      },
+    }).catch(() => {});
 
     // Capture to Sentry for monitoring
     if (attempts >= 2) {
@@ -1506,6 +1676,29 @@ export const billingService = {
       creditsGranted: creditsToAdd,
       paymentIntentId,
     });
+
+    // Fire-and-forget credit_purchase notification to app owner
+    try {
+      const apps = await sql`
+        SELECT a.name, w.organization_id
+        FROM app.applications a
+        JOIN app.workspaces w ON a.workspace_id = w.id
+        WHERE a.id = ${applicationId}::uuid
+        LIMIT 1
+      `;
+      if (apps.length > 0) {
+        const app = apps[0] as { name: string; organization_id: string };
+        notificationService.send({
+          type: "credit_purchase",
+          organizationId: String(app.organization_id),
+          data: {
+            consumerEmail: consumerIdentifier || "Unknown",
+            appName: app.name,
+            amountFormatted: `${creditsToAdd} credits`,
+          },
+        }).catch(() => {});
+      }
+    } catch { /* fire-and-forget */ }
   },
 
   /**
@@ -1764,6 +1957,22 @@ export const billingService = {
       daysUntilDeadline,
       livemode,
       timestamp: new Date().toISOString(),
+    });
+    Sentry.captureMessage(`Dispute record logged: ${disputeId}`, {
+      level: "error",
+      tags: { source: "billing", feature: "dispute", reason, livemode: String(livemode) },
+      extra: {
+        disputeId,
+        chargeId,
+        paymentIntentId,
+        customerId,
+        organizationId: org?.id,
+        organizationName: org?.name,
+        amount,
+        currency,
+        evidenceDeadline: evidenceDeadline.toISOString(),
+        daysUntilDeadline,
+      },
     });
 
     // Alert team immediately via Sentry at error level for high visibility
@@ -2137,16 +2346,22 @@ export const billingService = {
         timestamp: new Date().toISOString(),
       });
 
-      // Log notification intent for exhausted credits email
-      // TODO: Implement sendLowCreditsEmail when email service supports it
-      console.log("[billing.alert] NOTIFICATION_INTENT", {
-        type: "credits_exhausted",
-        severity: "exhausted",
-        organizationId: org.id,
-        organizationName: org.name,
-        creditBalanceCents: 0,
-        timestamp: new Date().toISOString(),
-      });
+      // Send exhausted credits notification (fire-and-forget)
+      creditNotificationService
+        .sendLowCreditsEmail({
+          organizationId: org.id,
+          severity: "exhausted",
+          creditBalanceCents: 0,
+          thresholdCents: 0,
+          organizationName: org.name,
+        })
+        .catch((err) => {
+          console.error("[billing.alert] Failed to send exhausted notification", err);
+          Sentry.captureException(err, {
+            tags: { source: "billing", feature: "credit-exhausted-notification" },
+            extra: { organizationId: org.id, customerId },
+          });
+        });
 
       // $0 alerts don't trigger auto-topup - just set the flag
       return;
@@ -2160,16 +2375,22 @@ export const billingService = {
         title,
       });
 
-      // Log notification intent for low credits email
-      // TODO: Implement sendLowCreditsEmail when email service supports it
-      console.log("[billing.alert] NOTIFICATION_INTENT", {
-        type: "low_credits",
-        severity: "low",
-        organizationId: org.id,
-        organizationName: org.name,
-        thresholdCents,
-        timestamp: new Date().toISOString(),
-      });
+      // Send low credits notification (fire-and-forget)
+      creditNotificationService
+        .sendLowCreditsEmail({
+          organizationId: org.id,
+          severity: "low",
+          creditBalanceCents: thresholdCents,
+          thresholdCents,
+          organizationName: org.name,
+        })
+        .catch((err) => {
+          console.error("[billing.alert] Failed to send low credits notification", err);
+          Sentry.captureException(err, {
+            tags: { source: "billing", feature: "low-credits-notification" },
+            extra: { organizationId: org.id, customerId, thresholdCents },
+          });
+        });
 
       // Notification alerts don't trigger auto-topup
       return;
@@ -2206,6 +2427,11 @@ export const billingService = {
     const stripeKey = getStripeApiKey(isSandbox);
     if (!stripeKey) {
       console.error("[billing.alert] Stripe not configured for auto-topup");
+      Sentry.captureMessage("Stripe not configured for auto-topup", {
+        level: "error",
+        tags: { source: "billing", feature: "auto-topup" },
+        extra: { organizationId, customerId, isSandbox },
+      });
       return;
     }
 
@@ -2223,6 +2449,10 @@ export const billingService = {
       console.error("[billing.alert] Failed to retrieve customer", {
         customerId,
         error: error instanceof Error ? error.message : String(error),
+      });
+      Sentry.captureException(error, {
+        tags: { source: "billing", feature: "auto-topup" },
+        extra: { customerId, organizationId, isSandbox, alertId },
       });
       return;
     }
@@ -2313,13 +2543,9 @@ export const billingService = {
         status: paymentIntent.status,
         paymentIntentId: paymentIntent.id,
       });
-
-      Sentry.captureMessage("Auto-topup payment incomplete", {
+      Sentry.captureMessage("Auto-topup payment did not succeed", {
         level: "error",
-        tags: {
-          source: "billing-service",
-          feature: "auto-topup-payment",
-        },
+        tags: { source: "billing", feature: "auto-topup" },
         extra: {
           customerId,
           organizationId,
@@ -2327,6 +2553,7 @@ export const billingService = {
           paymentStatus: paymentIntent.status,
           amountCents: topupAmountCents,
           isSandbox,
+          alertId,
         },
       });
       return;
@@ -2593,11 +2820,11 @@ export const billingService = {
    * Check if an organization has sufficient credits for voice usage.
    * Returns { hasCredits: true } if credits are available.
    * Returns { hasCredits: false, balance: number } if credits are exhausted.
+   * Uses shared fetchCreditBalance helper.
    */
   async checkCreditsForVoice(
     organizationId: string
   ): Promise<CreditCheckResult> {
-    // Get organization billing context
     const result = await sql`
       SELECT
         o.id,
@@ -2609,89 +2836,36 @@ export const billingService = {
     `;
 
     if (result.length === 0) {
-      // Organization not found - fail open
       return { hasCredits: true };
     }
 
     const org = result[0];
-
-    // Determine sandbox mode
     const useSandbox =
       Deno.env.get("USE_STRIPE_SANDBOX") === "true" ||
       Boolean(org.use_sandbox_for_usage_billing);
-
-    // Get customer ID
     const customerId = useSandbox
       ? org.stripe_sandbox_customer_id
       : org.stripe_customer_id;
 
     if (!customerId) {
-      // No customer ID means no billing set up - allow the call
       return { hasCredits: true };
     }
 
-    try {
-      const stripeKey = getStripeApiKey(useSandbox);
-      if (!stripeKey) {
-        // Stripe not configured - fail open
-        return { hasCredits: true };
-      }
+    const creditBalanceCents = await this.fetchCreditBalance(
+      customerId,
+      useSandbox
+    );
 
-      // Fetch credit balance from Stripe
-      const balanceParams = new URLSearchParams({
-        customer: customerId,
-        "filter[type]": "applicability_scope",
-        "filter[applicability_scope][price_type]": "metered",
-      });
-
-      const balanceRes = await fetch(
-        `https://api.stripe.com/v1/billing/credit_balance_summary?${balanceParams.toString()}`,
-        {
-          headers: {
-            Authorization: `Bearer ${stripeKey}`,
-            "Content-Type": "application/json",
-            "Stripe-Version": STRIPE_V2_API_VERSION,
-          },
-        }
-      );
-
-      if (!balanceRes.ok) {
-        // On error, allow the call to proceed (fail open for credit checks)
-        const errText = await balanceRes.text();
-        console.error("[billing] Failed to check credit balance:", errText);
-        Sentry.captureException(
-          new Error(`Credit balance check failed: ${errText}`),
-          {
-            tags: { source: "billing-service", feature: "credit-check" },
-            extra: { organizationId, customerId },
-          }
-        );
-        return { hasCredits: true };
-      }
-
-      const balanceData = (await balanceRes.json()) as {
-        balances?: Array<{
-          available_balance?: { monetary?: { value?: number } };
-        }>;
-      };
-      const creditBalanceCents =
-        balanceData?.balances?.[0]?.available_balance?.monetary?.value ?? 0;
-
-      // Check if credits are exhausted
-      if (creditBalanceCents <= 0) {
-        return { hasCredits: false, balance: creditBalanceCents };
-      }
-
-      return { hasCredits: true, balance: creditBalanceCents };
-    } catch (error) {
-      // On error, allow the call to proceed (fail open for credit checks)
-      console.error("[billing] Error checking credit balance:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "credit-check" },
-        extra: { organizationId },
-      });
+    // On error, fail open
+    if (creditBalanceCents === null) {
       return { hasCredits: true };
     }
+
+    if (creditBalanceCents <= 0) {
+      return { hasCredits: false, balance: creditBalanceCents };
+    }
+
+    return { hasCredits: true, balance: creditBalanceCents };
   },
 
   /**
@@ -4108,10 +4282,16 @@ export const billingService = {
       );
 
       if (!cadencesRes.ok) {
+        const cadencesErrText = await cadencesRes.text();
         console.error(
           "[billing] Failed to fetch billing cadences:",
-          await cadencesRes.text()
+          cadencesErrText
         );
+        Sentry.captureMessage("Failed to fetch billing cadences", {
+          level: "error",
+          tags: { source: "billing", feature: "billing-period-end" },
+          extra: { customerId, useSandbox, responseText: cadencesErrText },
+        });
         return null;
       }
 
@@ -4137,5 +4317,203 @@ export const billingService = {
       });
       return null;
     }
+  },
+
+  // ========================================
+  // Usage Analytics
+  // ========================================
+
+  /**
+   * Get usage analytics grouped by a dimension.
+   * Returns token usage and estimated cost per group.
+   */
+  async getUsageAnalytics(
+    organizationId: string,
+    options: {
+      startDate?: Date;
+      endDate?: Date;
+      groupBy?: "app" | "model" | "agentType";
+    }
+  ): Promise<UsageAnalyticsResult> {
+    const now = new Date();
+    const startDate =
+      options.startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = options.endDate || now;
+    const groupBy = options.groupBy || "model";
+
+    // Use parameterized queries for each dimension
+    let rows: any[];
+    if (groupBy === "app") {
+      rows = await sql`
+        SELECT
+          tu.application_id as dimension_id,
+          COALESCE(a.name, 'Unknown') as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        LEFT JOIN app.applications a ON tu.application_id = a.id
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY tu.application_id, a.name
+        ORDER BY total_tokens DESC
+      `;
+    } else if (groupBy === "agentType") {
+      rows = await sql`
+        SELECT
+          COALESCE(s.source::text, 'Unknown') as dimension_id,
+          COALESCE(s.source::text, 'Unknown') as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        LEFT JOIN chat.sessions s ON tu.session_id = s.id
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY s.source
+        ORDER BY total_tokens DESC
+      `;
+    } else {
+      // model (default)
+      rows = await sql`
+        SELECT
+          tu.model as dimension_id,
+          tu.model as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY tu.model
+        ORDER BY total_tokens DESC
+      `;
+    }
+
+    // Calculate estimated costs per row
+    let totalTokens = 0;
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalRequests = 0;
+    let totalCostCents = 0;
+
+    const data = (rows as any[]).map((row: any) => {
+      const inputTokens = Number(row.input_tokens || 0);
+      const outputTokens = Number(row.output_tokens || 0);
+      const rowTotalTokens = Number(row.total_tokens || 0);
+      const rowRequests = Number(row.total_requests || 0);
+
+      const estimatedCostCents = calculateCredits({
+        inputTokens,
+        outputTokens,
+        model: groupBy === "model" ? row.dimension : null,
+      });
+
+      totalTokens += rowTotalTokens;
+      totalInput += inputTokens;
+      totalOutput += outputTokens;
+      totalRequests += rowRequests;
+      totalCostCents += estimatedCostCents;
+
+      return {
+        dimension: row.dimension,
+        dimensionId: row.dimension_id ? String(row.dimension_id) : undefined,
+        totalTokens: rowTotalTokens,
+        inputTokens,
+        outputTokens,
+        totalRequests: rowRequests,
+        estimatedCostCents: Math.round(estimatedCostCents * 100) / 100,
+      };
+    });
+
+    return {
+      data,
+      totals: {
+        totalTokens,
+        inputTokens: totalInput,
+        outputTokens: totalOutput,
+        totalRequests,
+        estimatedCostCents: Math.round(totalCostCents * 100) / 100,
+      },
+      periodStart: startDate.toISOString(),
+      periodEnd: endDate.toISOString(),
+    };
+  },
+
+  // ========================================
+  // Notification Settings
+  // ========================================
+
+  /**
+   * Get notification settings for an organization.
+   */
+  async getNotificationSettings(
+    organizationId: string
+  ): Promise<NotificationSettings> {
+    const result = await sql`
+      SELECT
+        credit_notifications_enabled,
+        credit_notification_default_percentage,
+        credit_notification_thresholds,
+        subscription_tier
+      FROM app.organizations
+      WHERE id = ${organizationId}
+    `;
+
+    if (result.length === 0) {
+      throw new NotFoundError("Organization", String(organizationId));
+    }
+
+    const org = result[0];
+
+    // Parse JSONB thresholds (may come back as string)
+    let thresholds: number[] = [];
+    const raw = org.credit_notification_thresholds;
+    if (raw) {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      thresholds = Array.isArray(parsed) ? parsed : [];
+    }
+
+    const tier = (org.subscription_tier || "FREE") as SubscriptionTier;
+
+    return {
+      enabled: org.credit_notifications_enabled !== false,
+      defaultPercentage: org.credit_notification_default_percentage ?? 50,
+      thresholds,
+      tierAllowanceCents: TIER_CREDIT_ALLOWANCE[tier] ?? 0,
+      subscriptionTier: tier,
+    };
+  },
+
+  /**
+   * Update notification settings for an organization.
+   */
+  async updateNotificationSettings(
+    organizationId: string,
+    settings: {
+      enabled?: boolean;
+      defaultPercentage?: number;
+      thresholds?: number[];
+    }
+  ): Promise<NotificationSettings> {
+    if (settings.enabled !== undefined || settings.defaultPercentage !== undefined || settings.thresholds !== undefined) {
+      await sql`
+        UPDATE app.organizations
+        SET
+          credit_notifications_enabled = COALESCE(${settings.enabled ?? null}, credit_notifications_enabled),
+          credit_notification_default_percentage = COALESCE(${settings.defaultPercentage ?? null}, credit_notification_default_percentage),
+          credit_notification_thresholds = COALESCE(${settings.thresholds ? JSON.stringify(settings.thresholds) : null}::jsonb, credit_notification_thresholds),
+          updated_at = NOW()
+        WHERE id = ${organizationId}
+      `;
+    }
+
+    return this.getNotificationSettings(organizationId);
   },
 };

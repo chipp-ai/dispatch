@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
+import * as Sentry from "@sentry/deno";
 
 import {
   appMiddleware,
@@ -371,6 +372,7 @@ consumerRoutes.get(
       disclaimerText: settings?.disclaimerText as string | undefined,
       inputPlaceholder: settings?.inputPlaceholder as string | undefined,
       customInstructionsEnabled: settings?.customInstructionsEnabled ?? true,
+      multiplayerEnabled: settings?.multiplayerEnabled ?? false,
     };
 
     // Get pictureUrl from brandStyles (logoUrl field)
@@ -408,6 +410,13 @@ consumerRoutes.route("/", pwaRoutes);
 
 import { consumerChatRoutes } from "./chat.ts";
 consumerRoutes.route("/:appNameId/chat", consumerChatRoutes);
+
+// ========================================
+// Multiplayer Routes
+// ========================================
+
+import { multiplayerRoutes } from "./multiplayer.ts";
+consumerRoutes.route("/:appNameId/chat/multiplayer", multiplayerRoutes);
 
 // ========================================
 // Upload Routes (video for chat)
@@ -467,6 +476,10 @@ consumerRoutes.post("/:appNameId/upload/video", async (c) => {
     return c.json({ url });
   } catch (error) {
     console.error("[consumer-upload] Error uploading video:", error);
+    Sentry.captureException(error, {
+      tags: { source: "consumer", feature: "video-upload" },
+      extra: { appId: c.get("app")?.id },
+    });
     return c.json(
       {
         error: "Upload failed",

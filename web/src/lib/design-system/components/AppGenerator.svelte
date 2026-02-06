@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { push, querystring } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import { appGenerator, type TaskItem } from "../stores/appGenerator";
   import { currentWorkspaceId } from "../../../stores/workspace";
   import { get } from "svelte/store";
@@ -41,7 +42,9 @@
     const workspaceId = get(currentWorkspaceId);
 
     if (!workspaceId) {
-      console.error("No active workspace");
+      captureException(new Error("No active workspace for app generation"), {
+        tags: { feature: "app-generator" },
+      });
       appGenerator.setError("No active workspace found. Please try again.");
       return;
     }
@@ -87,7 +90,9 @@
       startGenerationFromPrompt(initialPrompt);
     } else {
       // No prompt provided - this shouldn't happen, redirect to home
-      console.error("No prompt provided for app generation");
+      captureException(new Error("No prompt provided for app generation"), {
+        tags: { feature: "app-generator" },
+      });
       push("/");
     }
   });
@@ -100,7 +105,7 @@
   <!-- Logo -->
   <div class="logo-container">
     <img
-      src="/assets/icons/chipp-logo.svg"
+      src="/assets/icons/chipp-nav-logo-new.svg"
       alt="Chipp"
       class="logo"
     />
@@ -152,7 +157,7 @@
 <style>
   .app-generator {
     min-height: 100vh;
-    background: #FCFBF7;
+    background: hsl(var(--background));
     position: relative;
     overflow: hidden;
     display: flex;
@@ -163,7 +168,7 @@
     position: absolute;
     inset: 0;
     opacity: 0.05;
-    background-image: radial-gradient(#000 1px, transparent 1px);
+    background-image: radial-gradient(hsl(var(--foreground)) 1px, transparent 1px);
     background-size: 20px 20px;
     pointer-events: none;
   }
@@ -185,7 +190,6 @@
   .logo {
     width: 80px;
     height: 24px;
-    color: hsl(var(--foreground));
   }
 
   @media (min-width: 640px) {

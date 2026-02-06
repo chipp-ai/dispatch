@@ -122,6 +122,14 @@ async function resolveFromAddress(context: EmailContext): Promise<FromAddress> {
     }
   } catch (err) {
     console.error("[transactional-email] Error resolving from address:", err);
+    Sentry.captureException(err, {
+      tags: { source: "transactional-email", feature: "from-address-resolution" },
+      extra: {
+        appId: context.appId,
+        organizationId: context.organizationId,
+        appName: context.appName,
+      },
+    });
   }
 
   // 3. Default
@@ -242,7 +250,10 @@ async function sendEmail(params: {
       subject,
       error: err instanceof Error ? err.message : String(err),
     });
-    Sentry.captureException(err, { extra: { to, subject, from: fromFormatted } });
+    Sentry.captureException(err, {
+      tags: { source: "transactional-email", feature: "send-email" },
+      extra: { to, subject, from: fromFormatted },
+    });
     return false;
   }
 }

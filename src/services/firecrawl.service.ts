@@ -284,6 +284,11 @@ export const firecrawlService = {
           status: response.status,
           errorBody,
         });
+        Sentry.captureMessage("Firecrawl cancel crawl failed", {
+          level: "error",
+          tags: { source: "firecrawl", feature: "crawl-cancel-response" },
+          extra: { crawlId, status: response.status, errorBody },
+        });
       }
     } catch (error) {
       console.error("[firecrawl] Cancel crawl error", {

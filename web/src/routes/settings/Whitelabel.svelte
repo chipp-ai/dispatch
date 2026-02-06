@@ -27,7 +27,10 @@
     Shield,
     Sparkles,
     Building2,
+    Upload,
   } from "lucide-svelte";
+  import CustomDomainSection from "./components/CustomDomainSection.svelte";
+  import { captureException } from "$lib/sentry";
 
   // Form state
   let name = "";
@@ -47,6 +50,8 @@
   let saveError: string | null = null;
   let saveSuccess = false;
   let hasChanges = false;
+  let isUploadingLogo = false;
+  let isUploadingFavicon = false;
 
   // User role check
   $: canEdit = $user && ["owner", "admin"].includes(getUserRole($user.id));
@@ -111,6 +116,55 @@
   onMount(async () => {
     await Promise.all([fetchWhitelabelSettings(), fetchOrganizationMembers()]);
   });
+
+  async function handleUpload(type: "logo" | "favicon", file: File) {
+    if (type === "logo") isUploadingLogo = true;
+    else isUploadingFavicon = true;
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(`/api/organization/whitelabel/upload?type=${type}`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || `Failed to upload ${type}`);
+      }
+
+      const { data } = await response.json();
+
+      // Auto-fill the URL field
+      if (type === "logo") {
+        logoUrl = data.url;
+      } else {
+        faviconUrl = data.url;
+      }
+    } catch (error) {
+      saveError = error instanceof Error ? error.message : `Failed to upload ${type}`;
+      captureException(error, {
+        tags: { feature: "whitelabel-upload" },
+        extra: { type, fileName: file.name, fileSize: file.size },
+      });
+    } finally {
+      if (type === "logo") isUploadingLogo = false;
+      else isUploadingFavicon = false;
+    }
+  }
+
+  function onFileSelected(type: "logo" | "favicon", event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input?.files?.[0];
+    if (file) {
+      handleUpload(type, file);
+      // Reset input so same file can be re-selected
+      input.value = "";
+    }
+  }
 
   async function handleSave() {
     if (!hasChanges || isSaving) return;
@@ -236,25 +290,73 @@
 
             <div class="form-row">
               <div class="form-group">
-                <Label for="logo-url">Logo URL</Label>
-                <Input
-                  id="logo-url"
-                  bind:value={logoUrl}
-                  placeholder="https://example.com/logo.png"
-                  disabled={!canEdit}
-                />
-                <p class="field-hint">Recommended: 200x50px PNG with transparency</p>
+                <Label for="logo-url">Logo</Label>
+                <div class="upload-field">
+                  {#if logoUrl}
+                    <img src={logoUrl} alt="Logo" class="upload-preview" />
+                  {/if}
+                  <div class="upload-input-row">
+                    <Input
+                      id="logo-url"
+                      bind:value={logoUrl}
+                      placeholder="https://example.com/logo.png"
+                      disabled={!canEdit}
+                      style="flex: 1"
+                    />
+                    {#if canEdit && $whitelabelTenant}
+                      <label class="upload-btn" class:uploading={isUploadingLogo}>
+                        {#if isUploadingLogo}
+                          <Spinner size="sm" />
+                        {:else}
+                          <Upload size={14} />
+                        {/if}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/svg+xml"
+                          on:change={(e) => onFileSelected("logo", e)}
+                          disabled={isUploadingLogo}
+                          hidden
+                        />
+                      </label>
+                    {/if}
+                  </div>
+                  <p class="field-hint">200x50px PNG with transparency. Upload or paste a URL.</p>
+                </div>
               </div>
 
               <div class="form-group">
-                <Label for="favicon-url">Favicon URL</Label>
-                <Input
-                  id="favicon-url"
-                  bind:value={faviconUrl}
-                  placeholder="https://example.com/favicon.ico"
-                  disabled={!canEdit}
-                />
-                <p class="field-hint">32x32px PNG or ICO</p>
+                <Label for="favicon-url">Favicon</Label>
+                <div class="upload-field">
+                  {#if faviconUrl}
+                    <img src={faviconUrl} alt="Favicon" class="upload-preview upload-preview-small" />
+                  {/if}
+                  <div class="upload-input-row">
+                    <Input
+                      id="favicon-url"
+                      bind:value={faviconUrl}
+                      placeholder="https://example.com/favicon.ico"
+                      disabled={!canEdit}
+                      style="flex: 1"
+                    />
+                    {#if canEdit && $whitelabelTenant}
+                      <label class="upload-btn" class:uploading={isUploadingFavicon}>
+                        {#if isUploadingFavicon}
+                          <Spinner size="sm" />
+                        {:else}
+                          <Upload size={14} />
+                        {/if}
+                        <input
+                          type="file"
+                          accept="image/png,image/x-icon,image/vnd.microsoft.icon"
+                          on:change={(e) => onFileSelected("favicon", e)}
+                          disabled={isUploadingFavicon}
+                          hidden
+                        />
+                      </label>
+                    {/if}
+                  </div>
+                  <p class="field-hint">32x32px PNG or ICO. Upload or paste a URL.</p>
+                </div>
               </div>
             </div>
 
@@ -320,6 +422,12 @@
             </div>
           </Card>
         </section>
+
+        <!-- Custom Domain Section -->
+        <CustomDomainSection
+          tenantId={$whitelabelTenant?.id || null}
+          canEdit={!!canEdit}
+        />
 
         <!-- Authentication Section -->
         <section class="settings-section">
@@ -643,6 +751,56 @@
     font-size: var(--text-sm);
     color: hsl(var(--muted-foreground));
     margin-top: var(--space-2);
+  }
+
+  .upload-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .upload-input-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .upload-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--muted) / 0.3);
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .upload-btn:hover:not(.uploading) {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .upload-btn.uploading {
+    cursor: default;
+  }
+
+  .upload-preview {
+    max-height: 40px;
+    max-width: 150px;
+    object-fit: contain;
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+    padding: var(--space-1);
+  }
+
+  .upload-preview-small {
+    max-height: 32px;
+    max-width: 32px;
   }
 
   .color-input-row {

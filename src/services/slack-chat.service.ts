@@ -9,6 +9,7 @@ import { db } from "../db/client.ts";
 import { slackService, type SlackInstallation } from "./slack.service.ts";
 import { chatService } from "./chat.service.ts";
 import { decrypt } from "./crypto.service.ts";
+import * as Sentry from "@sentry/deno";
 
 // Agent framework imports
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
@@ -341,6 +342,17 @@ export async function handleSlackMessage(
     }
   } catch (error) {
     console.error("[SlackChat] Error generating response", error);
+    Sentry.captureException(error, {
+      tags: { source: "slack", feature: "chat", operation: "message-processing" },
+      extra: {
+        channelId: event.channel,
+        threadTs: event.thread_ts || event.ts,
+        userId: event.user,
+        teamId,
+        applicationId,
+        sessionId: session?.id,
+      },
+    });
 
     // Post error message
     if (event.channel) {

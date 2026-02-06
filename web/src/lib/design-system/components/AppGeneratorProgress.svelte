@@ -87,7 +87,7 @@
                   </svg>
                 </div>
                 <div class="task-info">
-                  <h3 class="task-name">{item.name}</h3>
+                  <h3 class="task-name">{item.completedName || item.name}</h3>
                   {#if item.completedAt}
                     <p class="task-time">{formatTime(item.completedAt)}</p>
                   {/if}
@@ -113,7 +113,7 @@
                   <div class="pulse-dot-ping"></div>
                 </div>
                 <div class="task-info">
-                  <h3 class="task-name active-name">{activeItem.name}</h3>
+                  <h3 class="task-name active-name">{activeItem.activeName || activeItem.name}</h3>
                   <p class="task-time">In progress...</p>
                 </div>
               </div>
@@ -133,7 +133,7 @@
                   <span class="emoji">{item.icon}</span>
                 </div>
                 <div class="task-info">
-                  <h3 class="task-name pending-name">{item.name}</h3>
+                  <h3 class="task-name pending-name">{item.pendingName || item.name}</h3>
                   <p class="task-time">Waiting...</p>
                 </div>
                 <span class="task-status pending-status">Up next</span>
@@ -429,12 +429,12 @@
   }
 
   .icon-wrapper.pending {
-    background: linear-gradient(to bottom right, #f3f4f6, #e5e7eb);
+    background: linear-gradient(to bottom right, hsl(var(--muted)), hsl(var(--muted) / 0.8));
     transition: all 0.3s ease;
   }
 
   .task-item.pending:hover .icon-wrapper.pending {
-    background: linear-gradient(to bottom right, #e5e7eb, #d1d5db);
+    background: linear-gradient(to bottom right, hsl(var(--muted) / 0.8), hsl(var(--muted) / 0.6));
   }
 
   .spinner {
@@ -539,7 +539,7 @@
   }
 
   .task-status.pending-status {
-    color: #d1d5db;
+    color: hsl(var(--muted-foreground));
     opacity: 0;
     transition: opacity 0.3s ease;
   }
@@ -631,9 +631,9 @@
     height: 60px;
     background: linear-gradient(
       to bottom,
-      #FCFBF7,
-      rgba(252, 251, 247, 0.8),
-      rgba(252, 251, 247, 0.3),
+      hsl(var(--background)),
+      hsl(var(--background) / 0.8),
+      hsl(var(--background) / 0.3),
       transparent
     );
   }
@@ -649,8 +649,8 @@
     height: 80px;
     background: linear-gradient(
       to top,
-      #FCFBF7,
-      rgba(252, 251, 247, 0.6),
+      hsl(var(--background)),
+      hsl(var(--background) / 0.6),
       transparent
     );
   }

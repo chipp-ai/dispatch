@@ -20,7 +20,7 @@
       "command": "deno",
       "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
       "env": {
-        "DATABASE_URL": "postgresql://postgres:supersecret@localhost:5433/chipp"
+        "DATABASE_URL": "postgresql://postgres:postgres@localhost:5436/chipp_deno"
       }
     },
     "kubernetes": {

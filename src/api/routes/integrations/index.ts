@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { mcpIntegrationService } from "../../../services/mcp-integration.service.ts";
 import { testMcpConnection } from "../../../services/mcp-client.service.ts";
@@ -174,6 +175,10 @@ integrationRoutes.post(
       const message =
         err instanceof Error ? err.message : "Failed to save integration";
       console.error("[mcp] Save error:", err);
+      Sentry.captureException(err, {
+        tags: { source: "integrations-api", feature: "mcp-save" },
+        extra: { applicationId: body.applicationId, integrationId: body.integrationId },
+      });
       return c.json({ ok: false, error: message }, 500);
     }
   }

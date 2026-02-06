@@ -83,6 +83,8 @@ export { default as TableCaption } from "./components/TableCaption.svelte";
 // Toast components
 export { default as Toast } from "./components/Toast.svelte";
 export { default as Toaster } from "./components/Toaster.svelte";
+export { default as NotificationToast } from "./components/NotificationToast.svelte";
+export { default as NotificationToaster } from "./components/NotificationToaster.svelte";
 
 // Dev tools
 export { default as DevPanel } from "./components/DevPanel.svelte";
@@ -98,6 +100,7 @@ export {
 
 // Navigation components
 export { default as GlobalNavBar } from "./components/GlobalNavBar.svelte";
+export { default as MobileBottomNav } from "./components/MobileBottomNav.svelte";
 export { default as UserMenu } from "./components/UserMenu.svelte";
 export { default as OrganizationSwitcher } from "./components/OrganizationSwitcher.svelte";
 export { default as WorkspaceSwitcher } from "./components/WorkspaceSwitcher.svelte";
@@ -155,5 +158,8 @@ export { default as WelcomeBackScreen } from "./components/WelcomeBackScreen.sve
 
 // Toast store
 export { toasts } from "./stores/toast";
+
+// Notification toast store
+export { notificationToasts } from "./stores/notificationToast";
 
 // Theme utilities are in stores/theme.ts

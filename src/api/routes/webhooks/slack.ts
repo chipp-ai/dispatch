@@ -8,6 +8,7 @@
  */
 
 import { Hono } from "hono";
+import * as Sentry from "@sentry/deno";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import {
   slackWebhookMiddleware,
@@ -169,6 +170,10 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
         // Fire-and-forget async processing
         processEvent(installation, event, teamId, slackAppId).catch((err) => {
           console.error("[SlackWebhook] Error processing event", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            tags: { source: "slack-webhook" },
+            extra: { teamId, slackAppId, eventType: event.type, eventId: payload.event_id },
+          });
         });
       }
     }

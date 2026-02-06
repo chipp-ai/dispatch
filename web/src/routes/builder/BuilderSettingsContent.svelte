@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import { Card, Button, toasts, Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "$lib/design-system";
   import { AlertTriangle, Languages, Trash2 } from "lucide-svelte";
 
@@ -76,7 +77,7 @@
       toasts.success("Saved", "Language settings updated");
       dispatch("reload");
     } catch (e) {
-      console.error("Failed to save:", e);
+      captureException(e, { tags: { feature: "builder-settings" }, extra: { action: "save-language", appId: app?.id, language: selectedLanguage } });
       toasts.error("Error", "Failed to save language settings");
     } finally {
       isSaving = false;
@@ -103,7 +104,7 @@
       toasts.success("Deleted", "Application has been deleted");
       dispatch("deleted");
     } catch (e) {
-      console.error("Failed to delete:", e);
+      captureException(e, { tags: { feature: "builder-settings" }, extra: { action: "delete-app", appId: app?.id } });
       toasts.error("Error", "Failed to delete application");
     } finally {
       isDeleting = false;

@@ -10,6 +10,7 @@
    * - Error details with stack traces
    * - Copy buttons for each section
    */
+  import { captureException } from "$lib/sentry";
   import type { ToolDebugInfo } from "./types";
 
   export let debugInfo: ToolDebugInfo | undefined = undefined;
@@ -36,7 +37,10 @@
       copiedSection = section;
       setTimeout(() => (copiedSection = null), 2000);
     } catch (err) {
-      console.error("Failed to copy:", err);
+      captureException(err, {
+        tags: { feature: "tool-debug-info" },
+        extra: { action: "copy-to-clipboard", section },
+      });
     }
   }
 

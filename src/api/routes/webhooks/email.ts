@@ -18,6 +18,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import * as Sentry from "@sentry/deno";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { emailService } from "../../../services/email.service.ts";
 import { handleEmailMessage } from "../../../services/email-chat.service.ts";
@@ -216,6 +217,10 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
           correlationId,
           error: err instanceof Error ? err.message : String(err),
         });
+        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+          tags: { source: "email-webhook", feature: "per-app" },
+          extra: { correlationId, applicationId, messageId: email.MessageID },
+        });
       });
 
       // Acknowledge the webhook immediately
@@ -356,6 +361,10 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
       console.error("[EmailWebhook] Error processing email", {
         correlationId,
         error: err instanceof Error ? err.message : String(err),
+      });
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+        tags: { source: "email-webhook", feature: "global" },
+        extra: { correlationId, applicationId: config.applicationId, messageId: email.MessageID },
       });
     });
 

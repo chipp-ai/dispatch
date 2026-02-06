@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import * as Sentry from "@sentry/deno";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { twilioWebhookMiddleware } from "../../middleware/webhookAuth.ts";
 
@@ -138,6 +139,11 @@ twilioWebhookRoutes.post("/", async (c) => {
 
     if (!calledNumber) {
       console.error(`[${requestId}] No destination number in webhook`);
+      Sentry.captureMessage("No destination number in Twilio webhook", {
+        level: "error",
+        tags: { source: "twilio-webhook" },
+        extra: { requestId, callSid, callStatus: params.CallStatus },
+      });
       return twimlResponse(
         twimlSay("We could not determine the destination number.")
       );
@@ -178,6 +184,10 @@ twilioWebhookRoutes.post("/", async (c) => {
         });
       } catch (error) {
         console.error(`[${requestId}] Failed to create call record:`, error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { source: "twilio-webhook", feature: "call-record-create" },
+          extra: { requestId, callSid, applicationId: phoneNumber.application_id },
+        });
         // Continue anyway - don't fail the webhook
       }
     }
@@ -210,6 +220,10 @@ twilioWebhookRoutes.post("/", async (c) => {
     );
   } catch (error) {
     console.error(`[${requestId}] Error handling Twilio webhook:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "twilio-webhook" },
+      extra: { requestId },
+    });
 
     // Return error TwiML
     return twimlResponse(
@@ -277,6 +291,10 @@ twilioWebhookRoutes.post("/status", async (c) => {
         await callRecordService.update(callSid, updateParams);
       } catch (error) {
         console.error(`[${requestId}] Failed to update call record:`, error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { source: "twilio-webhook", feature: "call-record-update" },
+          extra: { requestId, callSid, callStatus },
+        });
         // Continue anyway - don't fail the callback
       }
     }
@@ -287,6 +305,10 @@ twilioWebhookRoutes.post("/status", async (c) => {
       `[${requestId}] Error handling Twilio status callback:`,
       error
     );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "twilio-webhook", feature: "status-callback" },
+      extra: { requestId },
+    });
     return c.json({ received: true, error: "Processing error" });
   }
 });

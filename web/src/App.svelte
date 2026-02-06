@@ -8,14 +8,23 @@
   import { initWorkspace } from "./stores/workspace";
   import { initOrganization } from "./stores/organization";
   import { appBooted, markAppBooted } from "./stores/app";
-  import { Toaster, ErrorBoundary, DevPanel } from "./lib/design-system";
+  import { Toaster, ErrorBoundary, DevPanel, NotificationToaster } from "./lib/design-system";
+  import { startNotificationListener } from "./lib/notifications/useNotificationListener";
+  import MobileBottomNav from "./lib/design-system/components/MobileBottomNav.svelte";
   import SplashScreen from "./lib/design-system/components/SplashScreen.svelte";
   import { initDevConsoleCapture } from "./lib/debug/devConsoleCapture";
   import { initAppStateTracking } from "./stores/appState";
   import ConsumerChat from "./routes/consumer/ConsumerChat.svelte";
+  import BuilderPWA from "./lib/design-system/components/BuilderPWA.svelte";
+  import { setSentryUser, setSentryContext } from "./lib/sentry";
+  import { user } from "./stores/auth";
+  import { organizationStore } from "./stores/organization";
 
   // Dev console capture cleanup
   let cleanupConsoleCapture: (() => void) | null = null;
+
+  // Notification listener cleanup
+  let cleanupNotificationListener: (() => void) | null = null;
 
   // Import design system styles
   import "./lib/design-system/base.css";
@@ -65,6 +74,13 @@
     markAppBooted();
   }
 
+  // Keep Sentry context in sync with auth and org stores
+  $: setSentryUser($user);
+  $: {
+    const org = $organizationStore.organization;
+    setSentryContext("organization", org ? { id: org.id, name: org.name, tier: org.subscriptionTier } : null);
+  }
+
   // Initialize on mount
   onMount(async () => {
     // Dev console capture - only in development, filter for StreamingMarkdown logs
@@ -95,6 +111,7 @@
     if (user) {
       initWorkspace(); // Fire and forget - uses cache for instant display
       initOrganization(); // Fire and forget - uses cache for instant display
+      cleanupNotificationListener = startNotificationListener();
     }
 
     // Add constellation background to body
@@ -103,6 +120,7 @@
 
   onDestroy(() => {
     cleanupConsoleCapture?.();
+    cleanupNotificationListener?.();
   });
 
   // Redirect to login if not authenticated
@@ -113,12 +131,17 @@
 
 <ErrorBoundary>
   <Toaster />
+  <NotificationToaster />
   <DevPanel />
+  <MobileBottomNav />
 
   {#if vanitySlug}
     <!-- Vanity subdomain: render consumer chat directly, skip developer auth -->
     <ConsumerChat />
   {:else}
+    <!-- Builder PWA setup (service worker, manifest, meta tags) -->
+    <BuilderPWA />
+
     <!-- Splash screen overlay - only shows on cold start, never again -->
     {#if !$appBooted}
       <SplashScreen onComplete={handleSplashComplete} />

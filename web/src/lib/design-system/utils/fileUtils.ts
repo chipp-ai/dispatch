@@ -1,3 +1,5 @@
+import { captureException } from "$lib/sentry";
+
 // File link detection and parsing utilities
 
 export interface FileDownloadInfo {
@@ -59,7 +61,10 @@ export function parseFileDownloadUrl(url: string): FileDownloadInfo | null {
       isGenerated: true,
     };
   } catch (error) {
-    console.error("Error parsing file download URL:", error);
+    captureException(error, {
+      tags: { feature: "file-utils" },
+      extra: { url },
+    });
     return null;
   }
 }

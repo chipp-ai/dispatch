@@ -3,6 +3,7 @@
   import GlobalNavBar from "../../lib/design-system/components/GlobalNavBar.svelte";
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
   import { Card, Button, toasts, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace, fetchWorkspaces } from "../../stores/workspace";
   import { user } from "../../stores/auth";
   import { ArrowLeft, Trash2, UserPlus, ArrowUpDown, ArrowLeftRight } from "lucide-svelte";
@@ -79,7 +80,10 @@
         currentUserRole = currentMember?.role || null;
       }
     } catch (error) {
-      console.error("Failed to load members:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { workspaceId: $currentWorkspace?.id, action: "loadMembers" },
+      });
       toasts.error("Error", "Failed to load workspace members");
     } finally {
       isLoading = false;
@@ -180,7 +184,10 @@
       toasts.success("Success", "Member invited successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to invite member:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { workspaceId: $currentWorkspace?.id, inviteEmail, inviteRole, action: "inviteMember" },
+      });
       toasts.error("Error", error instanceof Error ? error.message : "Failed to invite member");
     } finally {
       isInviting = false;
@@ -207,7 +214,10 @@
       toasts.success("Success", "Member removed successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to remove member:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { workspaceId: $currentWorkspace?.id, memberId: memberToDelete?.id, action: "removeMember" },
+      });
       toasts.error("Error", error instanceof Error ? error.message : "Failed to remove member");
     } finally {
       isDeleting = false;
@@ -238,7 +248,10 @@
 
       toasts.success("Success", "Role updated successfully");
     } catch (error) {
-      console.error("Failed to update role:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { workspaceId: $currentWorkspace?.id, memberId: member.id, newRole, action: "updateRole" },
+      });
       toasts.error("Error", "Failed to update role");
     } finally {
       isUpdatingRole = false;
@@ -267,7 +280,10 @@
       toasts.success("Success", "Ownership transferred successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to transfer ownership:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { workspaceId: $currentWorkspace?.id, newOwnerId: selectedNewOwner?.userId, action: "transferOwnership" },
+      });
       toasts.error("Error", "Failed to transfer ownership");
     } finally {
       isTransferring = false;

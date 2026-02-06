@@ -12,6 +12,7 @@
  * - Guards against duplicate processing and aborted streams
  */
 
+import * as Sentry from "@sentry/deno";
 import type { StreamChunk, TokenUsage } from "../llm/types.ts";
 
 // ========================================
@@ -178,6 +179,10 @@ export async function* withOnComplete(
           await onComplete(result);
         } catch (err) {
           console.error("[completion] onComplete callback error:", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            tags: { source: "agent", feature: "completion", operation: "onComplete" },
+            extra: { textLength: text.length, toolCallCount: toolCalls.length, finishReason },
+          });
           // Don't re-throw from finally block - it would mask any original exception
         }
       }
@@ -203,6 +208,10 @@ export async function* withOnComplete(
           await onComplete(result);
         } catch (err) {
           console.error("[completion] onComplete callback error:", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            tags: { source: "agent", feature: "completion", operation: "onComplete-aborted" },
+            extra: { textLength: text.length, toolCallCount: toolCalls.length, finishReason: "abort" },
+          });
           // Don't re-throw from finally block - it would mask any original exception
         }
       }

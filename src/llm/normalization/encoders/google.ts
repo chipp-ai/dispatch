@@ -12,6 +12,7 @@
  * - JSON Schema 7 must be converted to OpenAPI Schema 3.0 format
  */
 
+import * as Sentry from "@sentry/deno";
 import type {
   Content,
   FunctionDeclaration,
@@ -51,6 +52,11 @@ async function defaultFetchImageAsBase64(
       console.error(
         `[google-encoder] Failed to fetch image: ${response.status}`
       );
+      Sentry.captureMessage(`[google-encoder] Failed to fetch image: ${response.status}`, {
+        level: "error",
+        tags: { source: "llm", feature: "encoder", provider: "google" },
+        extra: { imageUrl: url, statusCode: response.status },
+      });
       return null;
     }
 
@@ -67,6 +73,10 @@ async function defaultFetchImageAsBase64(
     return { base64, mimeType: contentType };
   } catch (error) {
     console.error(`[google-encoder] Error fetching image:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "llm", feature: "encoder", provider: "google" },
+      extra: { imageUrl: url },
+    });
     return null;
   }
 }

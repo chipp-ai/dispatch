@@ -5,7 +5,8 @@
    * Displays the full message transcript for a selected chat session.
    * Includes header with session metadata, message grouping, and markdown rendering.
    */
-  import { Globe, Code, Phone, Mail, Clock, User, ArrowLeft } from "lucide-svelte";
+  import { afterUpdate, tick } from "svelte";
+  import { Globe, Code, Phone, Mail, Clock, User, ArrowLeft, Send, Headset } from "lucide-svelte";
   import Markdown from "../Markdown.svelte";
 
   interface SlackUser {
@@ -22,6 +23,7 @@
     createdAt: string;
     files?: { name: string; type: string }[];
     tags?: { id: string; name: string; instanceId?: string }[];
+    isBuilderMessage?: boolean;
   }
 
   interface ChatUser {
@@ -43,6 +45,33 @@
   } | null = null;
 
   export let onBack: (() => void) | null = null;
+  export let isLiveTakeover: boolean = false;
+  export let onSendMessage: ((content: string) => void) | null = null;
+  export let onRelease: (() => void) | null = null;
+
+  let takeoverInput = "";
+  let messagesEl: HTMLDivElement;
+
+  // Auto-scroll to bottom when new messages arrive during takeover
+  afterUpdate(() => {
+    if (isLiveTakeover && messagesEl) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  });
+
+  function handleTakeoverSend() {
+    const content = takeoverInput.trim();
+    if (!content || !onSendMessage) return;
+    onSendMessage(content);
+    takeoverInput = "";
+  }
+
+  function handleTakeoverKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleTakeoverSend();
+    }
+  }
 
   // Extract phone number for WhatsApp sessions
   function extractPhoneNumber(sessionId: string): string | null {
@@ -240,8 +269,23 @@
       </div>
     </div>
 
+    <!-- Takeover banner -->
+    {#if isLiveTakeover}
+      <div class="takeover-banner">
+        <div class="takeover-banner-content">
+          <Headset size={16} />
+          <span>You are speaking directly to this user. AI is paused.</span>
+        </div>
+        {#if onRelease}
+          <button class="takeover-release-btn" on:click={onRelease}>
+            Release to AI
+          </button>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Messages -->
-    <div class="messages-container">
+    <div class="messages-container" bind:this={messagesEl}>
       {#each groupedMessages as messageGroup, groupIndex}
         {@const firstMessage = messageGroup[0]}
         {@const isBot = firstMessage.senderType === "BOT"}
@@ -262,8 +306,12 @@
               <div class="message-bubble {isBot ? 'bot' : 'user'}">
                 {#if msgIndex === 0}
                   <div class="message-meta">
-                    <span class="sender-name">
-                      {isBot ? "Assistant" : userDisplay.name}
+                    <span class="sender-name" class:builder-sender={isBot && message.isBuilderMessage}>
+                      {#if isBot && message.isBuilderMessage}
+                        You (Human)
+                      {:else}
+                        {isBot ? "Assistant" : userDisplay.name}
+                      {/if}
                     </span>
                     <span class="message-time">{formatTime(message.createdAt)}</span>
                   </div>
@@ -284,13 +332,33 @@
         </div>
       {/each}
 
-      <!-- Session end indicator -->
-      {#if session.messages.length > 0}
+      <!-- Session end indicator (hidden during live takeover) -->
+      {#if session.messages.length > 0 && !isLiveTakeover}
         <div class="session-end">
           <span>Conversation ended {formatDate(session.messages[session.messages.length - 1].createdAt)}</span>
         </div>
       {/if}
     </div>
+
+    <!-- Takeover input bar -->
+    {#if isLiveTakeover && onSendMessage}
+      <div class="takeover-input-bar">
+        <input
+          type="text"
+          class="takeover-input"
+          placeholder="Type a message as yourself..."
+          bind:value={takeoverInput}
+          on:keydown={handleTakeoverKeydown}
+        />
+        <button
+          class="takeover-send-btn"
+          disabled={!takeoverInput.trim()}
+          on:click={handleTakeoverSend}
+        >
+          <Send size={18} />
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -611,5 +679,104 @@
   .session-end span {
     font-size: 12px;
     color: var(--text-tertiary);
+  }
+
+  /* Builder message attribution */
+  .builder-sender {
+    color: hsl(36, 100%, 40%) !important;
+  }
+
+  /* Takeover banner */
+  .takeover-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: hsl(36, 100%, 50%, 0.08);
+    border-bottom: 1px solid hsl(36, 100%, 50%, 0.2);
+    flex-shrink: 0;
+  }
+
+  .takeover-banner-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 13px;
+    font-weight: 500;
+    color: hsl(36, 80%, 35%);
+  }
+
+  .takeover-release-btn {
+    padding: 5px 14px;
+    border: 1px solid hsl(36, 100%, 50%, 0.3);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: hsl(36, 100%, 35%);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .takeover-release-btn:hover {
+    background: hsl(36, 100%, 50%, 0.12);
+    border-color: hsl(36, 100%, 50%, 0.5);
+  }
+
+  /* Takeover input bar */
+  .takeover-input-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-primary);
+    background: var(--bg-primary);
+    flex-shrink: 0;
+  }
+
+  .takeover-input {
+    flex: 1;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .takeover-input:focus {
+    border-color: hsl(36, 100%, 50%, 0.5);
+  }
+
+  .takeover-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .takeover-send-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: hsl(36, 100%, 50%);
+    color: white;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .takeover-send-btn:hover:not(:disabled) {
+    background: hsl(36, 100%, 45%);
+  }
+
+  .takeover-send-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 </style>

@@ -28,6 +28,7 @@
   };
   export let isSelected = false;
   export let isUnread = false;
+  export let isLive = false;
   export let searchTerm = "";
   export let onClick: () => void = () => {};
 
@@ -129,8 +130,13 @@
 <button
   class="session-card"
   class:selected={isSelected}
+  class:live={isLive}
   on:click={onClick}
 >
+  {#if isLive}
+    <div class="live-dot"></div>
+  {/if}
+
   <!-- Top row: Source badge and time -->
   <div class="card-header">
     <span class="source-badge {sourceInfo.colorClass}">
@@ -203,6 +209,7 @@
 
 <style>
   .session-card {
+    position: relative;
     width: 100%;
     padding: var(--space-3) var(--space-4);
     background: transparent;
@@ -221,6 +228,44 @@
   .session-card.selected {
     background: hsl(var(--primary) / 0.1);
     border-left-color: hsl(var(--primary));
+  }
+
+  /* Live session glow */
+  .session-card.live {
+    border-left-color: hsl(142, 71%, 45%);
+    background: hsl(142, 71%, 45%, 0.04);
+    box-shadow:
+      0 0 8px hsl(142, 71%, 45%, 0.15),
+      0 0 20px hsl(142, 71%, 45%, 0.08);
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+
+  .session-card.live:hover {
+    background: hsl(142, 71%, 45%, 0.08);
+  }
+
+  @keyframes live-pulse {
+    0%, 100% {
+      box-shadow:
+        0 0 8px hsl(142, 71%, 45%, 0.15),
+        0 0 20px hsl(142, 71%, 45%, 0.08);
+    }
+    50% {
+      box-shadow:
+        0 0 12px hsl(142, 71%, 45%, 0.25),
+        0 0 28px hsl(142, 71%, 45%, 0.12);
+    }
+  }
+
+  .live-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    background: hsl(142, 71%, 45%);
+    border-radius: 50%;
+    box-shadow: 0 0 6px hsl(142, 71%, 45%, 0.6);
   }
 
   .card-header {

@@ -4,6 +4,7 @@
   import GlobalNavBar from "../lib/design-system/components/GlobalNavBar.svelte";
   import PlanCard from "../lib/design-system/components/PlanCard.svelte";
   import { toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { organizationStore } from "../stores/organization";
   import { isAuthenticated } from "../stores/auth";
   import { push } from "svelte-spa-router";
@@ -213,7 +214,7 @@
         const data = await response.json();
         window.location.href = data.url;
       } catch (error) {
-        console.error("Error generating payment URL:", error);
+        captureException(error, { tags: { page: "plans", feature: "payment-url" } });
         toasts.error("Error", "Failed to generate payment URL. Please try again.");
         loadingTier = null;
       }

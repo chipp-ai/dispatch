@@ -7,6 +7,7 @@
    * Only works on supported browsers (Chrome, Edge, Samsung Internet, etc.)
    */
   import { onMount, onDestroy } from 'svelte';
+  import { captureException } from '$lib/sentry';
 
   export let appName: string = 'App';
   export let appId: string = '';
@@ -87,7 +88,10 @@
     console.log('[InstallPrompt] Install button clicked', { hasDeferredPrompt: !!deferredPrompt });
 
     if (!deferredPrompt) {
-      console.error('[InstallPrompt] No installation prompt available');
+      captureException(new Error('[InstallPrompt] No installation prompt available'), {
+        tags: { feature: "pwa-install" },
+        extra: { appId, appName },
+      });
       return;
     }
 
@@ -108,7 +112,10 @@
         console.log('[InstallPrompt] User dismissed the install prompt');
       }
     } catch (error) {
-      console.error('[InstallPrompt] Error showing install prompt:', error);
+      captureException(error, {
+        tags: { feature: "pwa-install" },
+        extra: { action: "show-install-prompt", appId },
+      });
       showInstallPrompt = true;
     } finally {
       deferredPrompt = null;

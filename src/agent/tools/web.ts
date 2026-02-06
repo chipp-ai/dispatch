@@ -59,6 +59,10 @@ async function searchWeb(query: string): Promise<SerperResponse | string> {
 
   if (!SERPER_API_KEY) {
     console.error("[browseWeb] SERPER_API_KEY not configured");
+    Sentry.captureMessage("SERPER_API_KEY not configured", {
+      level: "error",
+      tags: { source: "agent", feature: "tools", tool: "web" },
+    });
     return "Web search is not configured. Please contact the administrator.";
   }
 
@@ -76,6 +80,11 @@ async function searchWeb(query: string): Promise<SerperResponse | string> {
       console.error(
         `Serper API error: ${response.status} ${response.statusText}`
       );
+      Sentry.captureMessage(`Serper API error: ${response.status} ${response.statusText}`, {
+        level: "error",
+        tags: { source: "agent", feature: "tools", tool: "web" },
+        extra: { query, statusCode: response.status },
+      });
       return `Web search failed with status ${response.status}. Please try again later.`;
     }
 

@@ -11,6 +11,7 @@
   import { isAuthenticated } from "../stores/auth";
   import { push } from "svelte-spa-router";
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   let email = "";
   let isLoading = false;
@@ -63,7 +64,7 @@
       emailSent = true;
       toasts.success("Email sent", "Check your inbox for reset instructions");
     } catch (error) {
-      console.error("Forgot password error:", error);
+      captureException(error, { tags: { page: "forgot-password", feature: "reset-request" } });
       toasts.error("Error", "Failed to send reset email. Please try again.");
     } finally {
       isLoading = false;

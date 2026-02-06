@@ -5,6 +5,7 @@
   import BuilderHeader from "../lib/design-system/components/builder/BuilderHeader.svelte";
   import { Card, Switch, Input, Button } from "$lib/design-system";
   import { KeyRound, Copy, Eye, EyeOff, Plus, Trash2, Shield, Globe, Mail, ExternalLink, Check } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -76,7 +77,7 @@
       allowedEmailsInput = app?.allowedEmails?.join(", ") ?? "";
       redirectUrl = app?.redirectAfterSignup ?? "";
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "load-app" }, extra: { appId: params.appId } });
     } finally {
       isLoading = false;
     }
@@ -92,7 +93,7 @@
         apiKeys = result.data || [];
       }
     } catch (e) {
-      console.error("Failed to load API keys:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "load-api-keys" }, extra: { appId: params.appId } });
     }
   }
 
@@ -116,7 +117,7 @@
         showingKey = result.data.id;
       }
     } catch (e) {
-      console.error("Failed to create API key:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "create-api-key" }, extra: { appId: params.appId } });
     } finally {
       isCreatingKey = false;
     }
@@ -133,7 +134,7 @@
         apiKeys = apiKeys.filter(k => k.id !== keyId);
       }
     } catch (e) {
-      console.error("Failed to delete API key:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "delete-api-key" }, extra: { appId: params.appId, keyId } });
     }
   }
 
@@ -167,7 +168,7 @@
         });
       }
     } catch (e) {
-      console.error("Failed to update capability:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "update-capability" }, extra: { appId: params.appId, capabilityName: name } });
     } finally {
       isSaving = false;
     }
@@ -188,7 +189,7 @@
         }),
       });
     } catch (e) {
-      console.error("Failed to update settings:", e);
+      captureException(e, { tags: { page: "app-builder-access", feature: "update-settings" }, extra: { appId: params.appId } });
     } finally {
       isSaving = false;
     }

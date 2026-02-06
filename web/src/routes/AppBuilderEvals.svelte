@@ -19,6 +19,7 @@
     Edit2,
     Save
   } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -93,7 +94,7 @@
       const result = await response.json();
       app = result.data;
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-evals", feature: "load-app" }, extra: { appId: params.appId } });
     } finally {
       isLoading = false;
     }
@@ -110,7 +111,7 @@
         evaluations = result.data || [];
       }
     } catch (e) {
-      console.error("Failed to load evaluations:", e);
+      captureException(e, { tags: { page: "app-builder-evals", feature: "load-evaluations" }, extra: { appId: params.appId } });
     }
   }
 
@@ -143,7 +144,7 @@
         closeCreateModal();
       }
     } catch (e) {
-      console.error("Failed to create evaluation:", e);
+      captureException(e, { tags: { page: "app-builder-evals", feature: "create-evaluation" }, extra: { appId: params.appId, evalName: newEvalName } });
     } finally {
       isCreating = false;
     }
@@ -175,7 +176,7 @@
         );
       }
     } catch (e) {
-      console.error("Failed to run evaluation:", e);
+      captureException(e, { tags: { page: "app-builder-evals", feature: "run-evaluation" }, extra: { appId: params.appId, evalId } });
       // Reset status on error
       evaluations = evaluations.map(e =>
         e.id === evalId ? { ...e, status: 'pending' as const } : e
@@ -198,7 +199,7 @@
         evaluations = evaluations.filter(e => e.id !== evalId);
       }
     } catch (e) {
-      console.error("Failed to delete evaluation:", e);
+      captureException(e, { tags: { page: "app-builder-evals", feature: "delete-evaluation" }, extra: { appId: params.appId, evalId } });
     }
   }
 

@@ -10,6 +10,7 @@
    * Dispatches: videoRecorded { videoUrl, mimeType, durationMs }
    */
   import { createEventDispatcher, onMount, onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let disabled: boolean = false;
   export let primaryColor: string = "#4499ff";
@@ -104,7 +105,10 @@
         audio: true,
       });
     } catch (err) {
-      console.error("[VideoRecordButton] Camera permission denied:", err);
+      captureException(err, {
+        tags: { feature: "video-record" },
+        extra: { action: "camera-permission-denied" },
+      });
       permissionError = true;
       return;
     }
@@ -195,7 +199,10 @@
           durationMs: finalDuration,
         });
       } catch (err) {
-        console.error("[VideoRecordButton] Upload failed:", err);
+        captureException(err, {
+          tags: { feature: "video-record" },
+          extra: { action: "upload-failed", appNameId },
+        });
       }
 
       state = "idle";
@@ -254,7 +261,10 @@
           }
         })
         .catch((err) => {
-          console.error("[VideoRecordButton] Camera flip failed:", err);
+          captureException(err, {
+            tags: { feature: "video-record" },
+            extra: { action: "camera-flip-failed" },
+          });
         });
     }
   }

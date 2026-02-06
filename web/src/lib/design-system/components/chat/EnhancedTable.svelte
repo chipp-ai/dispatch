@@ -10,6 +10,7 @@
    * - Download as CSV
    */
   import { createEventDispatcher } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let headers: string[] = [];
   export let rows: string[][] = [];
@@ -78,7 +79,10 @@
       dispatch("copy", { content });
       setTimeout(() => (copiedCell = null), 2000);
     } catch (err) {
-      console.error("Failed to copy:", err);
+      captureException(err, {
+        tags: { feature: "enhanced-table" },
+        extra: { action: "copy-cell", cellId },
+      });
     }
   }
 
@@ -90,7 +94,10 @@
       await navigator.clipboard.writeText(tsvContent);
       dispatch("copy", { content: tsvContent });
     } catch (err) {
-      console.error("Failed to copy table:", err);
+      captureException(err, {
+        tags: { feature: "enhanced-table" },
+        extra: { action: "copy-table" },
+      });
     }
   }
 
@@ -116,7 +123,10 @@
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("Failed to download CSV:", err);
+      captureException(err, {
+        tags: { feature: "enhanced-table" },
+        extra: { action: "download-csv" },
+      });
     }
   }
 

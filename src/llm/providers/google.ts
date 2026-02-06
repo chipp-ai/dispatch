@@ -237,6 +237,11 @@ export class GoogleProvider implements LLMProvider {
       const response = await fetch(url);
       if (!response.ok) {
         console.error(`[google] Failed to fetch media: ${response.status}`);
+        Sentry.captureMessage(`[google] Failed to fetch media: ${response.status}`, {
+          level: "error",
+          tags: { source: "llm", provider: "google", feature: "fetch-media" },
+          extra: { mediaUrl: url, statusCode: response.status },
+        });
         return null;
       }
 

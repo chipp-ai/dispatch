@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import * as Sentry from "@sentry/deno";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { stripeWebhookMiddleware } from "../../middleware/webhookAuth.ts";
 import { billingService } from "../../../services/billing.service.ts";
@@ -447,6 +448,10 @@ stripeWebhookRoutes.post("/", async (c) => {
     return c.json({ received: true });
   } catch (error) {
     console.error(`[${requestId}] Error processing Stripe webhook:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "stripe-webhook" },
+      extra: { requestId, eventType: event.type, eventId: event.id },
+    });
 
     // Return 200 to acknowledge receipt even on error
     // This prevents Stripe from retrying and potentially causing duplicate processing

@@ -382,6 +382,10 @@ async function getBillingContextForSource(
       applicationId,
       error: error instanceof Error ? error.message : String(error),
     });
+    Sentry.captureException(error, {
+      tags: { source: "knowledge-source", feature: "billing-context" },
+      extra: { applicationId },
+    });
     return null;
   }
 }

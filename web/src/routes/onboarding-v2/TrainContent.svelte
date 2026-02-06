@@ -15,6 +15,7 @@
     ExternalLink,
     Sparkles,
   } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Button, Input } from "$lib/design-system";
   import {
     TRAIN_SUB_STEP_CONFIG,
@@ -178,7 +179,7 @@
       crawlComplete = true;
       isLoading = false;
     } catch (error) {
-      console.error("[TrainContent] Crawl error:", error);
+      captureException(error, { tags: { feature: "onboarding-train" }, extra: { action: "crawl-website", url: $onboardingV2Store.websiteUrl, appId } });
       urlError = error instanceof Error ? error.message : "Failed to crawl website";
       isLoading = false;
     }
@@ -289,7 +290,7 @@
       });
       onboardingV2Store.removeUploadedFile(storedId);
     } catch (error) {
-      console.error("[TrainContent] Delete error:", error);
+      captureException(error, { tags: { feature: "onboarding-train" }, extra: { action: "delete-file", fileId, appId } });
     }
   }
 
@@ -329,7 +330,7 @@
       selectedIntegration = null;
       integrationInputValue = "";
     } catch (error) {
-      console.error("Failed to connect integration:", error);
+      captureException(error, { tags: { feature: "onboarding-train" }, extra: { action: "connect-integration", integrationId: selectedIntegration?.id, appId } });
     } finally {
       isSubmittingIntegration = false;
     }

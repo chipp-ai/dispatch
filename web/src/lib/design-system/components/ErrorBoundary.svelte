@@ -3,6 +3,7 @@
   import { AlertTriangle, RefreshCw, Copy, Check } from "lucide-svelte";
   import Button from "./Button.svelte";
   import { errorStore, type AppError } from "../stores/error";
+  import { captureException } from "$lib/sentry";
 
   let error: AppError | null = null;
   let copied = false;
@@ -15,7 +16,10 @@
   onMount(() => {
     // Catch unhandled errors
     const handleError = (event: ErrorEvent) => {
-      console.error("Unhandled error:", event.error);
+      captureException(event.error, {
+        tags: { source: "window.onerror" },
+        extra: { message: event.message },
+      });
       errorStore.set({
         message: event.message || "An unexpected error occurred",
         stack: event.error?.stack,
@@ -25,7 +29,9 @@
 
     // Catch unhandled promise rejections
     const handleRejection = (event: PromiseRejectionEvent) => {
-      console.error("Unhandled promise rejection:", event.reason);
+      captureException(event.reason, {
+        tags: { source: "unhandledrejection" },
+      });
       const message = event.reason?.message || String(event.reason) || "An unexpected error occurred";
       errorStore.set({
         message,
