@@ -4,7 +4,13 @@
   import { consumerApp } from "../../../stores/consumerAuth";
 
   export let onComplete: () => void = () => {};
-  
+
+  // When false, splash holds on the static B&W logo.
+  // When true, the animation sequence plays (ripples, beams, color pop).
+  // This lets the caller preload resources while the logo is static,
+  // then trigger the animation only after the browser is idle.
+  export let ready: boolean = true;
+
   // Optional props to override with app-specific branding
   export let appLogoUrl: string | null = null;
   export let appPrimaryColor: string | null = null;
@@ -33,8 +39,30 @@
   $: logo = appLogoUrl || injectedBrand?.logo || consumerAppLogo || $companyLogoUrl || "/assets/chippylogo.svg";
   $: brandColor = appPrimaryColor || injectedBrand?.color || consumerAppColor || $companyColor || "#F9DB00"; // Chipp yellow as default
 
-  // Small delay for GPU layer prep after Svelte takes over
-  const TAKEOVER_DELAY = 100;
+  let mounted = false;
+  let animationStarted = false;
+
+  function startAnimation() {
+    if (animationStarted) return;
+    animationStarted = true;
+
+    // Phase 2: Color + pulse (beams, ripples, spring pop)
+    setTimeout(() => {
+      phase = "pulse";
+    }, 300);
+
+    // Phase 3: Fade out
+    setTimeout(() => {
+      phase = "fadeout";
+    }, 2200);
+
+    // Phase 4: Complete
+    setTimeout(() => {
+      phase = "complete";
+      document.documentElement.classList.remove("splash-active");
+      onComplete();
+    }, 2600);
+  }
 
   onMount(() => {
     // Crossfade: fade out HTML splash while Svelte splash fades in
@@ -47,25 +75,15 @@
       }, 200);
     }
 
-    // Phase 1: B&W logo already visible (from HTML, now from Svelte)
-    // Phase 2: Color + pulse start together (no delay between them)
-    setTimeout(() => {
-      phase = "pulse"; // Skip logo-color, go straight to pulse which includes color
-    }, TAKEOVER_DELAY + 300);
-
-    // Phase 3: Fade out (extended time for slower beam animation)
-    setTimeout(() => {
-      phase = "fadeout";
-    }, TAKEOVER_DELAY + 2200);
-
-    // Phase 4: Complete and call callback
-    setTimeout(() => {
-      phase = "complete";
-      // Re-enable scrolling now that splash is done
-      document.documentElement.classList.remove("splash-active");
-      onComplete();
-    }, TAKEOVER_DELAY + 2600);
+    mounted = true;
   });
+
+  // Start animation only after mount AND when the caller signals ready.
+  // This lets resources finish downloading before any animation runs,
+  // ensuring zero jank from network/JS contention.
+  $: if (ready && mounted) {
+    startAnimation();
+  }
 </script>
 
 {#if phase !== "complete"}

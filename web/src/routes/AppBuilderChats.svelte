@@ -17,9 +17,9 @@
     id: string;
     title: string | null;
     source: string;
-    started_at: string;
-    ended_at: string | null;
-    is_bookmarked: boolean;
+    createdAt: string;
+    endedAt: string | null;
+    isBookmarked: boolean;
     mode: string | null;
     messageCount?: number;
   }
@@ -308,13 +308,13 @@
                     <div class="session-meta">
                       <span class="meta-item">
                         <Clock size={14} />
-                        {formatDate(session.started_at)}
+                        {formatDate(session.createdAt)}
                       </span>
-                      {#if session.ended_at}
+                      {#if session.endedAt}
                         <span class="meta-item">
                           Duration: {Math.round(
-                            (new Date(session.ended_at).getTime() -
-                              new Date(session.started_at).getTime()) /
+                            (new Date(session.endedAt).getTime() -
+                              new Date(session.createdAt).getTime()) /
                               60000
                           )} min
                         </span>

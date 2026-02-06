@@ -93,7 +93,7 @@
             // Add tool invocation parts
             for (const call of toolCalls) {
               const result = toolResults?.find(
-                (r: any) => r.toolCallId === call.id
+                (r: any) => r.callId === call.id
               );
               chatMsg.parts.push({
                 type: "tool-invocation" as const,
