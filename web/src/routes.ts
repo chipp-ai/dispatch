@@ -206,10 +206,7 @@ const routes: RoutesMap = {
   // End-user chat experience for published applications
   // App is determined by vanity subdomain (e.g., my-app.chipp.ai)
   // The appNameId is extracted from window.__APP_BRAND__.slug or subdomain
-  "/chat": wrapRoute({
-    asyncComponent: () => import("./routes/consumer/ConsumerChat.svelte"),
-  }),
-
+  // NOTE: More specific routes must come before /chat to avoid prefix matching
   "/chat/login": wrapRoute({
     asyncComponent: () => import("./routes/consumer/ConsumerLogin.svelte"),
   }),
@@ -220,6 +217,10 @@ const routes: RoutesMap = {
 
   "/chat/verify": wrapRoute({
     asyncComponent: () => import("./routes/consumer/ConsumerVerify.svelte"),
+  }),
+
+  "/chat": wrapRoute({
+    asyncComponent: () => import("./routes/consumer/ConsumerChat.svelte"),
   }),
 
   // 404 fallback
