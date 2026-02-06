@@ -18,8 +18,6 @@ import { generateId } from "../utils/id.ts";
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
 const SESSION_EXPIRY_DAYS = 30;
-const MAGIC_LINK_EXPIRY_MINUTES = 15;
-const RESET_TOKEN_EXPIRY_HOURS = 1;
 
 // Types
 export interface AppSettings {
@@ -50,10 +48,6 @@ export interface OtpVerifyInput {
   otpCode: string;
 }
 
-export interface MagicLinkInput {
-  applicationId: string;
-  token: string;
-}
 
 export interface SessionInfo {
   sessionId: string;
@@ -153,18 +147,6 @@ function generateOtp(): string {
   const array = new Uint32Array(1);
   crypto.getRandomValues(array);
   return String(array[0] % 1000000).padStart(6, "0");
-}
-
-/**
- * Generate a secure random token
- */
-function generateSecureToken(): string {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return btoa(String.fromCharCode(...array))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
 }
 
 export const consumerAuthService = {
@@ -459,161 +441,6 @@ export const consumerAuthService = {
       },
       expiresAt,
     };
-  },
-
-  /**
-   * Create a magic link token
-   */
-  async createMagicLink(applicationId: string, email: string): Promise<string> {
-    const normalizedEmail = email.toLowerCase().trim();
-    const token = generateSecureToken();
-    const expiresAt = new Date(
-      Date.now() + MAGIC_LINK_EXPIRY_MINUTES * 60 * 1000
-    );
-
-    // Find or create consumer
-    let consumer = await db
-      .selectFrom("app.consumers")
-      .selectAll()
-      .where("applicationId", "=", applicationId)
-      .where("identifier", "=", normalizedEmail)
-      .where("isDeleted", "=", false)
-      .executeTakeFirst();
-
-    if (!consumer) {
-      // Create consumer without password
-      const consumerId = generateId();
-      consumer = await db
-        .insertInto("app.consumers")
-        .values({
-          id: consumerId,
-          applicationId,
-          identifier: normalizedEmail,
-          email: normalizedEmail,
-          emailVerified: false,
-          credits: 0,
-          subscriptionActive: false,
-          mode: "LIVE",
-          isDeleted: false,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    }
-
-    // Store magic link token
-    await db
-      .updateTable("app.consumers")
-      .set({
-        magicLinkToken: token,
-        magicLinkExpiry: expiresAt,
-        updatedAt: new Date(),
-      })
-      .where("id", "=", consumer.id)
-      .execute();
-
-    return token;
-  },
-
-  /**
-   * Verify magic link and create session
-   */
-  async verifyMagicLink(input: MagicLinkInput): Promise<SessionInfo> {
-    const { applicationId, token } = input;
-
-    const consumer = await db
-      .selectFrom("app.consumers")
-      .selectAll()
-      .where("applicationId", "=", applicationId)
-      .where("magicLinkToken", "=", token)
-      .where("magicLinkExpiry", ">", new Date())
-      .where("isDeleted", "=", false)
-      .executeTakeFirst();
-
-    if (!consumer) {
-      throw new Error("Invalid or expired magic link");
-    }
-
-    // Clear magic link and mark email as verified
-    await db
-      .updateTable("app.consumers")
-      .set({
-        magicLinkToken: null,
-        magicLinkExpiry: null,
-        emailVerified: true,
-        updatedAt: new Date(),
-      })
-      .where("id", "=", consumer.id)
-      .execute();
-
-    return this.createSession(consumer);
-  },
-
-  /**
-   * Request password reset
-   */
-  async requestPasswordReset(
-    applicationId: string,
-    email: string
-  ): Promise<string> {
-    const normalizedEmail = email.toLowerCase().trim();
-    const token = generateSecureToken();
-    const expiresAt = new Date(
-      Date.now() + RESET_TOKEN_EXPIRY_HOURS * 60 * 60 * 1000
-    );
-
-    const updated = await db
-      .updateTable("app.consumers")
-      .set({
-        resetToken: token,
-        resetTokenExpiry: expiresAt,
-        updatedAt: new Date(),
-      })
-      .where("applicationId", "=", applicationId)
-      .where("identifier", "=", normalizedEmail)
-      .where("isDeleted", "=", false)
-      .execute();
-
-    if (updated[0]?.numUpdatedRows === 0n) {
-      // Don't reveal if email exists
-      return token;
-    }
-
-    return token;
-  },
-
-  /**
-   * Reset password with token
-   */
-  async resetPassword(
-    applicationId: string,
-    token: string,
-    newPassword: string
-  ): Promise<void> {
-    const consumer = await db
-      .selectFrom("app.consumers")
-      .selectAll()
-      .where("applicationId", "=", applicationId)
-      .where("resetToken", "=", token)
-      .where("resetTokenExpiry", ">", new Date())
-      .where("isDeleted", "=", false)
-      .executeTakeFirst();
-
-    if (!consumer) {
-      throw new Error("Invalid or expired reset token");
-    }
-
-    const passwordHash = await hashPassword(newPassword);
-
-    await db
-      .updateTable("app.consumers")
-      .set({
-        passwordHash,
-        resetToken: null,
-        resetTokenExpiry: null,
-        updatedAt: new Date(),
-      })
-      .where("id", "=", consumer.id)
-      .execute();
   },
 
   /**
