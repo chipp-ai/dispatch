@@ -19,12 +19,17 @@
   import { setSentryUser, setSentryContext } from "./lib/sentry";
   import { user } from "./stores/auth";
   import { organizationStore } from "./stores/organization";
+  import { preloadAllRoutes } from "./lib/preloadRoutes";
+  import { startVersionCheck } from "./lib/versionCheck";
 
   // Dev console capture cleanup
   let cleanupConsoleCapture: (() => void) | null = null;
 
   // Notification listener cleanup
   let cleanupNotificationListener: (() => void) | null = null;
+
+  // Version check cleanup
+  let cleanupVersionCheck: (() => void) | null = null;
 
   // Import design system styles
   import "./lib/design-system/base.css";
@@ -61,12 +66,21 @@
   // Track splash animation completion
   let splashAnimationComplete = false;
 
+  // Tracks when all route chunks are downloaded and browser is idle.
+  // Splash holds the static B&W logo until this is true, then plays the animation.
+  let preloadComplete = false;
+
   function handleSplashComplete() {
     splashAnimationComplete = true;
     // If auth is also done (or skipped for vanity), mark app as booted
     if (vanitySlug || !$isAuthLoading) {
       markAppBooted();
     }
+  }
+
+  // Start version polling after boot (not during splash)
+  $: if ($appBooted && !vanitySlug) {
+    cleanupVersionCheck = startVersionCheck();
   }
 
   // When auth loading finishes and splash animation is complete, boot the app
@@ -105,6 +119,25 @@
     initTheme();
     initWhitelabel();
 
+    // Preload all route chunks while the splash shows a static logo.
+    // Once downloaded, wait for requestIdleCallback so the browser is
+    // truly idle before we trigger the splash animation (zero jank).
+    preloadAllRoutes()
+      .then(
+        () =>
+          new Promise<void>((resolve) => {
+            if ("requestIdleCallback" in window) {
+              requestIdleCallback(() => resolve());
+            } else {
+              setTimeout(resolve, 50);
+            }
+          })
+      )
+      .then(() => {
+        preloadComplete = true;
+      });
+
+    // Auth runs in parallel with preloading
     const user = await checkAuth();
 
     // Initialize workspace and organization stores after auth (non-blocking for instant feel)
@@ -121,6 +154,7 @@
   onDestroy(() => {
     cleanupConsoleCapture?.();
     cleanupNotificationListener?.();
+    cleanupVersionCheck?.();
   });
 
   // Redirect to login if not authenticated
@@ -144,7 +178,7 @@
 
     <!-- Splash screen overlay - only shows on cold start, never again -->
     {#if !$appBooted}
-      <SplashScreen onComplete={handleSplashComplete} />
+      <SplashScreen ready={preloadComplete} onComplete={handleSplashComplete} />
     {/if}
 
     <!-- Router always renders, splash overlays it during initial load -->

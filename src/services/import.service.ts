@@ -1763,6 +1763,7 @@ class ImportService {
           source: session.source,
           mode: "ai", // Default mode, v1 doesn't have this field
           isBookmarked: false, // Default, v1 uses isShared not isBookmarked
+          isMultiplayer: false, // Imported sessions are single-user
           startedAt: session.createdAt,
           endedAt: null, // v1 doesn't track this
         })

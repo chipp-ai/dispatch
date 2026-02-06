@@ -1,11 +1,17 @@
 /**
  * Builder Dashboard Service Worker
  *
- * Handles caching and offline support for the Chipp builder dashboard PWA.
+ * Handles caching for the Chipp builder dashboard PWA.
  * Separate from consumer-sw.js which handles individual chatbot PWAs.
+ *
+ * Caching strategies:
+ *   - Hashed assets (/assets/Foo-A1B2C3.js): Cache-first (immutable, hash = version)
+ *   - Navigation requests (index.html): Network-first (pick up new chunk refs on deploy)
+ *   - API/auth/WS: Network-only (never cache)
+ *   - Other static assets: Stale-while-revalidate
  */
 
-const SW_VERSION = "v1.0.0";
+const SW_VERSION = "v1.1.0";
 const CACHE_NAME = `chipp-builder-${SW_VERSION}`;
 
 // Detect development mode
@@ -14,20 +20,6 @@ const isDevelopment =
   self.location.hostname.includes("ngrok") ||
   self.location.hostname === "127.0.0.1" ||
   self.location.hostname.endsWith(".localhost");
-
-// Static assets to pre-cache on install
-const PRECACHE_ASSETS = ["/offline.html"];
-
-// Patterns for cacheable static assets
-const STATIC_ASSET_PATTERNS = [
-  /\/assets\//,
-  /\.js$/,
-  /\.css$/,
-  /\.woff2?$/,
-  /\.png$/,
-  /\.jpg$/,
-  /\.svg$/,
-];
 
 // Patterns that should always go to network (never cache)
 const NETWORK_ONLY_PATTERNS = [
@@ -40,50 +32,36 @@ const NETWORK_ONLY_PATTERNS = [
 ];
 
 /**
- * Check if URL should bypass cache entirely
+ * Content-hashed assets are immutable. The hash in the filename
+ * (e.g., Login-ZW_2cVN8.js) guarantees the content never changes.
+ * Cache-first is safe and optimal - no revalidation needed.
  */
+const HASHED_ASSET_PATTERN = /\/assets\/[^/]+-[a-zA-Z0-9_-]{6,}\.(js|css)$/;
+
+/**
+ * Other static assets that benefit from caching but may change.
+ */
+const STATIC_ASSET_PATTERNS = [/\.woff2?$/, /\.png$/, /\.jpg$/, /\.svg$/];
+
 function shouldBypassCache(url) {
   return NETWORK_ONLY_PATTERNS.some((pattern) => pattern.test(url));
 }
 
-/**
- * Check if URL is a cacheable static asset
- */
+function isHashedAsset(url) {
+  return HASHED_ASSET_PATTERN.test(url);
+}
+
 function isStaticAsset(url) {
   return STATIC_ASSET_PATTERNS.some((pattern) => pattern.test(url));
 }
 
-/**
- * Clean response to handle opaque redirects
- */
-function cleanResponse(response) {
-  if (response.redirected) {
-    return response.clone();
-  }
-  return response;
-}
-
-// Install event - pre-cache essential assets
+// Install event - activate immediately
 self.addEventListener("install", (event) => {
   console.log(`[Builder SW] Installing ${SW_VERSION}`);
-
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return Promise.allSettled(
-        PRECACHE_ASSETS.map((url) =>
-          cache.add(url).catch((err) => {
-            console.warn(`[Builder SW] Failed to precache ${url}:`, err);
-          })
-        )
-      );
-    })
-  );
-
-  // Activate immediately
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up old caches, claim clients
 self.addEventListener("activate", (event) => {
   console.log(`[Builder SW] Activating ${SW_VERSION}`);
 
@@ -91,7 +69,10 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName.startsWith("chipp-builder-") && cacheName !== CACHE_NAME) {
+          if (
+            cacheName.startsWith("chipp-builder-") &&
+            cacheName !== CACHE_NAME
+          ) {
             console.log(`[Builder SW] Deleting old cache: ${cacheName}`);
             return caches.delete(cacheName);
           }
@@ -100,11 +81,10 @@ self.addEventListener("activate", (event) => {
     })
   );
 
-  // Take control of all clients immediately
   self.clients.claim();
 });
 
-// Fetch event - caching strategies
+// Fetch event - route to appropriate caching strategy
 self.addEventListener("fetch", (event) => {
   const url = event.request.url;
 
@@ -117,58 +97,70 @@ self.addEventListener("fetch", (event) => {
   // Development mode: network only for everything
   if (isDevelopment) return;
 
-  event.respondWith(
-    (async () => {
-      // Static assets: stale-while-revalidate
-      if (isStaticAsset(url)) {
-        const cachedResponse = await caches.match(event.request);
-        if (cachedResponse) {
-          // Return cached, update in background
-          event.waitUntil(
-            fetch(event.request)
-              .then((response) => {
-                if (response.ok) {
-                  const cleaned = cleanResponse(response);
-                  caches.open(CACHE_NAME).then((cache) => {
-                    cache.put(event.request, cleaned.clone());
-                  });
-                }
-              })
-              .catch(() => {})
-          );
-          return cachedResponse;
-        }
-      }
+  // Navigation requests (index.html): network-first
+  // This ensures users get fresh HTML with new chunk references after a deploy.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          // Cache the HTML for offline fallback
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(async () => {
+          // Offline: try cached HTML, then offline page
+          const cached = await caches.match(event.request);
+          if (cached) return cached;
+          const offline = await caches.match("/offline.html");
+          if (offline) return offline;
+          return new Response("Offline", { status: 503 });
+        })
+    );
+    return;
+  }
 
-      // Everything else: network-first with cache fallback
-      try {
-        const response = await fetch(event.request);
-        const cleaned = cleanResponse(response);
+  // Content-hashed assets: cache-first (immutable)
+  // The hash in the filename guarantees content correctness.
+  // Once cached, we never need to re-fetch.
+  if (isHashedAsset(url)) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        // Not in cache - fetch from network and cache for future use
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
 
-        // Cache successful static asset responses
-        if (cleaned.ok && isStaticAsset(url)) {
-          const responseClone = cleaned.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
-        }
+  // Other static assets (fonts, images): stale-while-revalidate
+  if (isStaticAsset(url)) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        const networkFetch = fetch(event.request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
 
-        return cleaned;
-      } catch (error) {
-        // Try cache on network failure
-        const cachedResponse = await caches.match(event.request);
-        if (cachedResponse) return cachedResponse;
+        return cached || networkFetch;
+      })
+    );
+    return;
+  }
 
-        // Return offline page for navigation requests
-        if (event.request.mode === "navigate") {
-          const offlineResponse = await caches.match("/offline.html");
-          if (offlineResponse) return offlineResponse;
-        }
-
-        throw error;
-      }
-    })()
-  );
+  // Everything else: network-first with no caching
 });
 
 // Handle messages from client
