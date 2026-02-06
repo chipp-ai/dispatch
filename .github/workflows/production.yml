@@ -123,50 +123,16 @@ jobs:
           echo "Built index.html references:"
           grep -oE 'index-[A-Za-z0-9_-]+\.js' dist/index.html
 
-      - name: Deploy SPA to R2 and Worker
+      - name: Deploy SPA to R2 (incremental)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           cd cloudflare-worker
           npm ci
 
-          # Create upload script with retry logic
-          cat > /tmp/upload_r2.sh << 'UPLOAD_SCRIPT'
-          #!/bin/bash
-          file="$1"
-          key="${file#../web/dist/}"
-          max_retries=3
-          retry=0
-
-          while [ $retry -lt $max_retries ]; do
-            if npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file" >/dev/null 2>&1; then
-              echo "✓ $key"
-              exit 0
-            fi
-            retry=$((retry + 1))
-            sleep $((retry * 2))
-          done
-          echo "✗ $key (failed after $max_retries retries)"
-          exit 1
-          UPLOAD_SCRIPT
-          chmod +x /tmp/upload_r2.sh
-
-          # Upload files in parallel (P=5) with retry logic
-          # Skip .map files in production to reduce upload count
-          echo "=== Uploading SPA to R2 (parallel) ==="
-          file_count=$(find ../web/dist -type f ! -name "*.map" | wc -l | tr -d ' ')
-          echo "Files to upload: $file_count (excluding source maps)"
-
-          failed_file=$(mktemp)
-          find ../web/dist -type f ! -name "*.map" | xargs -P 5 -I {} /tmp/upload_r2.sh {} || true
-
-          # Count results
-          uploaded=$(grep -c "^✓" /tmp/upload_r2.sh.log 2>/dev/null || echo "0")
-          failed=$(grep -c "^✗" /tmp/upload_r2.sh.log 2>/dev/null || echo "0")
-
-          echo ""
-          echo "=== R2 Upload Complete ==="
-          echo "Total files: $file_count"
+          # Incremental upload: only uploads changed files based on manifest diff
+          echo "=== Uploading SPA to R2 (incremental) ==="
+          ./scripts/upload-assets.sh --prod --ci --cleanup
 
           # Verify index.html was uploaded correctly
           echo ""
