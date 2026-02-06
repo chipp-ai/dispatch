@@ -29,11 +29,17 @@
       "startedAt": "2026-02-05T03:00:00Z",
       "completedAt": "2026-02-05T03:30:00Z",
       "summary": "Deep visual design extraction from ProActionModal (MCPProviderGrid) and KnowledgeSourceModal (ConstellationGrid). Documented: gradient atmosphere backgrounds, category-colored card glow system with data-category attributes, staggered entrance animations (30-50ms increments), circuit SVG pattern overlay, scanning line animation (8s infinite sweep), icon container glass treatment (36-42px, 10px radius), header pulsing glow, connection dots, filter chips, dark/light variable strategy, typography scale (JetBrains Mono for tech labels), badge styling, grid responsiveness (2-5 columns), Svelte 5 implementation guide with slot-based card component, whitelabel compatibility notes. Report at docs/migrations/chipp-design-language.md"
+    },
+    "slack-integration": {
+      "status": "explore-complete",
+      "startedAt": "2026-02-05T04:00:00Z",
+      "completedAt": "2026-02-05T04:30:00Z",
+      "summary": "Comprehensive Slack integration exploration: 6 database models (SlackInstallation, SlackChatMapping, SlackOAuthState, SlackThreadContext, SlackUser, SlackChatSessionUser), OAuth v2 flow with per-app credentials, ~2000-line event handler with signature verification/deduplication/thread management/LLM emoji reactions/channel context enrichment/Slack-specific tools, interactive admin actions (ban/block), manifest generation, markdown-to-mrkdwn conversion. ChippDeno already has near-complete implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment, Slack-specific tools. Report at docs/migrations/slack-chippmono.md"
     }
   },
 
-  "activeMigration": "whatsapp-integration",
-  "lastUpdated": "2026-02-05T03:30:00Z",
+  "activeMigration": "slack-integration",
+  "lastUpdated": "2026-02-05T04:30:00Z",
 
   "stripe-webhooks": {
     "phases": {
@@ -266,5 +272,75 @@
     }
   },
 
-  "resumeInstructions": "WHATSAPP EXPLORATION COMPLETE. Report at docs/migrations/whatsapp-chippmono.md. ChippDeno already has a near-complete WhatsApp implementation with better UX than ChippMono. 10 gaps identified - most critical: duplicate phone validation, session timeout (90-day), response truncation (4096 chars), localized media messages (30+ languages). Implementation phase ready to start. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service)."
+  "slack-integration": {
+    "phases": {
+      "explore": {
+        "status": "complete",
+        "components": {
+          "chippmono-slack": {
+            "status": "complete",
+            "report": "docs/migrations/slack-chippmono.md",
+            "completedAt": "2026-02-05T04:30:00Z",
+            "summary": "Full exploration of ChippMono Slack: 6 DB models, OAuth v2 flow, ~2000-line event handler, credential encryption, thread management, LLM emoji reactions, channel context enrichment, Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory), interactive admin actions, manifest generation. 11 gaps identified in ChippDeno."
+          },
+          "slack-setup-dialog-ui": {
+            "status": "complete",
+            "report": "docs/migrations/slack-setup-dialog.md",
+            "completedAt": "2026-02-05T05:00:00Z",
+            "summary": "Detailed UI exploration of ChippMono Slack setup dialogs (builder + onboarding). Documented: all dialog states (unconfigured, configured/installed, loading, error), full UI copy and helper text, JSON manifest generation with Copy/Download, AI-generated example question feature, OAuth popup flow with success/error HTML pages, credential save with encryption, deployment card entry point, 12 bot scopes vs ChippDeno's 4, 'From manifest' vs 'From scratch' flow. Key finding: ChippDeno already has a better multi-step wizard UX but is missing the manifest generation (highest-priority gap that eliminates manual OAuth/scope/event configuration)."
+          }
+        }
+      },
+      "implement": {
+        "status": "pending",
+        "components": {
+          "db-table-name-fix": {
+            "status": "pending",
+            "tasks": ["Fix slack_integrations vs slack_installations table name mismatch"],
+            "priority": "critical"
+          },
+          "cross-channel-security": {
+            "status": "pending",
+            "tasks": ["Verify/add cross-channel thread context security validation"],
+            "priority": "high"
+          },
+          "channel-context-enrichment": {
+            "status": "pending",
+            "tasks": [
+              "Add LLM-based context decision (none/time_range/search/both)",
+              "Implement conversations.history and conversations.replies API calls",
+              "Integrate channel context into message handling"
+            ],
+            "priority": "medium"
+          },
+          "slack-specific-tools": {
+            "status": "pending",
+            "tasks": [
+              "Register uploadFile tool",
+              "Register getChannelHistory tool",
+              "Register searchChannelHistory tool"
+            ],
+            "priority": "medium"
+          },
+          "file-attachment-processing": {
+            "status": "pending",
+            "tasks": ["Extract and process file attachments from Slack message blocks"],
+            "priority": "medium"
+          },
+          "multi-user-attribution": {
+            "status": "pending",
+            "tasks": ["Verify SlackChatSessionUser linking in webhook handler"],
+            "priority": "medium"
+          },
+          "llm-emoji-reactions": {
+            "status": "pending",
+            "tasks": ["Add LLM-based contextual emoji reaction selection"],
+            "priority": "low"
+          }
+        }
+      }
+    }
+  },
+
+  "resumeInstructions": "SLACK EXPLORATION COMPLETE. Report at docs/migrations/slack-chippmono.md. ChippDeno already has near-complete Slack implementation with better UX (multi-step wizard). 11 gaps identified - most critical: DB table name mismatch (slack_integrations vs slack_installations), cross-channel thread security, channel context enrichment (LLM decides whether to fetch channel history), Slack-specific tools (uploadFile, getChannelHistory, searchChannelHistory). WhatsApp implementation gaps also pending. Deferred from Stripe: Consumer subscription handlers (needs ConsumerPurchase table), Email notifications (needs email service)."
 }

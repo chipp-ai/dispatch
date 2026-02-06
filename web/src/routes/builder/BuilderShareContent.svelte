@@ -357,6 +357,7 @@
 <SlackSetupDialog
   bind:open={slackDialogOpen}
   applicationId={appId}
+  appName={app.name}
   on:connected={() => toasts.success("Slack Connected", "Your chatbot is now available in Slack!")}
 />
 <WhatsAppSetupDialog
