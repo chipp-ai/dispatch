@@ -73,10 +73,13 @@ const ANON_TOKEN_KEY = "multiplayer-anon-token";
 export function getAnonymousToken(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
 
-  let token = localStorage.getItem(ANON_TOKEN_KEY);
+  // Use sessionStorage instead of localStorage to limit token lifetime to the
+  // current tab session. This prevents the token from persisting indefinitely
+  // and reduces exposure if the page is vulnerable to XSS.
+  let token = sessionStorage.getItem(ANON_TOKEN_KEY);
   if (!token) {
     token = crypto.randomUUID();
-    localStorage.setItem(ANON_TOKEN_KEY, token);
+    sessionStorage.setItem(ANON_TOKEN_KEY, token);
   }
   return token;
 }

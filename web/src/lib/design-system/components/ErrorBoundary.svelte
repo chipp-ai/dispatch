@@ -8,6 +8,22 @@
   let error: AppError | null = null;
   let copied = false;
 
+  /**
+   * Detect chunk loading errors caused by deployments.
+   * With thick client preloading, these should be extremely rare.
+   * When they do occur, we suppress the error overlay since the
+   * version check will independently notify the user to refresh.
+   */
+  function isChunkLoadError(message: string): boolean {
+    return (
+      message.includes("Failed to fetch dynamically imported module") ||
+      message.includes("Importing a module script failed") ||
+      message.includes("error loading dynamically imported module") ||
+      message.includes("Loading chunk") ||
+      message.includes("Loading CSS chunk")
+    );
+  }
+
   // Subscribe to error store
   errorStore.subscribe((value) => {
     error = value;
@@ -16,6 +32,19 @@
   onMount(() => {
     // Catch unhandled errors
     const handleError = (event: ErrorEvent) => {
+      const message = event.message || event.error?.message || "";
+
+      // Chunk load errors are silently suppressed - the version check
+      // toast will nudge the user to refresh when a deploy happens.
+      if (isChunkLoadError(message)) {
+        captureException(event.error, {
+          tags: { source: "chunk_load_error" },
+          extra: { message: event.message },
+        });
+        event.preventDefault();
+        return;
+      }
+
       captureException(event.error, {
         tags: { source: "window.onerror" },
         extra: { message: event.message },
@@ -24,17 +53,29 @@
         message: event.message || "An unexpected error occurred",
         stack: event.error?.stack,
       });
-      event.preventDefault(); // Prevent default error handling
+      event.preventDefault();
     };
 
     // Catch unhandled promise rejections
     const handleRejection = (event: PromiseRejectionEvent) => {
+      const message = event.reason?.message || String(event.reason) || "";
+
+      // Chunk load errors are silently suppressed
+      if (isChunkLoadError(message)) {
+        captureException(event.reason, {
+          tags: { source: "chunk_load_error" },
+          extra: { message },
+        });
+        event.preventDefault();
+        return;
+      }
+
       captureException(event.reason, {
         tags: { source: "unhandledrejection" },
       });
-      const message = event.reason?.message || String(event.reason) || "An unexpected error occurred";
+      const displayMessage = event.reason?.message || String(event.reason) || "An unexpected error occurred";
       errorStore.set({
-        message,
+        message: displayMessage,
         stack: event.reason?.stack,
       });
       event.preventDefault();

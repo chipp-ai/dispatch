@@ -161,9 +161,34 @@ multiplayerRoutes.post(
 /**
  * GET /participants/:sessionId
  * Get current participant list for a session.
+ * Requires the caller to be a participant (via consumer auth or anonymous token).
  */
 multiplayerRoutes.get("/participants/:sessionId", async (c) => {
   const { sessionId } = c.req.param();
+
+  // Validate sessionId format
+  const validId = z.string().uuid().safeParse(sessionId);
+  if (!validId.success) {
+    return c.json({ error: "Invalid session id" }, 400);
+  }
+
+  // Verify the requester is a participant in this session
+  const consumer = c.get("consumer");
+  const anonymousToken = c.req.query("token");
+
+  if (!consumer?.id && !anonymousToken) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+
+  const participant = await multiplayerService.isSessionParticipant(
+    sessionId,
+    consumer?.id,
+    anonymousToken
+  );
+
+  if (!participant) {
+    return c.json({ error: "Not a participant in this session" }, 403);
+  }
 
   const participants = await multiplayerService.getSessionParticipants(sessionId);
 
