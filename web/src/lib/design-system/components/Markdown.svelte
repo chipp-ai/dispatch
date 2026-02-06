@@ -14,6 +14,7 @@
   import { marked } from "marked";
   import { onMount, onDestroy, tick, mount, unmount } from "svelte";
   import hljs from "highlight.js";
+  import { captureException } from "$lib/sentry";
   import { isVideoUrl, getVideoType, getEmbedUrl, getYouTubeVideoId } from "../utils/videoUtils";
   import { isGeneratedFileLink, parseFileDownloadUrl, type FileDownloadInfo } from "../utils/fileUtils";
   import SourceCitation from "./chat/SourceCitation.svelte";
@@ -322,7 +323,10 @@
 
       return result;
     } catch (e) {
-      console.error("Markdown parse error:", e);
+      captureException(e, {
+        tags: { feature: "markdown-renderer" },
+        extra: { textLength: text?.length },
+      });
       return text;
     }
   }
@@ -391,7 +395,10 @@
 
       return { headers, rows };
     } catch (e) {
-      console.error("Failed to parse table:", e);
+      captureException(e, {
+        tags: { feature: "markdown-renderer" },
+        extra: { context: "table-parse" },
+      });
       return null;
     }
   }
@@ -553,7 +560,10 @@
         }, 2000);
       }
     } catch (err) {
-      console.error("Copy failed:", err);
+      captureException(err, {
+        tags: { feature: "markdown-renderer" },
+        extra: { context: "clipboard-copy" },
+      });
     }
   }
 

@@ -6,6 +6,7 @@
  */
 
 import { decodeBase64 } from "jsr:@std/encoding@1/base64";
+import * as Sentry from "@sentry/deno";
 
 const WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions";
 
@@ -73,7 +74,12 @@ export async function transcribeAudio(
       response.status,
       errorText
     );
-    throw new Error(`Whisper transcription failed: ${response.status}`);
+    const whisperError = new Error(`Whisper transcription failed: ${response.status}`);
+    Sentry.captureException(whisperError, {
+      tags: { source: "transcription", feature: "whisper-api" },
+      extra: { fileName: `recording.${extension}`, mimeType, status: response.status, errorText },
+    });
+    throw whisperError;
   }
 
   const result = await response.json();

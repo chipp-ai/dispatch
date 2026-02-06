@@ -58,9 +58,11 @@
       </a>
 
       {#if $isAuthenticated && $currentWorkspace && $organizations.length > 0}
-        <OrganizationSwitcher />
-        <span class="nav-separator">/</span>
-        <WorkspaceSwitcher />
+        <div class="context-switchers">
+          <OrganizationSwitcher />
+          <span class="nav-separator">/</span>
+          <WorkspaceSwitcher />
+        </div>
       {/if}
     </div>
 
@@ -143,6 +145,20 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
+  }
+
+  .context-switchers {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  @media (min-width: 768px) {
+    .context-switchers {
+      display: flex;
+    }
   }
 
   .logo-link {
@@ -161,7 +177,6 @@
     align-items: center;
     justify-content: flex-end;
     gap: 20px;
-    width: 100%;
   }
 
   .mobile-get-started {

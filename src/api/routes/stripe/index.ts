@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { sql } from "../../../db/client.ts";
 import { BadRequestError } from "../../../utils/errors.ts";
@@ -108,6 +109,11 @@ async function getLicenseFeeComponentId(
         "[STRIPE PLAN] Failed to fetch pricing plan components:",
         componentsRes.status
       );
+      Sentry.captureMessage("Failed to fetch pricing plan components", {
+        level: "error",
+        tags: { source: "stripe-api", feature: "pricing-plan-components" },
+        extra: { pricingPlanId, statusCode: componentsRes.status },
+      });
       return null;
     }
 
@@ -123,12 +129,21 @@ async function getLicenseFeeComponentId(
 
     if (!licenseFeeComponent?.id) {
       console.error("[STRIPE PLAN] No license_fee component found");
+      Sentry.captureMessage("No license_fee component found in pricing plan", {
+        level: "error",
+        tags: { source: "stripe-api", feature: "license-fee-component" },
+        extra: { pricingPlanId },
+      });
       return null;
     }
 
     return licenseFeeComponent.id;
   } catch (error) {
     console.error("[STRIPE PLAN] Error fetching license fee component:", error);
+    Sentry.captureException(error, {
+      tags: { source: "stripe-api", feature: "license-fee-component" },
+      extra: { pricingPlanId },
+    });
     return null;
   }
 }
@@ -388,6 +403,16 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
     return c.json({ url: checkoutSession.url });
   } catch (error) {
     console.error("[STRIPE] Checkout session creation failed:", error);
+    Sentry.captureException(error, {
+      tags: { source: "stripe-api", feature: "checkout-session" },
+      extra: {
+        tier,
+        period,
+        organizationId: userData.organization_id,
+        developerId: userData.developer_id,
+        stripeCustomerId,
+      },
+    });
     if (error instanceof Error) {
       return c.json({ error: `Stripe error: ${error.message}` }, 400);
     }

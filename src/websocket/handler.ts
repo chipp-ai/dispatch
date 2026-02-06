@@ -130,29 +130,44 @@ async function handleClientAction(
       );
 
       try {
-        // Import chat service dynamically to avoid circular dependencies
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession } = await import("./pubsub.ts");
+        const { multiplayerService } = await import(
+          "../services/multiplayer.service.ts"
+        );
+        const { db } = await import("../db/client.ts");
+
+        // Get session (lightweight, no messages join)
+        const session = await chatService.getSessionBasic(sessionId);
+        if (!session) {
+          throw new Error("Session not found");
+        }
+
+        // Verify user has access to this app
+        await chatService.verifyAppAccess(session.applicationId, client.userId);
+
+        // Abort any active AI stream
+        multiplayerService.abortActiveStream(sessionId);
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
 
         // Update session mode in database
         await chatService.updateSessionMode(sessionId, mode, client.userId);
 
-        // Get session to find consumer
-        const session = await chatService.getSession(sessionId);
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:entered",
+          sessionId,
+          operatorName,
+        });
 
-        // Notify consumer about takeover (if they have a consumer_id)
-        if (session.consumer_id) {
-          // Find consumer's external user ID or use consumer_id
-          // For now, we'll publish to a channel based on session
-          await publishToUser(session.consumer_id, {
-            type: "conversation:takeover",
-            sessionId,
-            takenOverBy: client.userId,
-            mode,
-          });
-        }
-
-        // Notify the user who took over
+        // Confirm to builder
         sendToClient(client, {
           type: "conversation:takeover",
           sessionId,
@@ -181,26 +196,29 @@ async function handleClientAction(
       console.log(`[ws] User ${client.userId} releasing session ${sessionId}`);
 
       try {
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession } = await import("./pubsub.ts");
+        const { db } = await import("../db/client.ts");
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
 
         // Update session mode back to 'ai'
         await chatService.updateSessionMode(sessionId, "ai", null);
 
-        // Get session to find consumer
-        const session = await chatService.getSession(sessionId);
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:left",
+          sessionId,
+          operatorName,
+        });
 
-        // Notify consumer about release
-        if (session.consumer_id) {
-          await publishToUser(session.consumer_id, {
-            type: "conversation:takeover",
-            sessionId,
-            takenOverBy: null,
-            mode: "ai",
-          });
-        }
-
-        // Notify the user who released
+        // Confirm to builder
         sendToClient(client, {
           type: "conversation:takeover",
           sessionId,
@@ -231,36 +249,80 @@ async function handleClientAction(
       );
 
       try {
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession, publishToUser } = await import("./pubsub.ts");
+        const { db } = await import("../db/client.ts");
 
-        // Get session to verify access and find consumer
-        const session = await chatService.getSession(sessionId);
+        // Get session (lightweight)
+        const session = await chatService.getSessionBasic(sessionId);
+        if (!session) {
+          throw new Error("Session not found");
+        }
 
         // Verify user has access to this app
-        await chatService.verifyAppAccess(
-          session.application_id,
-          client.userId
+        await chatService.verifyAppAccess(session.applicationId, client.userId);
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
+
+        // Store message as assistant with model="human" to distinguish from AI
+        const savedMsg = await chatService.addMessage(
+          sessionId,
+          "assistant",
+          content,
+          { model: "human" }
         );
 
-        // Store message as assistant message (from builder)
-        await chatService.addMessage(sessionId, "assistant", content);
+        const timestamp = new Date().toISOString();
 
-        // Notify consumer about new message
-        if (session.consumer_id) {
-          await publishToUser(session.consumer_id, {
-            type: "consumer:message",
-            sessionId,
-            content,
-            timestamp: new Date().toISOString(),
-          });
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:message",
+          sessionId,
+          content,
+          operatorName,
+          messageId: savedMsg.id,
+          timestamp,
+        });
+
+        // Broadcast activity to other org members viewing the live panel
+        const app = await db
+          .selectFrom("app.applications")
+          .select(["organizationId"])
+          .where("id", "=", session.applicationId)
+          .executeTakeFirst();
+
+        if (app?.organizationId) {
+          const orgMembers = await db
+            .selectFrom("app.workspace_members as wm")
+            .innerJoin("app.workspaces as w", "w.id", "wm.workspaceId")
+            .select(["wm.userId"])
+            .where("w.organizationId", "=", app.organizationId)
+            .execute();
+
+          for (const member of orgMembers) {
+            if (member.userId !== client.userId) {
+              publishToUser(member.userId, {
+                type: "conversation:activity" as const,
+                sessionId,
+                applicationId: session.applicationId,
+                messagePreview: content.slice(0, 120),
+                timestamp,
+              }).catch(() => {});
+            }
+          }
         }
 
         // Confirm to builder
         sendToClient(client, {
           type: "system:notification",
           title: "Message sent",
-          body: "Your message has been delivered",
+          body: "",
           severity: "info",
         });
       } catch (error) {
@@ -301,6 +363,13 @@ function sendToClient(client: ConnectedClient, event: WebSocketEvent): boolean {
     });
   }
   return false;
+}
+
+/**
+ * Send event to all clients of a user (public wrapper for local delivery)
+ */
+export function localSendToUser(userId: string, event: WebSocketEvent): number {
+  return sendToUser(userId, event);
 }
 
 /**
@@ -378,6 +447,10 @@ async function handleConnection(
       handleClientAction(client, action);
     } catch (error) {
       console.error(`[ws] Error parsing message:`, error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { source: "websocket", feature: "message-parse" },
+        extra: { userId: client.userId },
+      });
     }
   };
 
@@ -399,6 +472,11 @@ async function handleConnection(
   // Handle errors
   socket.onerror = (e) => {
     console.error(`[ws] Socket error for user ${client.userId}:`, e);
+    Sentry.captureMessage(`WebSocket error for user ${client.userId}`, {
+      level: "error",
+      tags: { source: "websocket", feature: "socket-error" },
+      extra: { userId: client.userId },
+    });
   };
 }
 

@@ -5,6 +5,7 @@
  */
 
 import { writable, derived } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 export interface Workspace {
   id: string;
@@ -205,7 +206,7 @@ export async function createWorkspace(
 
     return newWorkspace;
   } catch (error) {
-    console.error("Failed to create workspace:", error);
+    captureException(error, { tags: { source: "workspace-store" }, extra: { action: "createWorkspace" } });
     return null;
   }
 }

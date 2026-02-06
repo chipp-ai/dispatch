@@ -158,6 +158,11 @@ export async function handleEmailMessage(
       await emailService.getConfigByApplicationId(applicationId);
     if (!emailConfig) {
       console.error("[EmailChat] Email config not found");
+      Sentry.captureMessage("[EmailChat] Email config not found", {
+        level: "error",
+        tags: { source: "email-chat", feature: "config" },
+        extra: { correlationId, applicationId },
+      });
       return;
     }
 
@@ -332,6 +337,11 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     const serverToken = await emailService.getServerToken(emailConfig);
     if (!serverToken) {
       console.error("[EmailChat] No Postmark server token available");
+      Sentry.captureMessage("[EmailChat] No Postmark server token available", {
+        level: "error",
+        tags: { source: "email-chat", feature: "send-reply", provider: "postmark" },
+        extra: { correlationId, applicationId, configId },
+      });
       return;
     }
 

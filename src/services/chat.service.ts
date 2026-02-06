@@ -34,6 +34,8 @@ export interface ChatSession {
   isBookmarked: boolean;
   externalId: string | null;
   metadata: unknown | null;
+  isMultiplayer: boolean;
+  shareToken: string | null;
   startedAt: Date;
   endedAt: Date | null;
 }
@@ -53,6 +55,7 @@ export interface Message {
   audioDurationMs: number | null;
   videoUrl: string | null;
   videoMimeType: string | null;
+  senderParticipantId: string | null;
   createdAt: Date;
 }
 
@@ -158,6 +161,8 @@ export const chatService = {
         "s.isBookmarked",
         "s.externalId",
         "s.metadata",
+        "s.isMultiplayer",
+        "s.shareToken",
         "s.startedAt",
         "s.endedAt",
       ])
@@ -287,6 +292,8 @@ export const chatService = {
           isBookmarked: session.isBookmarked,
           externalId: session.externalId,
           metadata: session.metadata,
+          isMultiplayer: session.isMultiplayer,
+          shareToken: session.shareToken,
           startedAt: session.startedAt,
           endedAt: session.endedAt,
           messages: messages.reverse().map((m) => ({
@@ -343,6 +350,8 @@ export const chatService = {
         "isBookmarked",
         "externalId",
         "metadata",
+        "isMultiplayer",
+        "shareToken",
         "startedAt",
         "endedAt",
       ])
@@ -370,6 +379,7 @@ export const chatService = {
         "audioDurationMs",
         "videoUrl",
         "videoMimeType",
+        "senderParticipantId",
         "createdAt",
       ])
       .where("sessionId", "=", sessionId)
@@ -387,6 +397,8 @@ export const chatService = {
       isBookmarked: session.isBookmarked,
       externalId: session.externalId,
       metadata: session.metadata,
+      isMultiplayer: session.isMultiplayer,
+      shareToken: session.shareToken,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
       messages: messages.map((m) => ({
@@ -404,6 +416,7 @@ export const chatService = {
         audioDurationMs: m.audioDurationMs,
         videoUrl: m.videoUrl,
         videoMimeType: m.videoMimeType,
+        senderParticipantId: m.senderParticipantId,
         createdAt: m.createdAt,
       })),
     };
@@ -447,6 +460,8 @@ export const chatService = {
       isBookmarked: session.isBookmarked,
       externalId: session.externalId,
       metadata: session.metadata,
+      isMultiplayer: session.isMultiplayer,
+      shareToken: session.shareToken,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
     };
@@ -472,6 +487,7 @@ export const chatService = {
         source,
         mode: "ai",
         isBookmarked: false,
+        isMultiplayer: false,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -487,6 +503,8 @@ export const chatService = {
       isBookmarked: result.isBookmarked,
       externalId: result.externalId,
       metadata: result.metadata,
+      isMultiplayer: result.isMultiplayer,
+      shareToken: result.shareToken,
       startedAt: result.startedAt,
       endedAt: result.endedAt,
     };
@@ -519,6 +537,8 @@ export const chatService = {
       isBookmarked: result.isBookmarked,
       externalId: result.externalId,
       metadata: result.metadata,
+      isMultiplayer: result.isMultiplayer,
+      shareToken: result.shareToken,
       startedAt: result.startedAt,
       endedAt: result.endedAt,
     };
@@ -570,6 +590,8 @@ export const chatService = {
         "s.isBookmarked",
         "s.externalId",
         "s.metadata",
+        "s.isMultiplayer",
+        "s.shareToken",
         "s.startedAt",
         "s.endedAt",
       ])
@@ -589,6 +611,8 @@ export const chatService = {
       isBookmarked: result.isBookmarked,
       externalId: result.externalId,
       metadata: result.metadata,
+      isMultiplayer: result.isMultiplayer,
+      shareToken: result.shareToken,
       startedAt: result.startedAt,
       endedAt: result.endedAt,
     };
@@ -622,6 +646,7 @@ export const chatService = {
       audioDurationMs?: number;
       videoUrl?: string;
       videoMimeType?: string;
+      senderParticipantId?: string;
     }
   ): Promise<Message> {
     const uuidRegex =
@@ -658,6 +683,7 @@ export const chatService = {
         audioDurationMs: options?.audioDurationMs ?? null,
         videoUrl: options?.videoUrl ?? null,
         videoMimeType: options?.videoMimeType ?? null,
+        senderParticipantId: options?.senderParticipantId ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -677,6 +703,7 @@ export const chatService = {
       audioDurationMs: result.audioDurationMs,
       videoUrl: result.videoUrl,
       videoMimeType: result.videoMimeType,
+      senderParticipantId: result.senderParticipantId,
       createdAt: result.createdAt,
     };
   },
@@ -793,6 +820,7 @@ export const chatService = {
         "audioDurationMs",
         "videoUrl",
         "videoMimeType",
+        "senderParticipantId",
         "createdAt",
       ])
       .where("sessionId", "=", sessionId)
@@ -814,6 +842,7 @@ export const chatService = {
       audioDurationMs: m.audioDurationMs,
       videoUrl: m.videoUrl,
       videoMimeType: m.videoMimeType,
+      senderParticipantId: m.senderParticipantId,
       createdAt: m.createdAt,
     }));
   },
@@ -1095,5 +1124,96 @@ export const chatService = {
       .where("messageId", "=", messageId)
       .where("tagId", "=", tagId)
       .execute();
+  },
+
+  // ========================================
+  // Live Session Activity Tracking
+  // ========================================
+
+  /**
+   * Update session activity timestamp (fire-and-forget).
+   * Sets last_activity_at = NOW() and clears ended_at if set.
+   */
+  async updateSessionActivity(sessionId: string): Promise<void> {
+    await db
+      .updateTable("chat.sessions")
+      .set({
+        lastActivityAt: new Date(),
+        endedAt: null,
+      })
+      .where("id", "=", sessionId)
+      .execute();
+  },
+
+  /**
+   * End a session. Sets ended_at = NOW() and clears last_activity_at.
+   */
+  async endSession(sessionId: string): Promise<void> {
+    await db
+      .updateTable("chat.sessions")
+      .set({
+        endedAt: new Date(),
+        lastActivityAt: null,
+      })
+      .where("id", "=", sessionId)
+      .execute();
+  },
+
+  /**
+   * Get active sessions for an app (last_activity_at within 2 minutes, not ended).
+   * Joins consumer info for display.
+   */
+  async getActiveSessions(
+    appId: string
+  ): Promise<
+    {
+      id: string;
+      title: string | null;
+      source: string;
+      lastActivityAt: Date;
+      startedAt: Date;
+      consumer: {
+        id: string;
+        email: string | null;
+        name: string | null;
+      } | null;
+    }[]
+  > {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+
+    const sessions = await db
+      .selectFrom("chat.sessions as s")
+      .leftJoin("app.consumers as c", "c.id", "s.consumerId")
+      .select([
+        "s.id",
+        "s.title",
+        "s.source",
+        "s.lastActivityAt",
+        "s.startedAt",
+        "c.id as consumerId",
+        "c.email as consumerEmail",
+        "c.name as consumerName",
+      ])
+      .where("s.applicationId", "=", appId)
+      .where("s.lastActivityAt", "is not", null)
+      .where("s.endedAt", "is", null)
+      .where("s.lastActivityAt", ">", twoMinutesAgo)
+      .orderBy("s.lastActivityAt", "desc")
+      .execute();
+
+    return sessions.map((s) => ({
+      id: s.id,
+      title: s.title,
+      source: s.source,
+      lastActivityAt: s.lastActivityAt!,
+      startedAt: s.startedAt,
+      consumer: s.consumerId
+        ? {
+            id: s.consumerId,
+            email: s.consumerEmail,
+            name: s.consumerName,
+          }
+        : null,
+    }));
   },
 };

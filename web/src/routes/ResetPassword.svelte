@@ -11,6 +11,7 @@
   import { isAuthenticated } from "../stores/auth";
   import { push, querystring } from "svelte-spa-router";
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   let password = "";
   let confirmPassword = "";
@@ -92,7 +93,7 @@
       resetComplete = true;
       toasts.success("Password reset", "Your password has been successfully reset");
     } catch (error) {
-      console.error("Reset password error:", error);
+      captureException(error, { tags: { page: "reset-password", feature: "reset-submit" } });
       toasts.error("Error", "Failed to reset password. Please try again.");
     } finally {
       isLoading = false;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Globe, Loader2 } from 'lucide-svelte';
+  import { captureException } from '$lib/sentry';
 
   export let applicationId: string;
 
@@ -103,7 +104,10 @@
                 isProcessing = false;
               }
             } catch (e) {
-              console.error('Error parsing SSE data:', e);
+              captureException(e, {
+                tags: { feature: "website-upload" },
+                extra: { context: "sse-parse" },
+              });
             }
           }
         }
@@ -113,7 +117,10 @@
         error = 'Upload completed but no result received';
       }
     } catch (e) {
-      console.error('Error uploading URL:', e);
+      captureException(e, {
+        tags: { feature: "website-upload" },
+        extra: { applicationId },
+      });
       error = e instanceof Error ? e.message : 'Upload failed';
     } finally {
       if (!success) {

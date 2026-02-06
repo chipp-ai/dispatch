@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { user } from "../../../stores/auth";
 
   // Form state
@@ -62,7 +63,7 @@
 
       toasts.success("Success", "Profile updated successfully");
     } catch (e) {
-      console.error("Failed to update profile:", e);
+      captureException(e, { tags: { feature: "settings-account" }, extra: { action: "handleSubmit" } });
       toasts.error("Error", "Failed to update profile");
     } finally {
       isSaving = false;
@@ -99,7 +100,7 @@
       pictureUrl = result.url;
       toasts.success("Success", "Image uploaded successfully");
     } catch (e) {
-      console.error("Failed to upload image:", e);
+      captureException(e, { tags: { feature: "settings-account" }, extra: { action: "handleFileChange" } });
       toasts.error("Error", "Failed to upload image");
       selectedFileName = "No file chosen";
     }

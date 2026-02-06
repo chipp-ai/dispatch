@@ -41,6 +41,19 @@ Normalization Layer              Provider APIs
 - **Gemini bypass**: Video/audio content routes directly to Google (Stripe has 1MB limit)
 - **Parameter stripping**: GPT-5 and o-series don't support temperature/top_p
 
+## Error Handling
+
+All LLM errors must go to Sentry with model/provider context:
+```typescript
+import * as Sentry from "@sentry/deno";
+
+console.error("[LLM] Provider error:", error);
+Sentry.captureException(error, {
+  tags: { source: "llm", feature: "provider-name" },
+  extra: { model, customerId },
+});
+```
+
 ## Billing Flow
 
 1. `BillingContext` contains `stripeCustomerId` and sandbox flag

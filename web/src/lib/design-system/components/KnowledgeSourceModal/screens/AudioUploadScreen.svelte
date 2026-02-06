@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Mic, Upload, Loader2 } from 'lucide-svelte';
+  import { captureException } from '$lib/sentry';
 
   export let applicationId: string;
 
@@ -85,7 +86,10 @@
       isProcessing = false;
 
     } catch (e) {
-      console.error('Error uploading audio:', e);
+      captureException(e, {
+        tags: { feature: "audio-upload" },
+        extra: { applicationId },
+      });
       error = e instanceof Error ? e.message : 'Upload failed';
       processingStage = 'idle';
       isProcessing = false;

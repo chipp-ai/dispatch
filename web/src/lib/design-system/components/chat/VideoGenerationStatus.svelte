@@ -11,6 +11,7 @@
    * - Error state with retry button
    */
   import { onMount, onDestroy, createEventDispatcher } from "svelte";
+  import { captureException } from "$lib/sentry";
   import type { VideoGenerationPhase, VideoGenerationStatus as VideoGenStatus } from "./types";
 
   export let jobId: string;
@@ -74,7 +75,10 @@
         stopPolling();
       }
     } catch (err) {
-      console.error("Error polling video status:", err);
+      captureException(err, {
+        tags: { feature: "video-generation" },
+        extra: { action: "poll-status", jobId },
+      });
       isConnected = false;
     }
   }
@@ -122,7 +126,10 @@
       // Start polling the new job
       startPolling();
     } catch (err) {
-      console.error("Error retrying video generation:", err);
+      captureException(err, {
+        tags: { feature: "video-generation" },
+        extra: { action: "retry", jobId },
+      });
       error = err instanceof Error ? err.message : "Failed to retry";
     } finally {
       isRetrying = false;

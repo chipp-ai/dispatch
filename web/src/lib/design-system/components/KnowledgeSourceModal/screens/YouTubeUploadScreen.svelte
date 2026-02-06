@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Loader2 } from 'lucide-svelte';
+  import { captureException } from '$lib/sentry';
 
   export let applicationId: string;
 
@@ -86,7 +87,10 @@
       isProcessing = false;
 
     } catch (e) {
-      console.error('Error adding YouTube video:', e);
+      captureException(e, {
+        tags: { feature: "youtube-upload" },
+        extra: { applicationId },
+      });
       error = e instanceof Error ? e.message : 'Failed to add YouTube video';
       processingStage = 'idle';
       isProcessing = false;

@@ -3,6 +3,7 @@
   import GlobalNavBar from "../../lib/design-system/components/GlobalNavBar.svelte";
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
   import { Card, Button, toasts, Input } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import {
     organization,
     organizationMembers,
@@ -37,7 +38,10 @@
     try {
       await Promise.all([fetchOrganization(), fetchOrganizationMembers()]);
     } catch (error) {
-      console.error("Failed to load organization data:", error);
+      captureException(error, {
+        tags: { feature: "settings-team" },
+        extra: { userId: $user?.id, action: "loadOrganizationData" },
+      });
       toasts.error("Error", "Failed to load team members");
     } finally {
       isLoading = false;

@@ -50,6 +50,11 @@ async function generateImageWithGemini(
         const response = await fetch(imageUrl);
         if (!response.ok) {
           console.error(`Failed to fetch image: ${imageUrl}`);
+          Sentry.captureMessage(`Failed to fetch reference image: ${response.status}`, {
+            level: "error",
+            tags: { source: "agent", feature: "tools", tool: "ai" },
+            extra: { imageUrl, statusCode: response.status },
+          });
           continue;
         }
         const arrayBuffer = await response.arrayBuffer();

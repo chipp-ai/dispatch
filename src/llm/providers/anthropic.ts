@@ -276,6 +276,11 @@ export class AnthropicProvider implements LLMProvider {
       const response = await fetch(url);
       if (!response.ok) {
         console.error(`[anthropic] Failed to fetch image: ${response.status}`);
+        Sentry.captureMessage(`[anthropic] Failed to fetch image: ${response.status}`, {
+          level: "error",
+          tags: { source: "llm", provider: "anthropic", feature: "fetch-image" },
+          extra: { imageUrl: url, statusCode: response.status },
+        });
         return null;
       }
 

@@ -26,6 +26,17 @@
   import BillingCreditsContent from "./settings/content/BillingCreditsContent.svelte";
   import BillingPaymentContent from "./settings/content/BillingPaymentContent.svelte";
   import BillingAutoTopupContent from "./settings/content/BillingAutoTopupContent.svelte";
+  import BillingUsageContent from "./settings/content/BillingUsageContent.svelte";
+  import BillingNotificationsContent from "./settings/content/BillingNotificationsContent.svelte";
+  import NotificationPreferencesContent from "./settings/content/NotificationPreferencesContent.svelte";
+  import { LowCreditsWarningBanner } from "$lib/design-system/components/billing";
+  import {
+    shouldShowWarning,
+    creditStatus,
+    startCreditStatusPolling,
+    stopCreditStatusPolling,
+    dismissCreditWarning,
+  } from "../stores/creditStatus";
 
   export let params: { wild?: string } = {};
 
@@ -44,6 +55,7 @@
       "hq",
       "help-center",
       "memory",
+      "notifications",
       "organization-settings",
       "sources",
       "team",
@@ -58,7 +70,7 @@
     if (!wild || wild === "") return "plan";
     const parts = wild.split("/");
     if (parts[0] !== "billing") return "plan";
-    const validSubPages = ["plan", "credits", "payment", "auto-topup"];
+    const validSubPages = ["plan", "credits", "payment", "auto-topup", "usage", "notifications"];
     return parts[1] && validSubPages.includes(parts[1]) ? parts[1] : "plan";
   }
 
@@ -79,6 +91,8 @@
         credits: "Credits",
         payment: "Payment",
         "auto-topup": "Auto Top-up",
+        usage: "Usage Analytics",
+        notifications: "Notifications",
       };
       return billingTitles[billingPage] || "Billing";
     }
@@ -88,6 +102,7 @@
       hq: "HQ",
       "help-center": "Help Center",
       memory: "Memory",
+      notifications: "Notifications",
       "organization-settings": "Organization Settings",
       sources: "Sources",
       team: "Team",
@@ -110,11 +125,17 @@
 
   onMount(() => {
     window.addEventListener("keydown", handleGlobalKeydown);
+    startCreditStatusPolling();
   });
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleGlobalKeydown);
+    stopCreditStatusPolling();
   });
+
+  function handleAddCredits() {
+    push("/settings/billing/credits");
+  }
 </script>
 
 <svelte:head>
@@ -136,6 +157,17 @@
         </a>
       {/if}
 
+      {#if $shouldShowWarning}
+        <LowCreditsWarningBanner
+          variant="full"
+          severity={$creditStatus.warningSeverity === 'exhausted' ? 'exhausted' : 'low'}
+          balanceFormatted={$creditStatus.creditBalanceFormatted}
+          hasPaymentMethod={$creditStatus.hasDefaultPaymentMethod}
+          on:addCredits={handleAddCredits}
+          on:dismiss={dismissCreditWarning}
+        />
+      {/if}
+
       {#if activePage === "home"}
         <SettingsHomeContent />
       {:else if activePage === "account"}
@@ -149,7 +181,13 @@
           <BillingPaymentContent />
         {:else if billingSubPage === "auto-topup"}
           <BillingAutoTopupContent />
+        {:else if billingSubPage === "usage"}
+          <BillingUsageContent />
+        {:else if billingSubPage === "notifications"}
+          <BillingNotificationsContent />
         {/if}
+      {:else if activePage === "notifications"}
+        <NotificationPreferencesContent />
       {:else if activePage === "hq"}
         <HQContent />
       {:else if activePage === "help-center"}

@@ -10,6 +10,7 @@
  * - Images must be base64 encoded (Anthropic doesn't support URL references)
  */
 
+import * as Sentry from "@sentry/deno";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   UnifiedMessage,
@@ -53,6 +54,11 @@ async function defaultFetchImageAsBase64(
       console.error(
         `[anthropic-encoder] Failed to fetch image: ${response.status}`
       );
+      Sentry.captureMessage(`[anthropic-encoder] Failed to fetch image: ${response.status}`, {
+        level: "error",
+        tags: { source: "llm", feature: "encoder", provider: "anthropic" },
+        extra: { imageUrl: url, statusCode: response.status },
+      });
       return null;
     }
 
@@ -69,6 +75,10 @@ async function defaultFetchImageAsBase64(
     return { base64, mediaType: contentType };
   } catch (error) {
     console.error(`[anthropic-encoder] Error fetching image:`, error);
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+      tags: { source: "llm", feature: "encoder", provider: "anthropic" },
+      extra: { imageUrl: url },
+    });
     return null;
   }
 }

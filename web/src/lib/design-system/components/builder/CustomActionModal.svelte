@@ -9,6 +9,7 @@
   import { fade, scale } from "svelte/transition";
   import { slide } from "svelte/transition";
   import { Input, Select, SelectItem, Button, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import parseCurl from "$lib/utils/parseCurl";
   import ApplicationVariableList from "./ApplicationVariableList.svelte";
   import RequestTester from "./RequestTester.svelte";
@@ -123,7 +124,10 @@
 
       toasts.success("cURL command imported successfully");
     } catch (error) {
-      console.error("Failed to parse cURL:", error);
+      captureException(error, {
+        tags: { feature: "custom-actions" },
+        extra: { context: "curl-import" },
+      });
       toasts.error("Failed to parse cURL command");
     }
   }
@@ -217,7 +221,10 @@
       jsonInput = "";
       toasts.success("Action imported from JSON");
     } catch (error) {
-      console.error("Failed to parse JSON:", error);
+      captureException(error, {
+        tags: { feature: "custom-actions" },
+        extra: { context: "json-import" },
+      });
       toasts.error("Failed to parse JSON data");
     }
   }

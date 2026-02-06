@@ -10,6 +10,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { whatsappService } from "../../../services/whatsapp.service.ts";
 import { applicationService } from "../../../services/application.service.ts";
@@ -164,6 +165,10 @@ export const whatsappRoutes = new Hono<AuthContext>()
       const message =
         err instanceof Error ? err.message : "Failed to save config";
       console.error("[WhatsApp] Save config error:", err);
+      Sentry.captureException(err, {
+        tags: { source: "whatsapp-api", feature: "save-config" },
+        extra: { appId: body.applicationId, phoneNumberId: body.phoneNumberId },
+      });
       return c.json({ error: message }, 500);
     }
   })
@@ -194,6 +199,10 @@ export const whatsappRoutes = new Hono<AuthContext>()
       const message =
         err instanceof Error ? err.message : "Failed to disconnect";
       console.error("[WhatsApp] Disconnect error:", err);
+      Sentry.captureException(err, {
+        tags: { source: "whatsapp-api", feature: "disconnect" },
+        extra: { appId: applicationId },
+      });
       return c.json({ error: message }, 500);
     }
   });

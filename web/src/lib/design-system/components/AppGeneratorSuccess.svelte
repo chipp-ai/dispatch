@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import { fly, scale } from "svelte/transition";
   import { adjustColor, getButtonGradientColors } from "../utils/colorUtils";
   import type { AppDetails } from "../stores/appGenerator";
+  import confetti from "canvas-confetti";
 
   export let appDetails: AppDetails = {};
   export let appFacts: string[] = [];
@@ -12,6 +13,49 @@
   const dispatch = createEventDispatcher();
 
   let isNavigatingToBuilder = false;
+
+  onMount(() => {
+    const colors = [
+      appDetails.primaryColor || "#8b5cf6",
+      "#FFD700", // gold
+      "#FF69B4", // hot pink
+      "#00CED1", // turquoise
+      "#FF6347", // tomato
+      "#98FB98", // pale green
+    ];
+
+    // Burst 1: center
+    setTimeout(() => {
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors,
+      });
+    }, 100);
+
+    // Burst 2: left
+    setTimeout(() => {
+      confetti({
+        particleCount: 50,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0, y: 0.6 },
+        colors,
+      });
+    }, 250);
+
+    // Burst 3: right
+    setTimeout(() => {
+      confetti({
+        particleCount: 50,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1, y: 0.6 },
+        colors,
+      });
+    }, 400);
+  });
 
   $: buttonColors = getButtonGradientColors(appDetails.primaryColor);
   $: glowGradient = appDetails.primaryColor

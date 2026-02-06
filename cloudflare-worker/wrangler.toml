@@ -10,6 +10,12 @@ binding = "ASSETS"
 bucket_name = "chipp-deno-spa"
 preview_bucket_name = "chipp-deno-spa-dev"
 
+# KV namespace for tenant config (custom domain -> branding mapping)
+[[kv_namespaces]]
+binding = "TENANT_CONFIG"
+id = "PLACEHOLDER_KV_NAMESPACE_ID"
+preview_id = "PLACEHOLDER_KV_NAMESPACE_ID"
+
 [vars]
 API_ORIGIN = "https://dino-mullet.chipp.ai"
 

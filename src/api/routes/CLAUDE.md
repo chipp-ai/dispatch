@@ -32,6 +32,19 @@ return c.json({ error: "msg" }, 400);  // Error
 | `dev/` | None (prod blocked) | MCP testing endpoints |
 | `webhooks/` | Signature | External callbacks |
 
+## Error Handling
+
+In catch blocks, always add Sentry alongside console.error:
+```typescript
+import * as Sentry from "@sentry/deno";
+
+console.error("[Route] Failed:", error);
+Sentry.captureException(error, {
+  tags: { source: "route-group", feature: "endpoint-name" },
+  extra: { userId: user?.id, applicationId },
+});
+```
+
 ## Non-Obvious Behaviors
 
 1. **Two separate auth systems**: `session_id` cookie for developers, `consumer_session_id` for end-users.

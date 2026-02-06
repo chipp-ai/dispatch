@@ -5,6 +5,7 @@
   import BuilderHeader from "../lib/design-system/components/builder/BuilderHeader.svelte";
   import { Card, Button, toasts } from "$lib/design-system";
   import { Link, Code, Copy, MessageSquare, Smartphone, Globe, Check } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -46,7 +47,7 @@
       const result = await response.json();
       app = result.data;
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-share", feature: "load-app" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load application");
     } finally {
       isLoading = false;

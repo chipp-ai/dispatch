@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let appUrl: string;
   export let appNameId: string;
@@ -28,7 +29,7 @@
         }, 2000);
       }
     } catch (error) {
-      console.error("Failed to fetch app info:", error);
+      captureException(error, { tags: { page: "widget" }, extra: { action: "fetchAppInfo", appNameId } });
     }
   }
 

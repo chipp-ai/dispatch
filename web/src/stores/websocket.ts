@@ -11,6 +11,7 @@
 
 import { writable, get } from "svelte/store";
 import { user } from "./auth";
+import { captureException } from "$lib/sentry";
 
 // Connection states
 type ConnectionState =
@@ -103,7 +104,7 @@ async function getToken(): Promise<string | null> {
 
     return data.token;
   } catch (error) {
-    console.error("[ws-store] Error getting token:", error);
+    captureException(error, { tags: { source: "websocket" }, extra: { action: "getToken" } });
     return null;
   }
 }
@@ -190,7 +191,7 @@ export async function connect(): Promise<boolean> {
       };
 
       socket.onerror = (error) => {
-        console.error("[ws-store] Error:", error);
+        captureException(new Error("WebSocket connection error"), { tags: { source: "websocket" }, extra: { event: error } });
       };
 
       socket.onmessage = (event) => {
@@ -198,11 +199,11 @@ export async function connect(): Promise<boolean> {
           const data = JSON.parse(event.data) as WebSocketEvent;
           handleEvent(data);
         } catch (error) {
-          console.error("[ws-store] Error parsing message:", error);
+          captureException(error, { tags: { source: "websocket" }, extra: { action: "parseMessage" } });
         }
       };
     } catch (error) {
-      console.error("[ws-store] Error creating WebSocket:", error);
+      captureException(error, { tags: { source: "websocket" }, extra: { action: "createWebSocket" } });
       wsState.update((s) => ({ ...s, connectionState: "disconnected" }));
       resolve(false);
     }

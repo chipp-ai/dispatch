@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import Button from "../lib/design-system/components/Button.svelte";
 
   export let params: { appId?: string; collectionId?: string } = {};
@@ -88,7 +89,7 @@
         collection = result.data;
       }
     } catch (err) {
-      console.error("Error loading collection:", err);
+      captureException(err, { tags: { page: "collection-contributions", feature: "load-collection" } });
     }
   }
 
@@ -114,7 +115,7 @@
       const result = await response.json();
       contributions = result.data || [];
     } catch (err) {
-      console.error("Error loading contributions:", err);
+      captureException(err, { tags: { page: "collection-contributions", feature: "load-contributions" } });
       error = err instanceof Error ? err.message : "Failed to load contributions";
     } finally {
       isLoading = false;

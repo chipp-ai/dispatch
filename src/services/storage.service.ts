@@ -7,6 +7,7 @@
 
 import { Storage } from "npm:@google-cloud/storage";
 import { decode as base64Decode } from "https://deno.land/std@0.208.0/encoding/base64.ts";
+import * as Sentry from "@sentry/deno";
 
 let storageClient: Storage | null = null;
 
@@ -27,6 +28,10 @@ function getStorageClient(): Storage {
         credentials = JSON.parse(jsonString);
       } catch (error) {
         console.error("[storage] Failed to parse service key:", error);
+        Sentry.captureException(error, {
+          tags: { source: "storage", feature: "service-key-parse" },
+          extra: { bucket: bucketName },
+        });
       }
     } else {
       console.warn(

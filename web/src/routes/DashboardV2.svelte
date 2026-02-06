@@ -4,6 +4,7 @@
   import { quintOut } from "svelte/easing";
   import GlobalNavBar from "../lib/design-system/components/GlobalNavBar.svelte";
   import { Button, Card, Skeleton, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace } from "../stores/workspace";
   import { organization } from "../stores/organization";
   import { user } from "../stores/auth";
@@ -152,7 +153,7 @@
         searchTotal = data.total || 0;
       }
     } catch (e) {
-      console.error("Search error:", e);
+      captureException(e, { tags: { page: "dashboard", feature: "search" } });
     } finally {
       isSearching = false;
     }

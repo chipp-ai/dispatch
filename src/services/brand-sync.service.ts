@@ -374,6 +374,42 @@ class BrandSyncService {
   }
 
   /**
+   * Upload a tenant branding asset (logo or favicon) to R2.
+   * Stores at tenants/{slug}/{type}.{ext} and returns the public URL.
+   */
+  async uploadTenantAsset(
+    slug: string,
+    type: "logo" | "favicon",
+    body: Uint8Array,
+    contentType: string
+  ): Promise<string> {
+    const client = this.getClient();
+    if (!client) {
+      throw new Error("R2 not configured - cannot upload assets");
+    }
+
+    // Determine file extension from content type
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/svg+xml": "svg",
+      "image/x-icon": "ico",
+      "image/vnd.microsoft.icon": "ico",
+    };
+    const ext = extMap[contentType] || "png";
+    const key = `tenants/${slug}/${type}.${ext}`;
+
+    await client.putObject(
+      key,
+      body,
+      contentType,
+      "public, max-age=31536000, immutable"
+    );
+
+    return `${this.publicUrl}/${key}`;
+  }
+
+  /**
    * Check if R2 sync is enabled
    */
   isEnabled(): boolean {

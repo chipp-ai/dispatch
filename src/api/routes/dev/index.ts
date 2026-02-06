@@ -20,8 +20,23 @@ import {
 } from "../../../websocket/handler.ts";
 import {
   publishToUser,
+  publishToSession,
 } from "../../../websocket/pubsub.ts";
 import { billingService } from "../../../services/billing.service.ts";
+import { multiplayerService } from "../../../services/multiplayer.service.ts";
+
+// Email template imports for preview
+import { newChat } from "../../../services/notifications/templates/new-chat.ts";
+import { consumerSignup } from "../../../services/notifications/templates/consumer-signup.ts";
+import { creditLow } from "../../../services/notifications/templates/credit-low.ts";
+import { creditExhausted } from "../../../services/notifications/templates/credit-exhausted.ts";
+import { paymentFailed } from "../../../services/notifications/templates/payment-failed.ts";
+import { workspaceMemberJoined } from "../../../services/notifications/templates/workspace-member-joined.ts";
+import { subscriptionChanged } from "../../../services/notifications/templates/subscription-changed.ts";
+import { creditPurchase } from "../../../services/notifications/templates/credit-purchase.ts";
+import { appEngagement } from "../../../services/notifications/templates/app-engagement.ts";
+import type { BrandingParams } from "../../../services/notifications/templates/base-layout.ts";
+import { generateAnonymousName, getAvatarColor } from "../../../utils/anonymous-identity.ts";
 
 // Path for app state file (read by MCP tools)
 const APP_STATE_FILE = ".scratch/app-state.md";
@@ -84,6 +99,10 @@ const wsEventSchema = z.object({
     "typing.stop",
     "credits.updated",
     "subscription.changed",
+    "notification.push",
+    "conversation.started",
+    "conversation.activity",
+    "conversation.ended",
   ]),
   payload: z.record(z.unknown()).optional(),
   userId: z.string(), // Required - no implicit fallback
@@ -528,6 +547,52 @@ router.post("/trigger-ws-event", zValidator("json", wsEventSchema), async (c) =>
         };
         break;
 
+      case "notification.push":
+        wsEvent = {
+          type: "notification:push",
+          notificationType: payload?.notificationType || "consumer_signup",
+          category: payload?.category || "engagement",
+          title: payload?.title || "Test Notification",
+          body: payload?.body || "This is a test notification from dev tools",
+          data: payload?.data || {},
+          actionUrl: payload?.actionUrl,
+          actionLabel: payload?.actionLabel,
+          timestamp: new Date().toISOString(),
+        };
+        break;
+
+      case "conversation.started":
+        wsEvent = {
+          type: "conversation:started",
+          sessionId: payload?.sessionId || "test-session-" + Date.now(),
+          applicationId: payload?.applicationId || "test-app",
+          consumerEmail: payload?.consumerEmail,
+          consumerName: payload?.consumerName || "Test User",
+          timestamp: new Date().toISOString(),
+        };
+        break;
+
+      case "conversation.activity":
+        wsEvent = {
+          type: "conversation:activity",
+          sessionId: payload?.sessionId || "test-session-" + Date.now(),
+          applicationId: payload?.applicationId || "test-app",
+          consumerEmail: payload?.consumerEmail,
+          consumerName: payload?.consumerName,
+          messagePreview: payload?.messagePreview || "Hello, I have a question...",
+          timestamp: new Date().toISOString(),
+        };
+        break;
+
+      case "conversation.ended":
+        wsEvent = {
+          type: "conversation:ended",
+          sessionId: payload?.sessionId || "test-session-" + Date.now(),
+          applicationId: payload?.applicationId || "test-app",
+          timestamp: new Date().toISOString(),
+        };
+        break;
+
       default:
         return c.json({ error: `Unknown event type: ${event}` }, 400);
     }
@@ -833,6 +898,441 @@ router.get("/inject-error", (c) => {
       errors: errorDetails,
     },
   });
+});
+
+// ========================================
+// Multiplayer Dev Endpoints
+// ========================================
+
+/**
+ * GET /api/dev/multiplayer/sessions
+ *
+ * List active multiplayer sessions.
+ */
+router.get("/multiplayer/sessions", async (c) => {
+  const environment = Deno.env.get("ENVIRONMENT");
+  if (environment === "production") {
+    return c.json({ error: "Not available in production" }, 403);
+  }
+
+  const sessions = await db
+    .selectFrom("chat.sessions")
+    .select(["id", "applicationId", "isMultiplayer", "shareToken", "startedAt"])
+    .where("isMultiplayer", "=", true)
+    .orderBy("startedAt", "desc")
+    .limit(20)
+    .execute();
+
+  // Get participant counts
+  const sessionsWithCounts = await Promise.all(
+    sessions.map(async (session) => {
+      const participants = await db
+        .selectFrom("chat.session_participants")
+        .select(["id", "displayName", "avatarColor", "isActive", "isAnonymous"])
+        .where("sessionId", "=", session.id)
+        .execute();
+      return { ...session, participants };
+    })
+  );
+
+  return c.json({ data: sessionsWithCounts });
+});
+
+/**
+ * POST /api/dev/multiplayer/simulate-join
+ *
+ * Simulate a participant joining a multiplayer session.
+ */
+router.post(
+  "/multiplayer/simulate-join",
+  zValidator(
+    "json",
+    z.object({
+      sessionId: z.string().uuid(),
+      displayName: z.string().optional(),
+    })
+  ),
+  async (c) => {
+    const environment = Deno.env.get("ENVIRONMENT");
+    if (environment === "production") {
+      return c.json({ error: "Not available in production" }, 403);
+    }
+
+    const { sessionId, displayName } = c.req.valid("json");
+
+    const name = displayName || generateAnonymousName();
+    const color = getAvatarColor(name);
+
+    // Create participant directly
+    const participant = await db
+      .insertInto("chat.session_participants")
+      .values({
+        sessionId,
+        displayName: name,
+        avatarColor: color,
+        isActive: true,
+        isAnonymous: true,
+        anonymousToken: crypto.randomUUID(),
+      })
+      .returning(["id", "displayName", "avatarColor", "isAnonymous", "isActive"])
+      .executeTakeFirst();
+
+    if (!participant) {
+      return c.json({ error: "Failed to create participant" }, 500);
+    }
+
+    // Broadcast join event
+    publishToSession(sessionId, {
+      type: "multiplayer:participant_joined",
+      sessionId,
+      participant: {
+        id: participant.id,
+        displayName: participant.displayName,
+        avatarColor: participant.avatarColor,
+        isAnonymous: participant.isAnonymous,
+        isActive: true,
+      },
+    }).catch(() => {});
+
+    return c.json({ data: participant });
+  }
+);
+
+/**
+ * POST /api/dev/multiplayer/simulate-message
+ *
+ * Simulate a participant sending a message in a multiplayer session.
+ */
+router.post(
+  "/multiplayer/simulate-message",
+  zValidator(
+    "json",
+    z.object({
+      sessionId: z.string().uuid(),
+      participantId: z.string().uuid(),
+      content: z.string().min(1),
+    })
+  ),
+  async (c) => {
+    const environment = Deno.env.get("ENVIRONMENT");
+    if (environment === "production") {
+      return c.json({ error: "Not available in production" }, 403);
+    }
+
+    const { sessionId, participantId, content } = c.req.valid("json");
+
+    // Create message in DB
+    const message = await db
+      .insertInto("chat.messages")
+      .values({
+        sessionId,
+        role: "user",
+        content,
+        senderParticipantId: participantId,
+      })
+      .returning(["id", "role", "content", "senderParticipantId", "createdAt"])
+      .executeTakeFirst();
+
+    if (!message) {
+      return c.json({ error: "Failed to create message" }, 500);
+    }
+
+    // Broadcast to session
+    publishToSession(
+      sessionId,
+      {
+        type: "multiplayer:user_message",
+        sessionId,
+        message: {
+          id: message.id,
+          role: "user",
+          content: message.content,
+          senderParticipantId: participantId,
+          createdAt: message.createdAt,
+        },
+      },
+      participantId
+    ).catch(() => {});
+
+    return c.json({ data: message });
+  }
+);
+
+/**
+ * POST /api/dev/multiplayer/simulate-stop
+ *
+ * Simulate stopping an AI response in a multiplayer session.
+ */
+router.post(
+  "/multiplayer/simulate-stop",
+  zValidator(
+    "json",
+    z.object({
+      sessionId: z.string().uuid(),
+    })
+  ),
+  async (c) => {
+    const environment = Deno.env.get("ENVIRONMENT");
+    if (environment === "production") {
+      return c.json({ error: "Not available in production" }, 403);
+    }
+
+    const { sessionId } = c.req.valid("json");
+
+    const aborted = multiplayerService.abortActiveStream(sessionId);
+
+    if (aborted) {
+      publishToSession(sessionId, {
+        type: "multiplayer:ai_stopped",
+        sessionId,
+      }).catch(() => {});
+    }
+
+    return c.json({
+      data: { aborted },
+      message: aborted ? "AI response stopped" : "No active stream found",
+    });
+  }
+);
+
+// ========================================
+// Email Template Preview
+// ========================================
+
+// deno-lint-ignore no-explicit-any
+const EMAIL_TEMPLATES: Record<string, { template: any; mockData: Record<string, unknown>; label: string }> = {
+  "new-chat": {
+    template: newChat,
+    label: "New Chat Session",
+    mockData: {
+      appName: "Acme Support Bot",
+      appId: "app_12345",
+      sessionId: "sess_abc123",
+      consumerName: "Sarah Chen",
+      consumerEmail: "sarah@example.com",
+      messagePreview: "Hi, I'm having trouble with my recent order #4521. The tracking says delivered but I haven't received it yet. Can you help?",
+      source: "APP",
+      timestamp: new Date().toISOString(),
+    },
+  },
+  "new-chat-anonymous": {
+    template: newChat,
+    label: "New Chat (Anonymous)",
+    mockData: {
+      appName: "Acme Support Bot",
+      appId: "app_12345",
+      sessionId: "sess_abc123",
+      source: "WHATSAPP",
+      timestamp: new Date().toISOString(),
+    },
+  },
+  "new-chat-email-source": {
+    template: newChat,
+    label: "New Chat (Email Source)",
+    mockData: {
+      appName: "Legal Assistant Pro",
+      appId: "app_67890",
+      sessionId: "sess_def456",
+      consumerName: "Marcus Rodriguez",
+      consumerEmail: "marcus@lawfirm.com",
+      messagePreview: "I need help reviewing a non-compete clause in an employment contract. The clause seems overly broad.",
+      source: "EMAIL",
+      timestamp: new Date().toISOString(),
+    },
+  },
+  "consumer-signup": {
+    template: consumerSignup,
+    label: "Consumer Signup",
+    mockData: {
+      consumerEmail: "newuser@example.com",
+      appName: "Acme Support Bot",
+      appId: "app_12345",
+    },
+  },
+  "credit-low": {
+    template: creditLow,
+    label: "Credit Low",
+    mockData: {
+      creditBalanceFormatted: "$2.34",
+      creditBalanceCents: 234,
+      organizationName: "Acme Corp",
+      addCreditsUrl: "http://localhost:5174/#/settings/billing",
+    },
+  },
+  "credit-exhausted": {
+    template: creditExhausted,
+    label: "Credits Exhausted",
+    mockData: {
+      organizationName: "Acme Corp",
+      addCreditsUrl: "http://localhost:5174/#/settings/billing",
+    },
+  },
+  "payment-failed": {
+    template: paymentFailed,
+    label: "Payment Failed",
+    mockData: {
+      organizationName: "Acme Corp",
+      amountFormatted: "$49.00",
+      attemptCount: 2,
+      nextRetryDate: "February 10, 2026",
+      billingUrl: "http://localhost:5174/#/settings/billing",
+    },
+  },
+  "workspace-member-joined": {
+    template: workspaceMemberJoined,
+    label: "Workspace Member Joined",
+    mockData: {
+      memberEmail: "alice@acme.com",
+      memberName: "Alice Johnson",
+      workspaceName: "Engineering",
+      role: "Editor",
+    },
+  },
+  "subscription-changed": {
+    template: subscriptionChanged,
+    label: "Subscription Changed",
+    mockData: {
+      organizationName: "Acme Corp",
+      previousTier: "PRO",
+      newTier: "BUSINESS",
+      changeType: "upgraded",
+      billingUrl: "http://localhost:5174/#/settings/billing",
+    },
+  },
+  "credit-purchase": {
+    template: creditPurchase,
+    label: "Credit Purchase",
+    mockData: {
+      consumerEmail: "buyer@example.com",
+      appName: "Acme Support Bot",
+      amountFormatted: "$25.00",
+    },
+  },
+  "app-engagement": {
+    template: appEngagement,
+    label: "App Engagement Digest",
+    mockData: {
+      organizationName: "Acme Corp",
+      periodLabel: "Weekly",
+      totalSessions: 342,
+      totalMessages: 1847,
+      topApps: [
+        { name: "Support Bot", sessions: 198 },
+        { name: "Sales Assistant", sessions: 87 },
+        { name: "Onboarding Guide", sessions: 57 },
+      ],
+    },
+  },
+};
+
+const BRAND_PRESETS: Record<string, BrandingParams> = {
+  chipp:    { brandName: "Chipp", brandColor: "#000000" },
+  blue:     { brandName: "Acme Corp", brandColor: "#2563eb" },
+  purple:   { brandName: "Nebula AI", brandColor: "#7c3aed" },
+  green:    { brandName: "EcoTech", brandColor: "#059669" },
+  orange:   { brandName: "Firestarter", brandColor: "#ea580c" },
+  rose:     { brandName: "Bloom Health", brandColor: "#e11d48" },
+};
+
+/**
+ * GET /api/dev/email-preview
+ *
+ * Gallery page listing all available email templates with links to preview each.
+ * Query param: ?brand=chipp|blue|purple|green|orange|rose (default: blue)
+ */
+router.get("/email-preview", (c) => {
+  const environment = Deno.env.get("ENVIRONMENT");
+  if (environment === "production") {
+    return c.json({ error: "Not available in production" }, 403);
+  }
+
+  const brand = (c.req.query("brand") || "blue") as string;
+  const branding = BRAND_PRESETS[brand] || BRAND_PRESETS.blue;
+
+  const brandButtons = Object.entries(BRAND_PRESETS)
+    .map(([key, b]) => {
+      const active = key === brand;
+      return `<a href="?brand=${key}" style="
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
+        text-decoration: none; border: 1px solid ${active ? b.brandColor : "#e4e4e7"};
+        background: ${active ? b.brandColor : "#fff"}; color: ${active ? "#fff" : "#3f3f46"};
+      "><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${b.brandColor};border:1px solid rgba(0,0,0,0.1);"></span>${b.brandName}</a>`;
+    })
+    .join(" ");
+
+  const templateLinks = Object.entries(EMAIL_TEMPLATES)
+    .map(([key, entry]) => {
+      return `<a href="/api/dev/email-preview/${key}?brand=${brand}" target="_blank" style="
+        display: block; padding: 14px 18px; margin: 0 0 8px 0;
+        background: #fff; border: 1px solid #e4e4e7; border-radius: 10px;
+        text-decoration: none; color: #18181b; font-size: 14px;
+        transition: border-color 0.15s;
+      " onmouseover="this.style.borderColor='${branding.brandColor}'" onmouseout="this.style.borderColor='#e4e4e7'">
+        <strong>${entry.label}</strong>
+        <span style="float:right;color:#a1a1aa;font-size:12px;">${key}</span>
+      </a>`;
+    })
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Email Template Preview</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f4f5; margin: 0; padding: 32px; }
+    .container { max-width: 600px; margin: 0 auto; }
+    h1 { font-size: 24px; font-weight: 700; color: #18181b; margin: 0 0 4px 0; }
+    .subtitle { font-size: 14px; color: #71717a; margin: 0 0 24px 0; }
+    .section-label { font-size: 11px; font-weight: 600; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; margin: 24px 0 10px 0; }
+    .brands { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px 0; }
+  </style>
+</head><body>
+  <div class="container">
+    <h1>Email Template Preview</h1>
+    <p class="subtitle">Click a template to preview it with the selected brand.</p>
+    <div class="section-label">Brand</div>
+    <div class="brands">${brandButtons}</div>
+    <div class="section-label">Templates (${Object.keys(EMAIL_TEMPLATES).length})</div>
+    ${templateLinks}
+  </div>
+</body></html>`;
+
+  return c.html(html);
+});
+
+/**
+ * GET /api/dev/email-preview/:template
+ *
+ * Render a specific email template with mock data.
+ * Query param: ?brand=chipp|blue|purple|green|orange|rose (default: blue)
+ */
+router.get("/email-preview/:template", (c) => {
+  const environment = Deno.env.get("ENVIRONMENT");
+  if (environment === "production") {
+    return c.json({ error: "Not available in production" }, 403);
+  }
+
+  const templateKey = c.req.param("template");
+  const entry = EMAIL_TEMPLATES[templateKey];
+
+  if (!entry) {
+    return c.json({
+      error: `Unknown template: ${templateKey}`,
+      available: Object.keys(EMAIL_TEMPLATES),
+    }, 404);
+  }
+
+  const brand = (c.req.query("brand") || "blue") as string;
+  const branding = BRAND_PRESETS[brand] || BRAND_PRESETS.blue;
+
+  const html = entry.template.renderHtml(entry.mockData, branding, {
+    trackingPixelUrl: "https://example.com/pixel.gif",
+    unsubscribeUrl: "http://localhost:5174/#/settings/notifications",
+  });
+
+  return c.html(html);
 });
 
 export { router as devRoutes };

@@ -12,6 +12,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import * as Sentry from "@sentry/deno";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { emailService } from "../../../services/email.service.ts";
 import { applicationService } from "../../../services/application.service.ts";
@@ -207,6 +208,10 @@ export const emailRoutes = new Hono<AuthContext>()
       const message =
         err instanceof Error ? err.message : "Failed to save config";
       console.error("[Email] Save config error:", err);
+      Sentry.captureException(err, {
+        tags: { source: "email-api", feature: "save-config" },
+        extra: { appId: body.applicationId },
+      });
       return c.json({ error: message }, 500);
     }
   })
@@ -239,6 +244,10 @@ export const emailRoutes = new Hono<AuthContext>()
         const message =
           err instanceof Error ? err.message : "Failed to toggle whitelist";
         console.error("[Email] Toggle whitelist error:", err);
+        Sentry.captureException(err, {
+          tags: { source: "email-api", feature: "toggle-whitelist" },
+          extra: { appId: body.applicationId, enableWhitelist: body.enableWhitelist },
+        });
         return c.json({ error: message }, 500);
       }
     }
@@ -292,6 +301,10 @@ export const emailRoutes = new Hono<AuthContext>()
         const message =
           err instanceof Error ? err.message : "Failed to add to whitelist";
         console.error("[Email] Add to whitelist error:", err);
+        Sentry.captureException(err, {
+          tags: { source: "email-api", feature: "add-to-whitelist" },
+          extra: { appId: body.applicationId, email: body.email },
+        });
         return c.json({ error: message }, 500);
       }
     }
@@ -324,6 +337,10 @@ export const emailRoutes = new Hono<AuthContext>()
             ? err.message
             : "Failed to remove from whitelist";
         console.error("[Email] Remove from whitelist error:", err);
+        Sentry.captureException(err, {
+          tags: { source: "email-api", feature: "remove-from-whitelist" },
+          extra: { appId: body.applicationId, email: body.email },
+        });
         return c.json({ error: message }, 500);
       }
     }
@@ -355,6 +372,10 @@ export const emailRoutes = new Hono<AuthContext>()
       const message =
         err instanceof Error ? err.message : "Failed to disconnect";
       console.error("[Email] Disconnect error:", err);
+      Sentry.captureException(err, {
+        tags: { source: "email-api", feature: "disconnect" },
+        extra: { appId: applicationId },
+      });
       return c.json({ error: message }, 500);
     }
   });

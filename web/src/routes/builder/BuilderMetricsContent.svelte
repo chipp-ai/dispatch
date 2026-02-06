@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, toasts } from "$lib/design-system";
   import { MessageSquare, Users, Clock, TrendingUp, BarChart3 } from "lucide-svelte";
 
@@ -73,7 +74,7 @@
       const result = await response.json();
       sessions = result.data;
     } catch (e) {
-      console.error("Failed to load sessions:", e);
+      captureException(e, { tags: { feature: "builder-metrics" }, extra: { action: "load-sessions", appId } });
       toasts.error("Error", "Failed to load metrics data");
     } finally {
       isLoading = false;

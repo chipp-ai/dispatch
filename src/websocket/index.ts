@@ -18,6 +18,7 @@ export type {
   AIToolResultEvent,
   ConsumerDisconnectedEvent,
   ConversationTakeoverEvent,
+  ConversationActivityEvent,
   JobStartedEvent,
   JobProgressEvent,
   JobCompletedEvent,
@@ -25,6 +26,7 @@ export type {
   BillingUsageAlertEvent,
   BillingLimitReachedEvent,
   BillingCreditsLowEvent,
+  NotificationPushEvent,
   SystemNotificationEvent,
   SystemMaintenanceEvent,
   // Action types
@@ -45,6 +47,7 @@ export {
   getUserConnectionCount,
   getTotalConnectionCount,
   getConnectedUserIds,
+  localSendToUser,
 } from "./handler.ts";
 
 // Pub/Sub (for publishing events from anywhere in the app)
@@ -52,6 +55,7 @@ export {
   publishToUser,
   publishToUsers,
   publishBroadcast,
+  publishToSession,
   isPubSubConnected,
   // Convenience functions
   notifyJobProgress,
@@ -61,3 +65,19 @@ export {
   notifyUser,
   broadcastMaintenance,
 } from "./pubsub.ts";
+
+// Consumer WebSocket (multiplayer chat)
+export {
+  upgradeConsumerWebSocket,
+  getConsumerWebSocketHealth,
+  sendToSession,
+  getConsumerConnectionCount,
+} from "./consumer-handler.ts";
+
+// Consumer WS types
+export type {
+  ConsumerWebSocketEvent,
+  ConsumerClientAction,
+  ConsumerWsClient,
+  ParticipantInfo,
+} from "./consumer-types.ts";

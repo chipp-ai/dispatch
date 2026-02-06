@@ -21,6 +21,18 @@ Global client-side state using **classic Svelte stores** (`writable`/`derived`),
 2. **Fetch updates** - `fetchOrganization()` hits API, updates store + localStorage cache
 3. **Derived stores** - Components subscribe to derived stores (`organization`, not `organizationStore`)
 
+## Error Handling
+
+Never use bare `console.error` in stores. Use `captureException` from `$lib/sentry`:
+```typescript
+import { captureException } from "$lib/sentry";
+
+captureException(error, {
+  tags: { feature: "store-name" },
+  extra: { relevantState },
+});
+```
+
 ## Critical Gotchas
 
 **Auth routes are NOT under /api:**
