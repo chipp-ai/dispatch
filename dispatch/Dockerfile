@@ -1,4 +1,4 @@
-# Dockerfile for Dispatch (Chipp Issues)
+# Dockerfile for Dispatch (Chipp Issues tracker)
 # Standalone issue tracker with MCP server and WebSocket terminal streaming
 
 FROM node:22-bookworm-slim AS base
