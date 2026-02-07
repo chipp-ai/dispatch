@@ -15,6 +15,7 @@
  * 2. Even if they did, the values come from our KV lookup, not client input
  */
 
+import { log } from "@/lib/logger.ts";
 import { createMiddleware } from "hono/factory";
 
 /**
@@ -100,7 +101,9 @@ export const workerTrustMiddleware = createMiddleware<WorkerTrustContext>(
     // In development (no token configured), fall back to header-only for backwards compatibility
     const isFromWorker = hasValidHeader && (hasValidAuth || !expectedAuthToken);
 
-    console.log("[workerTrust] Header check:", {
+    log.debug("Header check", {
+      source: "worker-trust",
+      feature: "auth",
       workerHeader,
       hasAuthHeader: Boolean(workerAuthHeader),
       hasExpectedToken: Boolean(expectedAuthToken),
@@ -124,7 +127,14 @@ export const workerTrustMiddleware = createMiddleware<WorkerTrustContext>(
       workerContext.tenantId = c.req.header("X-Tenant-ID") || null;
       workerContext.tenantSlug = c.req.header("X-Tenant-Slug") || null;
       workerContext.originalHost = c.req.header("X-Original-Host") || null;
-      console.log("[workerTrust] Worker request detected:", workerContext);
+      log.debug("Worker request detected", {
+        source: "worker-trust",
+        feature: "auth",
+        appId: workerContext.appId,
+        tenantId: workerContext.tenantId,
+        tenantSlug: workerContext.tenantSlug,
+        originalHost: workerContext.originalHost,
+      });
     }
 
     c.set("workerContext", workerContext);

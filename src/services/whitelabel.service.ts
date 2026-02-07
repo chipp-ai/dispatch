@@ -9,7 +9,7 @@ import { db } from "../db/client.ts";
 import { NotFoundError, ForbiddenError } from "../utils/errors.ts";
 import { organizationService } from "./organization.service.ts";
 import type { WhitelabelTenant as WhitelabelTenantRow } from "../db/schema.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -283,11 +283,11 @@ export const whitelabelService = {
         // KV is updated inside updateBrandStyles via updateKvMapping
       } catch (error) {
         // Non-critical: edge sync can fail without breaking the save
-        console.error("[whitelabel] Edge sync failed:", error);
-        Sentry.captureException(error, {
-          level: "warning",
-          tags: { source: "whitelabel-service", feature: "edge-sync" },
-          extra: { tenantId, customDomain: mappedTenant.customDomain },
+        log.warn("Edge sync failed", {
+          source: "whitelabel-service",
+          feature: "edge-sync",
+          tenantId,
+          customDomain: mappedTenant.customDomain,
         });
       }
     }

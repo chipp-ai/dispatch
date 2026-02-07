@@ -6,7 +6,7 @@
  */
 
 import { Hono } from "hono";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { twilioWebhookMiddleware } from "../../middleware/webhookAuth.ts";
 
@@ -130,7 +130,10 @@ twilioWebhookRoutes.post("/", async (c) => {
     const callerNumber = params.From;
     const callSid = params.CallSid;
 
-    console.log(`[${requestId}] Twilio voice webhook`, {
+    log.info("Twilio voice webhook", {
+      source: "twilio-webhook",
+      feature: "voice",
+      requestId,
       callSid,
       to: calledNumber,
       from: callerNumber ? callerNumber.substring(0, 6) + "****" : "unknown",
@@ -138,12 +141,7 @@ twilioWebhookRoutes.post("/", async (c) => {
     });
 
     if (!calledNumber) {
-      console.error(`[${requestId}] No destination number in webhook`);
-      Sentry.captureMessage("No destination number in Twilio webhook", {
-        level: "error",
-        tags: { source: "twilio-webhook" },
-        extra: { requestId, callSid, callStatus: params.CallStatus },
-      });
+      log.error("No destination number in webhook", { source: "twilio-webhook", feature: "voice", requestId, callSid, callStatus: params.CallStatus });
       return twimlResponse(
         twimlSay("We could not determine the destination number.")
       );
@@ -160,7 +158,7 @@ twilioWebhookRoutes.post("/", async (c) => {
     const phoneNumber = await phoneNumberService.findByNumber(calledNumber);
 
     if (!phoneNumber) {
-      console.log(`[${requestId}] No application found for number: ${calledNumber}`);
+      log.info("No application found for number", { source: "twilio-webhook", feature: "voice", requestId, calledNumber });
       return twimlResponse(
         twimlSay("This number is not currently configured. Please contact support.")
       );
@@ -183,11 +181,13 @@ twilioWebhookRoutes.post("/", async (c) => {
           },
         });
       } catch (error) {
-        console.error(`[${requestId}] Failed to create call record:`, error);
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-          tags: { source: "twilio-webhook", feature: "call-record-create" },
-          extra: { requestId, callSid, applicationId: phoneNumber.application_id },
-        });
+        log.error("Failed to create call record", {
+          source: "twilio-webhook",
+          feature: "call-record-create",
+          requestId,
+          callSid,
+          applicationId: phoneNumber.application_id,
+        }, error);
         // Continue anyway - don't fail the webhook
       }
     }
@@ -202,7 +202,7 @@ twilioWebhookRoutes.post("/", async (c) => {
 
     if (sipHost && sipPassword) {
       // Route call to LiveKit SIP
-      console.log(`[${requestId}] Routing call to LiveKit SIP: ${sipHost}`);
+      log.info("Routing call to LiveKit SIP", { source: "twilio-webhook", feature: "voice", requestId, sipHost });
       return twimlResponse(
         twimlDialSip(`sip:${calledNumber}@${sipHost}`, {
           username: sipUsername,
@@ -212,18 +212,14 @@ twilioWebhookRoutes.post("/", async (c) => {
     }
 
     // No SIP configuration - return a message
-    console.log(`[${requestId}] No LiveKit SIP configured, returning message`);
+    log.info("No LiveKit SIP configured, returning message", { source: "twilio-webhook", feature: "voice", requestId });
     return twimlResponse(
       twimlSay(
         "Thank you for calling. Voice agents are being configured. Please try again later."
       )
     );
   } catch (error) {
-    console.error(`[${requestId}] Error handling Twilio webhook:`, error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "twilio-webhook" },
-      extra: { requestId },
-    });
+    log.error("Error handling Twilio webhook", { source: "twilio-webhook", feature: "voice", requestId }, error);
 
     // Return error TwiML
     return twimlResponse(
@@ -258,7 +254,10 @@ twilioWebhookRoutes.post("/status", async (c) => {
     const callStatus = params.CallStatus;
     const callDuration = params.CallDuration;
 
-    console.log(`[${requestId}] Twilio status callback`, {
+    log.info("Twilio status callback", {
+      source: "twilio-webhook",
+      feature: "status-callback",
+      requestId,
       callSid,
       status: callStatus,
       duration: callDuration,
@@ -290,25 +289,20 @@ twilioWebhookRoutes.post("/status", async (c) => {
 
         await callRecordService.update(callSid, updateParams);
       } catch (error) {
-        console.error(`[${requestId}] Failed to update call record:`, error);
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-          tags: { source: "twilio-webhook", feature: "call-record-update" },
-          extra: { requestId, callSid, callStatus },
-        });
+        log.error("Failed to update call record", {
+          source: "twilio-webhook",
+          feature: "call-record-update",
+          requestId,
+          callSid,
+          callStatus,
+        }, error);
         // Continue anyway - don't fail the callback
       }
     }
 
     return c.json({ received: true });
   } catch (error) {
-    console.error(
-      `[${requestId}] Error handling Twilio status callback:`,
-      error
-    );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "twilio-webhook", feature: "status-callback" },
-      extra: { requestId },
-    });
+    log.error("Error handling Twilio status callback", { source: "twilio-webhook", feature: "status-callback", requestId }, error);
     return c.json({ received: true, error: "Processing error" });
   }
 });

@@ -9,7 +9,7 @@ import { db } from "@/src/db/client.ts";
 import { encrypt, decrypt } from "@/src/services/crypto.service.ts";
 import type { EmailConfig, EmailThread } from "@/src/db/schema.ts";
 import { chatService } from "./chat.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -337,11 +337,10 @@ export async function getDecryptedCredentials(
     };
   } catch {
     // If decryption fails, return null
-    console.error("[Email] Failed to decrypt credentials");
-    Sentry.captureMessage("Failed to decrypt email credentials", {
-      level: "error",
-      tags: { source: "email", feature: "credential-decryption" },
-      extra: { applicationId },
+    log.error("Failed to decrypt credentials", {
+      source: "email",
+      feature: "credential-decryption",
+      applicationId,
     });
     return null;
   }
@@ -651,19 +650,13 @@ export async function sendReply(
   const result: PostmarkSendResponse = await response.json();
 
   if (result.ErrorCode !== 0) {
-    console.error("[Email] Postmark send error", {
+    log.error("Postmark send error", {
+      source: "email",
+      feature: "postmark-send",
       errorCode: result.ErrorCode,
-      message: result.Message,
-    });
-    Sentry.captureMessage("Postmark send error", {
-      level: "error",
-      tags: { source: "email", feature: "postmark-send" },
-      extra: {
-        errorCode: result.ErrorCode,
-        errorMessage: result.Message,
-        to: params.to,
-        subject: params.subject,
-      },
+      errorMessage: result.Message,
+      to: params.to,
+      subject: params.subject,
     });
   }
 

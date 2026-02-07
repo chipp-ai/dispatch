@@ -13,7 +13,7 @@ import {
   ExternalServiceError,
   ValidationError,
 } from "../utils/errors.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { CustomDomainType, CustomDomainSslStatus } from "../db/schema.ts";
 
 // ========================================
@@ -531,14 +531,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
-        "[domain] Failed to delete Cloudflare hostname:",
-        errorText
-      );
-      Sentry.captureMessage("Failed to delete Cloudflare hostname", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "cloudflare-delete" },
-        extra: { cloudflareId, errorText, status: response.status },
+      log.warn("Failed to delete Cloudflare hostname", {
+        source: "domain-service",
+        feature: "cloudflare-delete",
+        cloudflareId,
+        errorText,
+        status: response.status,
       });
       // Don't throw - we still want to clean up locally
     }
@@ -552,7 +550,7 @@ export const domainService = {
     const { accountId, kvNamespaceId, apiToken } = getCloudflareConfig();
 
     if (!accountId || !kvNamespaceId) {
-      console.warn("[domain] KV not configured, skipping update");
+      log.warn("KV not configured, skipping update", { source: "domain-service", feature: "kv-update" });
       return;
     }
 
@@ -575,11 +573,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("[domain] Failed to update KV:", errorText);
-      Sentry.captureMessage("Failed to update KV mapping", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "kv-update" },
-        extra: { hostname, errorText, status: response.status },
+      log.warn("Failed to update KV mapping", {
+        source: "domain-service",
+        feature: "kv-update",
+        hostname,
+        errorText,
+        status: response.status,
       });
     }
   },
@@ -603,11 +602,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("[domain] Failed to delete KV:", errorText);
-      Sentry.captureMessage("Failed to delete KV mapping", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "kv-delete" },
-        extra: { hostname, errorText, status: response.status },
+      log.warn("Failed to delete KV mapping", {
+        source: "domain-service",
+        feature: "kv-delete",
+        hostname,
+        errorText,
+        status: response.status,
       });
     }
   },

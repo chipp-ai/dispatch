@@ -10,7 +10,7 @@
  * - Images must be base64 encoded (Anthropic doesn't support URL references)
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   UnifiedMessage,
@@ -51,14 +51,7 @@ async function defaultFetchImageAsBase64(
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      console.error(
-        `[anthropic-encoder] Failed to fetch image: ${response.status}`
-      );
-      Sentry.captureMessage(`[anthropic-encoder] Failed to fetch image: ${response.status}`, {
-        level: "error",
-        tags: { source: "llm", feature: "encoder", provider: "anthropic" },
-        extra: { imageUrl: url, statusCode: response.status },
-      });
+      log.error("Failed to fetch image", { source: "llm", feature: "anthropic-encoder", imageUrl: url, statusCode: response.status });
       return null;
     }
 
@@ -74,11 +67,7 @@ async function defaultFetchImageAsBase64(
 
     return { base64, mediaType: contentType };
   } catch (error) {
-    console.error(`[anthropic-encoder] Error fetching image:`, error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "llm", feature: "encoder", provider: "anthropic" },
-      extra: { imageUrl: url },
-    });
+    log.error("Error fetching image", { source: "llm", feature: "anthropic-encoder", imageUrl: url }, error);
     return null;
   }
 }
@@ -167,7 +156,7 @@ export class AnthropicEncoder
       case "tool":
         return this.encodeToolResultMessage(msg);
       default:
-        console.warn(`[anthropic-encoder] Skipping role: ${msg.role}`);
+        log.debug("Skipping unsupported role", { source: "llm", feature: "anthropic-encoder", role: msg.role });
         return null;
     }
   }

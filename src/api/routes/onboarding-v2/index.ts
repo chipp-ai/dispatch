@@ -12,7 +12,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { applicationService } from "../../../services/application.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Template definitions (must match frontend ONBOARDING_TEMPLATES)
 const ONBOARDING_TEMPLATES = [
@@ -213,11 +213,7 @@ onboardingV2Routes.post(
         },
       });
     } catch (error) {
-      console.error("[onboarding-v2] Error creating template apps:", error);
-      Sentry.captureException(error, {
-        tags: { source: "onboarding-api", feature: "template-apps" },
-        extra: { userId: user.id, workspaceId: body.workspaceId },
-      });
+      log.error("Failed to create template apps", { source: "onboarding-api", feature: "template-apps", userId: user.id, workspaceId: body.workspaceId }, error);
       const message =
         error instanceof Error
           ? error.message
@@ -246,11 +242,7 @@ onboardingV2Routes.get("/progress", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[onboarding-v2] Error getting progress:", error);
-    Sentry.captureException(error, {
-      tags: { source: "onboarding-api", feature: "get-progress" },
-      extra: { userId: user.id },
-    });
+    log.error("Failed to get onboarding progress", { source: "onboarding-api", feature: "get-progress", userId: user.id }, error);
     const message =
       error instanceof Error ? error.message : "Failed to get progress";
     return c.json({ error: message }, 500);
@@ -267,7 +259,7 @@ onboardingV2Routes.post("/complete", async (c) => {
   try {
     // Mark V2 onboarding as complete
     // This could update a user flag or create a record
-    console.log(`[onboarding-v2] User ${user.id} completed onboarding V2`);
+    log.info("User completed onboarding V2", { source: "onboarding-api", feature: "complete-onboarding", userId: user.id });
 
     return c.json({
       data: {
@@ -276,11 +268,7 @@ onboardingV2Routes.post("/complete", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[onboarding-v2] Error completing onboarding:", error);
-    Sentry.captureException(error, {
-      tags: { source: "onboarding-api", feature: "complete-onboarding" },
-      extra: { userId: user.id },
-    });
+    log.error("Failed to complete onboarding", { source: "onboarding-api", feature: "complete-onboarding", userId: user.id }, error);
     const message =
       error instanceof Error ? error.message : "Failed to complete onboarding";
     return c.json({ error: message }, 500);

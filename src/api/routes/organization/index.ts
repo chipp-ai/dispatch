@@ -13,7 +13,7 @@ import { organizationService } from "../../../services/organization.service.ts";
 import { whitelabelService } from "../../../services/whitelabel.service.ts";
 import { billingService } from "../../../services/billing.service.ts";
 import { brandSyncService } from "../../../services/brand-sync.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { senderDomainService } from "../../../services/notifications/sender-domain.service.ts";
 import {
   NOTIFICATION_REGISTRY,
@@ -196,11 +196,7 @@ organizationRoutes.post("/whitelabel/upload", async (c) => {
 
     return c.json({ data: { url, type: assetType } });
   } catch (error) {
-    console.error("[whitelabel] Upload failed:", error);
-    Sentry.captureException(error, {
-      tags: { source: "whitelabel-upload", feature: assetType },
-      extra: { tenantSlug: tenant.slug, fileSize: file.size, fileType: file.type },
-    });
+    log.error("Whitelabel upload failed", { source: "whitelabel-upload", feature: assetType, tenantSlug: tenant.slug, fileSize: file.size, fileType: file.type }, error);
     return c.json({ error: "Failed to upload file" }, 500);
   }
 });

@@ -5,6 +5,7 @@
  * This file exists for import path compatibility.
  */
 
+import { log } from "@/lib/logger.ts";
 import type { Message } from "../types.ts";
 import {
   normalizeHistory,
@@ -53,13 +54,11 @@ export function normalizeHistoryForModel(
   currentModel: string,
   previousModel?: string | null
 ): Message[] {
-  console.log(`[normalizeHistoryForModel] Input: ${messages.length} messages`);
+  log.debug("normalizeHistoryForModel input", { source: "llm", feature: "normalize-history", messageCount: messages.length });
 
   // Convert to unified format
   const unified = toUnified(messages);
-  console.log(
-    `[normalizeHistoryForModel] After toUnified: ${unified.length} messages`
-  );
+  log.debug("After toUnified", { source: "llm", feature: "normalize-history", messageCount: unified.length });
 
   // Detect providers
   const targetProvider = detectProvider(currentModel);
@@ -69,15 +68,11 @@ export function normalizeHistoryForModel(
 
   // Normalize using new layer
   const normalized = normalizeHistory(unified, targetProvider, sourceProvider);
-  console.log(
-    `[normalizeHistoryForModel] After normalizeHistory: ${normalized.length} messages`
-  );
+  log.debug("After normalizeHistory", { source: "llm", feature: "normalize-history", messageCount: normalized.length });
 
   // Convert back to legacy format
   const result = fromUnified(normalized);
-  console.log(
-    `[normalizeHistoryForModel] After fromUnified: ${result.length} messages`
-  );
+  log.debug("After fromUnified", { source: "llm", feature: "normalize-history", messageCount: result.length });
   return result;
 }
 

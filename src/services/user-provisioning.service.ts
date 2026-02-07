@@ -11,6 +11,7 @@
  * 4. Creates Stripe customer and subscribes to FREE plan ($5 credit)
  */
 
+import { log } from "@/lib/logger.ts";
 import { db } from "../db/index.ts";
 import type {
   SubscriptionTier,
@@ -138,10 +139,11 @@ class UserProvisioningService {
       });
     } catch (e) {
       // Non-blocking - log and continue
-      console.warn(
-        "[user-provisioning] Failed to set up FREE subscription:",
-        e
-      );
+      log.warn("Failed to set up FREE subscription", {
+        source: "user-provisioning",
+        feature: "billing-setup",
+        error: String(e),
+      });
     }
 
     return result;
@@ -258,10 +260,11 @@ class UserProvisioningService {
           name: user.name,
         });
       } catch (e) {
-        console.warn(
-          "[user-provisioning] Failed to set up FREE subscription:",
-          e
-        );
+        log.warn("Failed to set up FREE subscription", {
+          source: "user-provisioning",
+          feature: "billing-setup",
+          error: String(e),
+        });
       }
     }
 

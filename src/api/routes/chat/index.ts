@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import {
   getTrustedAppId,
@@ -581,19 +581,9 @@ chatRoutes.post(
           if (!messageText.trim()) {
             messageText = "[Voice message]";
           }
-          console.log(
-            "[chat] Audio: native input_audio for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: native input_audio", { source: "builder-chat", feature: "audio-input", modelId, audioFormat });
         } else {
-          console.log(
-            "[chat] Audio: transcribing via Whisper for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: transcribing via Whisper", { source: "builder-chat", feature: "audio-input", modelId, audioFormat });
           const { text } = await transcribeAudio(
             body.audio.data,
             body.audio.mimeType
@@ -602,7 +592,7 @@ chatRoutes.post(
             text.trim() ||
             messageText.trim() ||
             "[Voice message - no speech detected]";
-          console.log("[chat] Whisper transcript:", messageText.slice(0, 100));
+          log.debug("Whisper transcript", { source: "builder-chat", feature: "audio-input", transcript: messageText.slice(0, 100) });
         }
       }
 
@@ -621,16 +611,12 @@ chatRoutes.post(
           if (!messageText.trim()) {
             messageText = "Please watch and respond to this video.";
           }
-          console.log("[chat] Video: native input_video for", modelId);
+          log.debug("Video: native input_video", { source: "builder-chat", feature: "video-input", modelId });
         } else {
           if (!messageText.trim()) {
             messageText = "[User attached a video]";
           }
-          console.log(
-            "[chat] Video: model",
-            modelId,
-            "does not support video input"
-          );
+          log.debug("Video: model does not support video input", { source: "builder-chat", feature: "video-input", modelId });
         }
       }
 
@@ -656,14 +642,10 @@ chatRoutes.post(
               storagePath,
               body.audio!.mimeType.split(";")[0]
             );
-            console.log("[chat] Audio uploaded to GCS:", url);
+            log.debug("Audio uploaded to GCS", { source: "builder-chat", feature: "audio-upload", sessionId, url });
             return url;
           } catch (err) {
-            console.error("[chat] Failed to upload audio to GCS:", err);
-            Sentry.captureException(err, {
-              tags: { source: "builder-chat", feature: "audio-upload" },
-              extra: { sessionId, appId },
-            });
+            log.error("Failed to upload audio to GCS", { source: "builder-chat", feature: "audio-upload", sessionId, appId }, err);
             return null;
           }
         })();
@@ -694,11 +676,7 @@ chatRoutes.post(
               .where("id", "=", userMessage.id)
               .execute();
           } catch (err) {
-            console.error("[chat] Failed to patch audio URL:", err);
-            Sentry.captureException(err, {
-              tags: { source: "builder-chat", feature: "audio-url-patch" },
-              extra: { sessionId, appId, messageId: userMessage.id },
-            });
+            log.error("Failed to patch audio URL", { source: "builder-chat", feature: "audio-url-patch", sessionId, appId, messageId: userMessage.id }, err);
           }
         });
       }
@@ -806,26 +784,14 @@ chatRoutes.post(
                 toolResults.length > maxToolResults ||
                 toolCalls.length > HARD_LIMIT
               ) {
-                console.error(
-                  `[chat] CORRUPTED DATA: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls in msg ${msg.id?.slice(0, 8)}. Limiting to ${maxToolResults}. This indicates a data storage bug!`
-                );
-                Sentry.captureMessage(
-                  `[builder-chat] Corrupted tool data: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls`,
-                  {
-                    level: "error",
-                    tags: { source: "builder-chat", feature: "history-reconstruction" },
-                    extra: { appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults },
-                  }
-                );
+                log.error("Corrupted tool data in history", { source: "builder-chat", feature: "history-reconstruction", appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults });
               }
 
               for (let i = 0; i < maxToolResults; i++) {
                 const result = toolResults[i];
                 // Skip results without callId - they can't be correlated
                 if (!result.callId) {
-                  console.warn(
-                    `[chat] Skipping tool result without callId: ${result.name}`
-                  );
+                  log.warn("Skipping tool result without callId", { source: "builder-chat", feature: "history-reconstruction", toolName: result.name });
                   continue;
                 }
                 historyMessages.push({
@@ -846,34 +812,7 @@ chatRoutes.post(
         }
       }
 
-      console.log(
-        `[chat] Built historyMessages: ${historyMessages.length} from ${history.length} history records`
-      );
-      const toolMessagesCount = historyMessages.filter(
-        (m) => m.role === "tool"
-      ).length;
-      console.log(
-        `[chat] Tool messages in historyMessages: ${toolMessagesCount}`
-      );
-
-      // Debug: Log tool message IDs to trace where they get lost
-      for (const msg of historyMessages) {
-        if (msg.role === "tool") {
-          console.log(
-            `[chat] Tool msg: toolCallId=${msg.toolCallId || "MISSING"}, name=${msg.name || "MISSING"}`
-          );
-        }
-        if (msg.role === "assistant" && Array.isArray(msg.content)) {
-          const toolUses = msg.content.filter(
-            (p): p is ToolUseContentPart => p.type === "tool_use"
-          );
-          for (const tu of toolUses) {
-            console.log(
-              `[chat] Tool call: id=${tu.id || "MISSING"}, name=${tu.name}`
-            );
-          }
-        }
-      }
+      log.debug("Built historyMessages", { source: "builder-chat", feature: "history-reconstruction", historyMessageCount: historyMessages.length, historyRecordCount: history.length, toolMessageCount: historyMessages.filter((m) => m.role === "tool").length });
 
       // Normalize history if model provider changed (tool calls may be incompatible)
       const normalizedHistory = normalizeHistoryForModel(
@@ -882,18 +821,7 @@ chatRoutes.post(
         previousModel
       );
 
-      console.log(
-        `[chat] After normalization: ${normalizedHistory.length} messages`
-      );
-
-      // Debug: Log tool message IDs after normalization
-      for (const msg of normalizedHistory) {
-        if (msg.role === "tool") {
-          console.log(
-            `[chat] After norm - Tool msg: toolCallId=${msg.toolCallId || "MISSING"}, name=${msg.name || "MISSING"}`
-          );
-        }
-      }
+      log.debug("After normalization", { source: "builder-chat", feature: "history-reconstruction", normalizedMessageCount: normalizedHistory.length });
 
       // Build final messages array
       const messages: Message[] = [];
@@ -980,10 +908,7 @@ chatRoutes.post(
 
       perf.mark("phase5_registry");
       const toolNames = registry.getForLLM().map((t) => t.name);
-      console.log(
-        `[chat] Tools registered (${toolNames.length}):`,
-        toolNames.join(", ")
-      );
+      log.debug("Tools registered", { source: "builder-chat", feature: "tool-registry", toolCount: toolNames.length, toolNames: toolNames.join(", ") });
       perf.log("Phase 5: Tool registry created");
 
       // Create agent stream generator (using finalMessages which may be multimodal)
@@ -1015,21 +940,17 @@ chatRoutes.post(
           onComplete: async (result) => {
             // Skip persistence if nothing to save
             if (!result.text && result.toolCalls.length === 0) {
-              console.log("[chat] onComplete: Nothing to persist, skipping");
+              log.debug("onComplete: Nothing to persist, skipping", { source: "builder-chat", feature: "persistence", sessionId });
               return;
             }
 
             // Skip if aborted
             if (result.aborted) {
-              console.log(
-                "[chat] onComplete: Stream aborted, skipping persistence"
-              );
+              log.debug("onComplete: Stream aborted, skipping persistence", { source: "builder-chat", feature: "persistence", sessionId });
               return;
             }
 
-            console.log(
-              `[chat] onComplete: Persisting message - ${result.text.length} chars, ${result.toolCalls.length} toolCalls, ${result.toolResults.length} toolResults`
-            );
+            log.debug("onComplete: Persisting message", { source: "builder-chat", feature: "persistence", sessionId, textLength: result.text.length, toolCallsCount: result.toolCalls.length, toolResultsCount: result.toolResults.length });
 
             // Safeguard against corrupted data - HARD LIMIT to prevent storage bloat
             const STORAGE_LIMIT = 50;
@@ -1040,17 +961,7 @@ chatRoutes.post(
               result.toolCalls.length > STORAGE_LIMIT ||
               result.toolResults.length > STORAGE_LIMIT
             ) {
-              console.error(
-                `[chat] STORAGE CORRUPTION PREVENTION: Limiting ${result.toolCalls.length} toolCalls and ${result.toolResults.length} toolResults to ${STORAGE_LIMIT} each`
-              );
-              Sentry.captureMessage(
-                `[builder-chat] Storage corruption prevention: ${result.toolCalls.length} toolCalls, ${result.toolResults.length} toolResults`,
-                {
-                  level: "error",
-                  tags: { source: "builder-chat", feature: "storage-corruption-prevention" },
-                  extra: { appId, sessionId, model: modelId, toolCallsCount: result.toolCalls.length, toolResultsCount: result.toolResults.length, storageLimit: STORAGE_LIMIT },
-                }
-              );
+              log.error("Storage corruption prevention: limiting tool data", { source: "builder-chat", feature: "storage-corruption-prevention", appId, sessionId, model: modelId, toolCallsCount: result.toolCalls.length, toolResultsCount: result.toolResults.length, storageLimit: STORAGE_LIMIT });
               toolCallsToStore = result.toolCalls.slice(0, STORAGE_LIMIT);
               toolResultsToStore = result.toolResults.slice(0, STORAGE_LIMIT);
             }
@@ -1080,11 +991,7 @@ chatRoutes.post(
                   outputTokens,
                 })
                 .catch((err) => {
-                  console.error("[chat] Failed to record token usage:", err);
-                  Sentry.captureException(err, {
-                    tags: { source: "builder-chat", feature: "token-usage" },
-                    extra: { appId, sessionId, model: modelId, userId: user.id },
-                  });
+                  log.error("Failed to record token usage", { source: "builder-chat", feature: "token-usage", appId, sessionId, model: modelId, userId: user.id }, err);
                 });
             }
           },
@@ -1097,7 +1004,7 @@ chatRoutes.post(
       return streamSSE(c, async (stream) => {
         // Handle client disconnect - abort the agent loop
         stream.onAbort(() => {
-          console.log("[chat] Client disconnected, aborting stream");
+          log.debug("Client disconnected, aborting stream", { source: "builder-chat", feature: "stream", sessionId });
           abortController.abort();
         });
 
@@ -1382,19 +1289,7 @@ chatRoutes.post(
           perf.mark("complete");
           perf.summary();
         } catch (error) {
-          console.error("[chat] Stream error:", error);
-
-          // Report to Sentry
-          Sentry.captureException(error, {
-            tags: { source: "builder-chat", feature: "stream" },
-            extra: {
-              requestId,
-              appId,
-              sessionId,
-              model: modelId,
-              userId: user.id,
-            },
-          });
+          log.error("Stream error", { source: "builder-chat", feature: "stream", requestId, appId, sessionId, model: modelId, userId: user.id }, error);
 
           await stream.writeSSE({
             data: JSON.stringify({
@@ -1409,17 +1304,7 @@ chatRoutes.post(
       });
     } catch (error) {
       // Catch any errors during setup (before streaming)
-      console.error("[chat] Setup error:", error);
-
-      Sentry.captureException(error, {
-        tags: { source: "builder-chat", feature: "setup" },
-        extra: {
-          requestId,
-          appId,
-          userId: user.id,
-          sessionId: body.sessionId,
-        },
-      });
+      log.error("Setup error", { source: "builder-chat", feature: "setup", requestId, appId, userId: user.id, sessionId: body.sessionId }, error);
 
       throw error; // Re-throw to let error middleware handle it
     }
@@ -1568,14 +1453,10 @@ chatRoutes.post(
               storagePath,
               body.audio!.mimeType.split(";")[0]
             );
-            console.log("[chat] Audio uploaded to GCS:", url);
+            log.debug("Audio uploaded to GCS (non-streaming)", { source: "builder-chat", feature: "audio-upload", sessionId, url });
             return url;
           } catch (err) {
-            console.error("[chat] Failed to upload audio to GCS:", err);
-            Sentry.captureException(err, {
-              tags: { source: "builder-chat", feature: "audio-upload" },
-              extra: { sessionId, appId },
-            });
+            log.error("Failed to upload audio to GCS (non-streaming)", { source: "builder-chat", feature: "audio-upload", sessionId, appId }, err);
             return null;
           }
         })();
@@ -1604,11 +1485,7 @@ chatRoutes.post(
               .where("id", "=", userMessage2.id)
               .execute();
           } catch (err) {
-            console.error("[chat] Failed to patch audio URL:", err);
-            Sentry.captureException(err, {
-              tags: { source: "builder-chat", feature: "audio-url-patch" },
-              extra: { sessionId, appId, messageId: userMessage2.id },
-            });
+            log.error("Failed to patch audio URL (non-streaming)", { source: "builder-chat", feature: "audio-url-patch", sessionId, appId, messageId: userMessage2.id }, err);
           }
         });
       }
@@ -1713,26 +1590,14 @@ chatRoutes.post(
                 toolResults.length > maxToolResults ||
                 toolCalls.length > HARD_LIMIT
               ) {
-                console.error(
-                  `[chat] CORRUPTED DATA: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls in msg ${msg.id?.slice(0, 8)}. Limiting to ${maxToolResults}. This indicates a data storage bug!`
-                );
-                Sentry.captureMessage(
-                  `[builder-chat] Corrupted tool data: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls`,
-                  {
-                    level: "error",
-                    tags: { source: "builder-chat", feature: "history-reconstruction" },
-                    extra: { appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults },
-                  }
-                );
+                log.error("Corrupted tool data in history (non-streaming)", { source: "builder-chat", feature: "history-reconstruction", appId, sessionId, messageId: msg.id, toolResultsCount: toolResults.length, toolCallsCount: toolCalls.length, maxToolResults });
               }
 
               for (let i = 0; i < maxToolResults; i++) {
                 const result = toolResults[i];
                 // Skip results without callId - they can't be correlated
                 if (!result.callId) {
-                  console.warn(
-                    `[chat] Skipping tool result without callId: ${result.name}`
-                  );
+                  log.warn("Skipping tool result without callId (non-streaming)", { source: "builder-chat", feature: "history-reconstruction", toolName: result.name });
                   continue;
                 }
                 historyMessages.push({
@@ -1893,11 +1758,7 @@ chatRoutes.post(
             outputTokens,
           })
           .catch((err) => {
-            console.error("[chat] Failed to record token usage:", err);
-            Sentry.captureException(err, {
-              tags: { source: "builder-chat", feature: "token-usage" },
-              extra: { appId, sessionId, model: modelId, userId: user.id },
-            });
+            log.error("Failed to record token usage (non-streaming)", { source: "builder-chat", feature: "token-usage", appId, sessionId, model: modelId, userId: user.id }, err);
           });
       }
 
@@ -1907,11 +1768,7 @@ chatRoutes.post(
         model: modelId,
       });
     } catch (error) {
-      console.error("[chat] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "builder-chat", feature: "non-streaming" },
-        extra: { requestId, appId, userId: user.id, sessionId: body.sessionId },
-      });
+      log.error("Non-streaming chat error", { source: "builder-chat", feature: "non-streaming", requestId, appId, userId: user.id, sessionId: body.sessionId }, error);
       throw error;
     }
   }

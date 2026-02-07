@@ -16,7 +16,7 @@ import type { EmbeddingConfig } from "./embedding-provider.service.ts";
 import { firecrawlService, isFirecrawlAvailable } from "./firecrawl.service.ts";
 import { billingService } from "./billing.service.ts";
 import { sql } from "../db/client.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export interface UploadDocumentResult {
   knowledgeSourceId?: string;
@@ -116,11 +116,13 @@ export const uploadService = {
           size: file.size,
         });
       } catch (error) {
-        console.error(`[upload] Error uploading file ${file.name}:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "upload-service", feature: "file-upload" },
-          extra: { applicationId, fileName: file.name, fileSize: file.size },
-        });
+        log.error("Error uploading file", {
+          source: "upload-service",
+          feature: "file-upload",
+          applicationId,
+          fileName: file.name,
+          fileSize: file.size,
+        }, error);
         // Track failed uploads
         results.push({
           fileName: file.name,
@@ -137,7 +139,9 @@ export const uploadService = {
       );
 
       if (shouldInline) {
-        console.log("[upload] Processing files inline", {
+        log.info("Processing files inline", {
+          source: "upload-service",
+          feature: "inline-processing",
           fileCount: filesToProcess.length,
           totalSize: filesToProcess.reduce((sum, f) => sum + f.size, 0),
         });
@@ -152,25 +156,19 @@ export const uploadService = {
               userId, // For WebSocket notifications
               embeddingConfig, // Use selected embedding provider
             }).catch((err) => {
-              console.error("[upload] Inline processing failed", {
+              log.error("Inline processing failed", {
+                source: "upload-service",
+                feature: "inline-processing",
                 knowledgeSourceId: f.knowledgeSourceId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-              Sentry.captureException(err, {
-                tags: {
-                  source: "upload-service",
-                  feature: "inline-processing",
-                },
-                extra: {
-                  knowledgeSourceId: f.knowledgeSourceId,
-                  applicationId: f.applicationId,
-                },
-              });
+                applicationId: f.applicationId,
+              }, err);
             })
           )
         );
       } else {
-        console.log("[upload] Files queued for Temporal processing", {
+        log.info("Files queued for Temporal processing", {
+          source: "upload-service",
+          feature: "temporal-processing",
           fileCount: filesToProcess.length,
           reason: "exceeds inline thresholds",
         });
@@ -229,7 +227,9 @@ export const uploadService = {
 
     if (!isFirecrawlAvailable()) {
       // PG mode fallback: basic fetch + strip HTML
-      console.log("[upload] Firecrawl unavailable, using basic processing", {
+      log.info("Firecrawl unavailable, using basic processing", {
+        source: "upload-service",
+        feature: "url-fallback",
         knowledgeSourceId: source.id,
         url,
       });
@@ -239,14 +239,13 @@ export const uploadService = {
         userId,
         embeddingConfig,
       }).catch((err) => {
-        console.error("[upload] Basic URL processing failed", {
+        log.error("Basic URL processing failed", {
+          source: "upload-service",
+          feature: "url-fallback",
           knowledgeSourceId: source.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        Sentry.captureException(err, {
-          tags: { source: "upload-service", feature: "url-fallback" },
-          extra: { knowledgeSourceId: source.id, applicationId, url },
-        });
+          applicationId,
+          url,
+        }, err);
       });
 
       await onProgress?.("completed", 100);
@@ -329,14 +328,11 @@ async function getBillingContextForApp(
 
     return { stripeCustomerId: stripeCustomerId || null, useSandbox };
   } catch (error) {
-    console.error("[upload] Failed to get billing context", {
+    log.error("Failed to get billing context", {
+      source: "upload-service",
+      feature: "billing-context",
       applicationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "upload", feature: "billing-context" },
-      extra: { applicationId },
-    });
+    }, error);
     return null;
   }
 }
@@ -395,15 +391,13 @@ async function processSingleUrl(ctx: ProcessUrlContext): Promise<void> {
 
     await onProgress?.("completed", 100);
   } catch (error) {
-    console.error("[upload] Single URL processing failed", {
+    log.error("Single URL processing failed", {
+      source: "upload-service",
+      feature: "firecrawl-scrape",
       knowledgeSourceId,
+      applicationId,
       url,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "upload-service", feature: "firecrawl-scrape" },
-      extra: { knowledgeSourceId, applicationId, url },
-    });
+    }, error);
     throw error;
   }
 }
@@ -481,18 +475,14 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
           });
           pagesProcessed++;
         } catch (pageError) {
-          console.error("[upload] Failed to process crawled page", {
+          log.error("Failed to process crawled page", {
+            source: "upload-service",
+            feature: "crawl-page-processing",
             knowledgeSourceId,
+            applicationId,
             pageUrl,
-            error:
-              pageError instanceof Error
-                ? pageError.message
-                : String(pageError),
-          });
-          Sentry.captureException(pageError, {
-            tags: { source: "upload", feature: "crawl-page-processing" },
-            extra: { knowledgeSourceId, applicationId, pageUrl, crawlId },
-          });
+            crawlId,
+          }, pageError);
           // Continue processing other pages
         }
 
@@ -524,7 +514,7 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
     // If we hit the poll limit, cancel the crawl
     const finalStatus = await firecrawlService.getCrawlStatus(crawlId);
     if (finalStatus.status === "scraping") {
-      console.warn("[upload] Crawl timed out, cancelling", { crawlId, url });
+      log.warn("Crawl timed out, cancelling", { source: "upload-service", feature: "firecrawl-crawl", crawlId, url });
       await firecrawlService.cancelCrawl(crawlId);
     }
 
@@ -561,19 +551,23 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
       pagesTotal: finalStatus.total,
     });
 
-    console.log("[upload] Site crawl complete", {
+    log.info("Site crawl complete", {
+      source: "upload-service",
+      feature: "firecrawl-crawl",
       knowledgeSourceId,
       url,
       pagesProcessed,
       totalChunks,
     });
   } catch (error) {
-    console.error("[upload] Site crawl failed", {
+    log.error("Site crawl failed", {
+      source: "upload-service",
+      feature: "firecrawl-crawl",
       knowledgeSourceId,
+      applicationId,
       url,
       crawlId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    }, error);
 
     // Try to cancel if crawl is still running
     if (crawlId) {
@@ -589,11 +583,6 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
         updated_at = NOW()
       WHERE id = ${knowledgeSourceId}::uuid
     `;
-
-    Sentry.captureException(error, {
-      tags: { source: "upload-service", feature: "firecrawl-crawl" },
-      extra: { knowledgeSourceId, applicationId, url, crawlId },
-    });
     throw error;
   }
 }

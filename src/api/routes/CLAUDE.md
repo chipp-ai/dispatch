@@ -34,15 +34,16 @@ return c.json({ error: "msg" }, 400);  // Error
 
 ## Error Handling
 
-In catch blocks, always add Sentry alongside console.error:
+In catch blocks, use the unified logger from `@/lib/logger.ts`:
 ```typescript
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger";
 
-console.error("[Route] Failed:", error);
-Sentry.captureException(error, {
-  tags: { source: "route-group", feature: "endpoint-name" },
-  extra: { userId: user?.id, applicationId },
-});
+log.error("Failed to process request", {
+  source: "route-group",
+  feature: "endpoint-name",
+  userId: user?.id,
+  applicationId,
+}, error);
 ```
 
 ## Non-Obvious Behaviors

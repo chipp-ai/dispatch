@@ -22,20 +22,46 @@ Consumer app for Chipp AI chatbots. Deno + Hono API, Svelte 5 SPA, Cloudflare Wo
 
 ## Error Handling (Critical)
 
-**Never use bare `console.error`.** Every error must go to Sentry with context.
+**Never use bare `console.error` or direct `Sentry.captureException`.** Use the unified logger.
 
-**Server-side** (Deno): Keep `console.error` for dev logs, AND add `Sentry.captureException`:
+**Server-side** (Deno): Use `log` from `@/lib/logger.ts` -- it handles console output, structured JSON, AND Sentry:
 ```typescript
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
-console.error("[Feature] Something failed:", error);
-Sentry.captureException(error, {
-  tags: { source: "feature-area", feature: "specific-feature" },
-  extra: { userId, applicationId, relevantData },
+// Error with exception object (sends Sentry.captureException)
+log.error("Something failed", {
+  source: "feature-area",
+  feature: "specific-feature",
+  userId, applicationId, relevantData,
+}, error);
+
+// Error without exception (sends Sentry.captureMessage)
+log.error("Config not found", {
+  source: "feature-area",
+  feature: "config-lookup",
+  applicationId,
+});
+
+// Warning (sends Sentry.captureMessage at warning level)
+log.warn("Credits running low", {
+  source: "billing",
+  feature: "credit-check",
+  orgId, balance,
+});
+
+// Info (structured log only, no Sentry)
+log.info("Webhook received", {
+  source: "stripe-webhook",
+  feature: "event-routing",
+  eventType, requestId,
 });
 ```
 
-**Client-side** (Svelte): Use `captureException` from `$lib/sentry` — it does both console.error AND Sentry:
+Context fields: `source` (module name) and `feature` (operation) are required. Add relevant IDs (`orgId`, `appId`, `userId`, `requestId`, etc.) and domain data.
+
+In dev: pretty-printed. In staging/prod: NDJSON with version, env, pod auto-injected.
+
+**Client-side** (Svelte): Use `captureException` from `$lib/sentry` -- it does both console.error AND Sentry:
 ```typescript
 import { captureException } from "$lib/sentry";
 

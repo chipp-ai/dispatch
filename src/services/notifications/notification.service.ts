@@ -9,7 +9,7 @@
  */
 
 import { sql, db } from "../../db/client.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import {
   NOTIFICATION_REGISTRY,
   type NotificationType,
@@ -77,15 +77,12 @@ export const notificationService = {
     try {
       await this._sendInternal(params);
     } catch (error) {
-      console.error("[notification-service] Failed to send notification", {
+      log.error("Failed to send notification", {
+        source: "notification-service",
+        feature: "send",
         type: params.type,
         organizationId: params.organizationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "notification-service", type: params.type },
-        extra: { organizationId: params.organizationId },
-      });
+      }, error);
     }
   },
 
@@ -94,7 +91,7 @@ export const notificationService = {
 
     const typeInfo = NOTIFICATION_REGISTRY[type];
     if (!typeInfo) {
-      console.warn(`[notification-service] Unknown notification type: ${type}`);
+      log.warn("Unknown notification type", { source: "notification-service", feature: "send", type });
       return;
     }
 
@@ -108,7 +105,7 @@ export const notificationService = {
     );
 
     if (recipients.length === 0) {
-      console.log(`[notification-service] No recipients for ${type}`, { organizationId });
+      log.info("No recipients for notification", { source: "notification-service", feature: "send", type, organizationId });
       return;
     }
 
@@ -121,7 +118,7 @@ export const notificationService = {
     // 4. Get template
     const template = TEMPLATES[type];
     if (!template) {
-      console.warn(`[notification-service] No template for type: ${type}`);
+      log.warn("No template for notification type", { source: "notification-service", feature: "send", type });
       return;
     }
 
@@ -302,11 +299,11 @@ export const notificationService = {
         };
       }
     } catch (error) {
-      console.error("[notification-service] Error resolving branding:", error);
-      Sentry.captureException(error, {
-        tags: { source: "notifications", feature: "branding" },
-        extra: { organizationId },
-      });
+      log.error("Error resolving branding", {
+        source: "notification-service",
+        feature: "branding",
+        organizationId,
+      }, error);
     }
 
     return defaults;
@@ -361,7 +358,9 @@ export const notificationService = {
       const pass = Deno.env.get("SMTP_PASSWORD");
 
       if (!host || !user || !pass) {
-        console.log("[notification-service] SMTP not configured -- would send:", {
+        log.info("SMTP not configured, would send", {
+          source: "notification-service",
+          feature: "email-send",
           to,
           subject,
           from: fromFormatted,
@@ -385,18 +384,16 @@ export const notificationService = {
         text,
       });
 
-      console.log(`[notification-service] Sent "${subject}" to ${to}`);
+      log.info("Email sent", { source: "notification-service", feature: "email-send", to, subject });
       return true;
     } catch (error) {
-      console.error("[notification-service] Email send failed:", {
+      log.error("Email send failed", {
+        source: "notification-service",
+        feature: "email-send",
         to,
         subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "notifications", feature: "email-send" },
-        extra: { to, subject, senderDomain },
-      });
+        senderDomain,
+      }, error);
       return false;
     }
   },
@@ -434,11 +431,12 @@ export const notificationService = {
       );
     } catch (error) {
       // Fire-and-forget -- log but don't block email sending
-      console.error("[notification-service] WebSocket push failed:", error);
-      Sentry.captureException(error, {
-        tags: { source: "notifications", feature: "websocket-push" },
-        extra: { type, recipientCount: recipients.length },
-      });
+      log.error("WebSocket push failed", {
+        source: "notification-service",
+        feature: "websocket-push",
+        type,
+        recipientCount: recipients.length,
+      }, error);
     }
   },
 
@@ -554,19 +552,14 @@ export const notificationService = {
         )
       `;
     } catch (error) {
-      console.error("[notification-service] Failed to log notification:", {
+      log.error("Failed to log notification", {
+        source: "notification-service",
+        feature: "audit-log",
         trackingId: params.trackingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "notifications", feature: "audit-log" },
-        extra: {
-          trackingId: params.trackingId,
-          type: params.type,
-          organizationId: params.organizationId,
-          recipientEmail: params.recipientEmail,
-        },
-      });
+        type: params.type,
+        organizationId: params.organizationId,
+        recipientEmail: params.recipientEmail,
+      }, error);
     }
   },
 };

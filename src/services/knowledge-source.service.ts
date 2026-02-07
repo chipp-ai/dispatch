@@ -14,7 +14,7 @@ import {
   processKnowledgeSource,
 } from "./rag-ingestion.service.ts";
 import { billingService } from "./billing.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export type KnowledgeSourceType =
   | "file"
@@ -335,14 +335,12 @@ export const knowledgeSourceService = {
     };
 
     doReprocess().catch((err) => {
-      console.error("[knowledge-source] Reprocess failed", {
+      log.error("Reprocess failed", {
+        source: "knowledge-source-service",
+        feature: "reprocess",
         knowledgeSourceId: id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      Sentry.captureException(err, {
-        tags: { source: "knowledge-source-service", feature: "reprocess" },
-        extra: { knowledgeSourceId: id, applicationId: source.application_id },
-      });
+        applicationId: source.application_id,
+      }, err);
     });
   },
 };
@@ -378,14 +376,11 @@ async function getBillingContextForSource(
 
     return { stripeCustomerId: stripeCustomerId || null, useSandbox };
   } catch (error) {
-    console.error("[knowledge-source] Failed to get billing context", {
+    log.error("Failed to get billing context", {
+      source: "knowledge-source-service",
+      feature: "billing-context",
       applicationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "knowledge-source", feature: "billing-context" },
-      extra: { applicationId },
-    });
+    }, error);
     return null;
   }
 }

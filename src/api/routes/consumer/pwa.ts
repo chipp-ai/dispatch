@@ -8,7 +8,7 @@
  */
 
 import { Hono } from "hono";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { cors } from "hono/cors";
 import { resolveApp } from "../../middleware/consumerAuth.ts";
 
@@ -341,18 +341,13 @@ function generateSplashSVG(
 pwaRoutes.get("/:appNameId/manifest.json", async (c) => {
   const appNameId = c.req.param("appNameId");
 
-  console.log("[pwa] Manifest request", { appNameId });
+  log.debug("Manifest request", { source: "consumer-pwa", feature: "manifest", appNameId });
 
   try {
     // Get app by appNameId using local resolveApp
     const application = await resolveApp(appNameId);
     if (!application) {
-      console.error("[pwa] Application not found for manifest", { appNameId });
-      Sentry.captureMessage("[consumer-pwa] Application not found for manifest", {
-        level: "error",
-        tags: { source: "consumer-pwa", feature: "manifest" },
-        extra: { appNameId },
-      });
+      log.error("Application not found for manifest", { source: "consumer-pwa", feature: "manifest", appNameId });
       return c.json({ error: "Application not found" }, 404);
     }
 
@@ -447,11 +442,7 @@ pwaRoutes.get("/:appNameId/manifest.json", async (c) => {
       related_applications: [],
     };
 
-    console.log("[pwa] Manifest generated", {
-      appNameId,
-      applicationId: application.id,
-      applicationName: application.name,
-    });
+    log.debug("Manifest generated", { source: "consumer-pwa", feature: "manifest", appNameId, applicationId: application.id, applicationName: application.name });
 
     return c.json(manifest, {
       headers: {
@@ -460,11 +451,7 @@ pwaRoutes.get("/:appNameId/manifest.json", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[pwa] Error generating manifest", { error, appNameId });
-    Sentry.captureException(error, {
-      tags: { source: "consumer-pwa-api", feature: "manifest" },
-      extra: { appNameId },
-    });
+    log.error("Error generating manifest", { source: "consumer-pwa", feature: "manifest", appNameId }, error);
     return c.json({ error: "Failed to generate manifest" }, 500);
   }
 });
@@ -505,10 +492,7 @@ pwaRoutes.get("/:appNameId/pwa/icon/:size", async (c) => {
             response.headers.get("content-type") || "image/png";
           // Ensure only image content is proxied
           if (!contentType.toLowerCase().startsWith("image/")) {
-            console.warn("[pwa] Blocked non-image content from logo URL", {
-              appNameId,
-              contentType,
-            });
+            log.warn("Blocked non-image content from logo URL", { source: "consumer-pwa", feature: "icon", appNameId, contentType });
           } else {
             const imageBuffer = await response.arrayBuffer();
 
@@ -520,18 +504,11 @@ pwaRoutes.get("/:appNameId/pwa/icon/:size", async (c) => {
             });
           }
         }
-      } catch (e) {
-        console.warn("[pwa] Failed to fetch logo, using fallback", {
-          appNameId,
-          logoUrl: logoUrl.substring(0, 100), // Don't log full URL for security
-          error: e,
-        });
+      } catch (_e) {
+        log.warn("Failed to fetch logo, using fallback", { source: "consumer-pwa", feature: "icon", appNameId, logoUrlPrefix: logoUrl.substring(0, 100) });
       }
     } else if (logoUrl && !isMaskable) {
-      console.warn("[pwa] Blocked unsafe logo URL", {
-        appNameId,
-        logoUrl: logoUrl.substring(0, 100),
-      });
+      log.warn("Blocked unsafe logo URL", { source: "consumer-pwa", feature: "icon", appNameId, logoUrlPrefix: logoUrl.substring(0, 100) });
     }
 
     // Generate fallback SVG
@@ -549,11 +526,7 @@ pwaRoutes.get("/:appNameId/pwa/icon/:size", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[pwa] Error generating icon", { error, appNameId, size });
-    Sentry.captureException(error, {
-      tags: { source: "consumer-pwa-api", feature: "icon" },
-      extra: { appNameId, size, isMaskable },
-    });
+    log.error("Error generating icon", { source: "consumer-pwa", feature: "icon", appNameId, size, isMaskable }, error);
 
     // Return basic fallback
     const fallbackSvg = generateFallbackSVG(size, "#F9DB00", "App", isMaskable);
@@ -613,17 +586,11 @@ pwaRoutes.get("/:appNameId/pwa/splash/:dimensions", async (c) => {
             },
           });
         }
-      } catch (e) {
-        console.warn("[pwa] Failed to fetch pre-generated splash", {
-          appNameId,
-          dimensions,
-        });
+      } catch (_e) {
+        log.warn("Failed to fetch pre-generated splash", { source: "consumer-pwa", feature: "splash", appNameId, dimensions });
       }
     } else if (splashUrl) {
-      console.warn("[pwa] Blocked unsafe splash URL", {
-        appNameId,
-        splashUrl: splashUrl.substring(0, 100),
-      });
+      log.warn("Blocked unsafe splash URL", { source: "consumer-pwa", feature: "splash", appNameId, splashUrlPrefix: splashUrl.substring(0, 100) });
     }
 
     // Generate SVG splash screen
@@ -642,15 +609,7 @@ pwaRoutes.get("/:appNameId/pwa/splash/:dimensions", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[pwa] Error generating splash screen", {
-      error,
-      appNameId,
-      dimensions,
-    });
-    Sentry.captureException(error, {
-      tags: { source: "consumer-pwa-api", feature: "splash" },
-      extra: { appNameId, dimensions },
-    });
+    log.error("Error generating splash screen", { source: "consumer-pwa", feature: "splash", appNameId, dimensions }, error);
 
     // Return simple fallback
     const svg = generateSplashSVG(width, height, "#F9DB00", "App");

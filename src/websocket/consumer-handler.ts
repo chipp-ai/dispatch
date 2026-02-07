@@ -8,7 +8,7 @@
  * against session_participants table.
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type {
   ConsumerWebSocketEvent,
   ConsumerClientAction,
@@ -138,11 +138,11 @@ async function authenticateConsumer(
 
     return null;
   } catch (error) {
-    console.error("[consumer-ws] Auth error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "websocket", feature: "consumer", operation: "auth" },
-      extra: { chatSessionId },
-    });
+    log.error("Consumer WebSocket auth error", {
+      source: "consumer-websocket",
+      feature: "auth",
+      chatSessionId,
+    }, error);
     return null;
   }
 }
@@ -161,11 +161,12 @@ function sendToConsumerClient(
       return true;
     }
   } catch (error) {
-    console.error("[consumer-ws] Error sending to client:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "websocket", feature: "consumer", operation: "send" },
-      extra: { sessionId: client.sessionId, participantId: client.participantId },
-    });
+    log.error("Error sending to consumer client", {
+      source: "consumer-websocket",
+      feature: "send",
+      sessionId: client.sessionId,
+      participantId: client.participantId,
+    }, error);
   }
   return false;
 }
@@ -224,11 +225,12 @@ async function handleConsumerAction(
           });
         }
       } catch (error) {
-        console.error("[consumer-ws] Stop error:", error);
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-          tags: { source: "websocket", feature: "consumer", operation: "stop" },
-          extra: { sessionId: client.sessionId, participantId: client.participantId },
-        });
+        log.error("Consumer stop error", {
+          source: "consumer-websocket",
+          feature: "stop",
+          sessionId: client.sessionId,
+          participantId: client.participantId,
+        }, error);
       }
       break;
     }
@@ -273,7 +275,12 @@ async function handleConsumerAction(
     }
 
     default:
-      console.warn("[consumer-ws] Unknown action:", action);
+      log.warn("Unknown consumer WebSocket action", {
+        source: "consumer-websocket",
+        feature: "action-router",
+        action: (action as { action: string }).action,
+        sessionId: client.sessionId,
+      });
   }
 }
 
@@ -309,9 +316,13 @@ async function handleConsumerConnection(
   sessionConnections.get(auth.sessionId)!.add(client);
   totalConsumerConnections++;
 
-  console.log(
-    `[consumer-ws] Participant ${auth.displayName} connected to session ${auth.sessionId} (total: ${totalConsumerConnections})`
-  );
+  log.info("Consumer participant connected", {
+    source: "consumer-websocket",
+    feature: "connection",
+    displayName: auth.displayName,
+    sessionId: auth.sessionId,
+    totalConsumerConnections,
+  });
 
   // Update last_seen_at
   db.updateTable("chat.session_participants")
@@ -349,11 +360,12 @@ async function handleConsumerConnection(
       })),
     });
   } catch (error) {
-    console.error("[consumer-ws] Failed to send participant list:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "websocket", feature: "consumer", operation: "participant-list" },
-      extra: { sessionId: auth.sessionId, participantId: auth.participantId },
-    });
+    log.error("Failed to send participant list", {
+      source: "consumer-websocket",
+      feature: "participant-list",
+      sessionId: auth.sessionId,
+      participantId: auth.participantId,
+    }, error);
   }
 
   // Handle incoming messages
@@ -362,11 +374,12 @@ async function handleConsumerConnection(
       const action = JSON.parse(e.data) as ConsumerClientAction;
       handleConsumerAction(client, action);
     } catch (error) {
-      console.error("[consumer-ws] Error parsing message:", error);
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-        tags: { source: "websocket", feature: "consumer", operation: "message-parse" },
-        extra: { sessionId: auth.sessionId, participantId: auth.participantId },
-      });
+      log.error("Error parsing consumer WebSocket message", {
+        source: "consumer-websocket",
+        feature: "message-parse",
+        sessionId: auth.sessionId,
+        participantId: auth.participantId,
+      }, error);
     }
   };
 
@@ -383,9 +396,13 @@ async function handleConsumerConnection(
     }
     totalConsumerConnections--;
 
-    console.log(
-      `[consumer-ws] Participant ${auth.displayName} disconnected from session ${auth.sessionId} (total: ${totalConsumerConnections})`
-    );
+    log.info("Consumer participant disconnected", {
+      source: "consumer-websocket",
+      feature: "connection",
+      displayName: auth.displayName,
+      sessionId: auth.sessionId,
+      totalConsumerConnections,
+    });
 
     // Notify other consumers in the session
     sendToSession(auth.sessionId, {
@@ -402,15 +419,13 @@ async function handleConsumerConnection(
   };
 
   // Handle errors
-  socket.onerror = (e) => {
-    console.error(
-      `[consumer-ws] Socket error for ${auth.displayName}:`,
-      e
-    );
-    Sentry.captureMessage(`Consumer WebSocket error for ${auth.displayName}`, {
-      level: "error",
-      tags: { source: "websocket", feature: "consumer", operation: "socket-error" },
-      extra: { sessionId: auth.sessionId, participantId: auth.participantId, displayName: auth.displayName },
+  socket.onerror = () => {
+    log.error("Consumer WebSocket socket error", {
+      source: "consumer-websocket",
+      feature: "socket-error",
+      sessionId: auth.sessionId,
+      participantId: auth.participantId,
+      displayName: auth.displayName,
     });
   };
 }
@@ -474,7 +489,11 @@ async function notifyConsumerDisconnected(sessionId: string): Promise<void> {
       applicationId,
     }));
   } catch (error) {
-    console.error("[consumer-ws] Failed to notify disconnect:", error);
+    log.error("Failed to notify consumer disconnect", {
+      source: "consumer-websocket",
+      feature: "disconnect-notify",
+      sessionId,
+    }, error);
   }
 }
 
@@ -499,7 +518,12 @@ async function notifyConsumerPresence(
       status,
     }));
   } catch (error) {
-    console.error("[consumer-ws] Failed to notify presence:", error);
+    log.error("Failed to notify consumer presence", {
+      source: "consumer-websocket",
+      feature: "presence-notify",
+      sessionId,
+      status,
+    }, error);
   }
 }
 
@@ -538,10 +562,11 @@ export function upgradeConsumerWebSocket(req: Request): Response | null {
 
   socket.onopen = () => {
     handleConsumerConnection(socket, sessionId, token, cookieSessionId).catch((error) => {
-      console.error("[consumer-ws] Connection error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "consumer-websocket", feature: "connection" },
-      });
+      log.error("Consumer WebSocket connection error", {
+        source: "consumer-websocket",
+        feature: "connection",
+        chatSessionId: sessionId,
+      }, error);
       socket.close(4000, "Connection error");
     });
   };

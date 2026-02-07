@@ -8,6 +8,7 @@
  * "see" uploaded images instead of just receiving URLs as text.
  */
 
+import { log } from "@/lib/logger.ts";
 import type {
   Message,
   ContentPart,
@@ -227,7 +228,7 @@ export function convertMessageToMultimodal(
     });
   }
 
-  console.log(`[multimodal] Converted message with ${imageUrls.length} images`);
+  log.debug("Converted message with images", { source: "multimodal", feature: "convert", imageCount: imageUrls.length });
 
   return {
     role: "user",
@@ -247,9 +248,11 @@ export function convertMessagesToMultimodal(
   const supportsVision = modelSupportsVision(model);
 
   if (!supportsVision) {
-    console.log(
-      `[multimodal] Model ${model} does not support vision, skipping conversion`
-    );
+    log.debug("Model does not support vision, skipping conversion", {
+      source: "multimodal",
+      feature: "convert",
+      model,
+    });
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -258,7 +261,7 @@ export function convertMessagesToMultimodal(
     }));
   }
 
-  console.log(`[multimodal] Converting messages for vision model ${model}`);
+  log.debug("Converting messages for vision model", { source: "multimodal", feature: "convert", model });
 
   const converted = messages.map((message) => {
     // Already multimodal - return as-is
@@ -287,9 +290,12 @@ export function convertMessagesToMultimodal(
       }
       return count;
     }, 0);
-    console.log(
-      `[multimodal] Conversion complete: ${messagesWithImages.length} messages with ${totalImages} images`
-    );
+    log.debug("Conversion complete", {
+      source: "multimodal",
+      feature: "convert",
+      messagesWithImages: messagesWithImages.length,
+      totalImages,
+    });
   }
 
   return converted;

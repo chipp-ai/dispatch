@@ -34,7 +34,7 @@ import {
   notifyJobFailed,
   notifyJobProgress,
 } from "../websocket/pubsub.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Thresholds for inline vs Temporal processing
 const MAX_INLINE_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -82,7 +82,9 @@ export async function processKnowledgeSource(
   const config = embeddingConfig || getDefaultEmbeddingConfig();
   const embeddingProvider = createEmbeddingProvider(config);
 
-  console.log("[rag-ingestion] Starting processing", {
+  log.info("Starting processing", {
+    source: "rag-ingestion",
+    feature: "process-knowledge-source",
     knowledgeSourceId,
     applicationId,
     llamaParseAvailable: isLlamaParseAvailable(),
@@ -106,7 +108,9 @@ export async function processKnowledgeSource(
 
     if (isLlamaParseAvailable()) {
       // Use LlamaParse for semantic chunking
-      console.log("[rag-ingestion] Using LlamaParse for semantic chunking", {
+      log.info("Using LlamaParse for semantic chunking", {
+        source: "rag-ingestion",
+        feature: "process-knowledge-source",
         knowledgeSourceId,
         mimeType,
       });
@@ -114,12 +118,11 @@ export async function processKnowledgeSource(
       chunks = await extractWithSemanticChunking(source);
     } else {
       // Fallback to fixed-size chunking
-      console.log(
-        "[rag-ingestion] LlamaParse unavailable, using fixed-size chunking",
-        {
-          knowledgeSourceId,
-        }
-      );
+      log.info("LlamaParse unavailable, using fixed-size chunking", {
+        source: "rag-ingestion",
+        feature: "process-knowledge-source",
+        knowledgeSourceId,
+      });
 
       const text = await extractTextFromSource(source);
       if (!text || text.trim().length === 0) {
@@ -132,7 +135,9 @@ export async function processKnowledgeSource(
       });
     }
 
-    console.log("[rag-ingestion] Content chunked", {
+    log.info("Content chunked", {
+      source: "rag-ingestion",
+      feature: "process-knowledge-source",
       knowledgeSourceId,
       chunkCount: chunks.length,
       usedLlamaParse: isLlamaParseAvailable(),
@@ -160,7 +165,9 @@ export async function processKnowledgeSource(
       chunks.length
     );
 
-    console.log("[rag-ingestion] Processing complete", {
+    log.info("Processing complete", {
+      source: "rag-ingestion",
+      feature: "process-knowledge-source",
       knowledgeSourceId,
       chunkCount: chunks.length,
       embeddingProvider: embeddingProvider.provider,
@@ -188,17 +195,12 @@ export async function processKnowledgeSource(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    console.error("[rag-ingestion] Processing failed", {
+    log.error("Processing failed", {
+      source: "rag-ingestion",
+      feature: "process-knowledge-source",
       knowledgeSourceId,
-      error: errorMessage,
-    });
-    Sentry.captureException(error, {
-      tags: {
-        source: "rag-ingestion-service",
-        feature: "process-knowledge-source",
-      },
-      extra: { knowledgeSourceId, applicationId },
-    });
+      applicationId,
+    }, error);
 
     // Update status to failed
     await updateKnowledgeSourceStatus(
@@ -355,7 +357,9 @@ async function downloadAndExtractFile(
     // Check if file is in public directory
     if (!filePath.startsWith("public/")) {
       // Get a signed URL for private files
-      console.log("[rag-ingestion] Getting signed URL for private file", {
+      log.info("Getting signed URL for private file", {
+        source: "rag-ingestion",
+        feature: "download-file",
         filePath,
       });
       downloadUrl = await getSignedUrl(filePath, 3600); // 1 hour expiry
@@ -555,7 +559,9 @@ async function storeChunksWithEmbeddings(params: {
       `;
     }
 
-    console.log("[rag-ingestion] Batch processed", {
+    log.info("Batch processed", {
+      source: "rag-ingestion",
+      feature: "store-embeddings",
       knowledgeSourceId,
       batchStart: i,
       batchEnd: Math.min(i + BATCH_SIZE, chunks.length),
@@ -632,7 +638,9 @@ export async function processUrlContent(
       chunks.length
     );
 
-    console.log("[rag-ingestion] URL content processed", {
+    log.info("URL content processed", {
+      source: "rag-ingestion",
+      feature: "process-url-content",
       knowledgeSourceId,
       url,
       chunkCount: chunks.length,
@@ -654,15 +662,13 @@ export async function processUrlContent(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    console.error("[rag-ingestion] URL content processing failed", {
+    log.error("URL content processing failed", {
+      source: "rag-ingestion",
+      feature: "process-url-content",
       knowledgeSourceId,
+      applicationId,
       url,
-      error: errorMessage,
-    });
-    Sentry.captureException(error, {
-      tags: { source: "rag-ingestion-service", feature: "process-url-content" },
-      extra: { knowledgeSourceId, applicationId, url },
-    });
+    }, error);
 
     await updateKnowledgeSourceStatus(
       knowledgeSourceId,

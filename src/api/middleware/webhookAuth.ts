@@ -8,7 +8,7 @@
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { timingSafeEqual } from "node:crypto";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -118,13 +118,11 @@ export const stripeWebhookMiddleware = createMiddleware<WebhookContext>(
       : getStripeWebhookSecret();
 
     if (!webhookSecret) {
-      console.error(
-        `Stripe webhook secret not configured for ${isTestMode ? "test" : "live"} mode`
-      );
-      Sentry.captureMessage(`Stripe webhook secret not configured for ${isTestMode ? "test" : "live"} mode`, {
-        level: "error",
-        tags: { source: "webhook-auth", provider: "stripe" },
-        extra: { isTestMode, endpoint: c.req.path },
+      log.error("Stripe webhook secret not configured", {
+        source: "webhook-auth",
+        feature: "stripe",
+        isTestMode,
+        endpoint: c.req.path,
       });
       throw new HTTPException(500, {
         message: "Webhook secret not configured",
@@ -374,11 +372,10 @@ export const twilioWebhookMiddleware = createMiddleware<WebhookContext>(
 
     const twilioAuthToken = getTwilioAuthToken();
     if (!twilioAuthToken) {
-      console.error("Twilio auth token not configured");
-      Sentry.captureMessage("Twilio auth token not configured", {
-        level: "error",
-        tags: { source: "webhook-auth", provider: "twilio" },
-        extra: { endpoint: c.req.path },
+      log.error("Twilio auth token not configured", {
+        source: "webhook-auth",
+        feature: "twilio",
+        endpoint: c.req.path,
       });
       throw new HTTPException(500, {
         message: "Twilio auth token not configured",

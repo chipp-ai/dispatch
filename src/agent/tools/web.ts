@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import type { ToolRegistry } from "../registry.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Types for Serper API response
 interface SerperSearchResult {
@@ -54,15 +54,11 @@ interface SerperResponse {
  * Search the web using Serper API
  */
 async function searchWeb(query: string): Promise<SerperResponse | string> {
-  console.log(`[browseWeb] Searching web for: "${query}"`);
+  log.info("Searching web", { source: "agent", feature: "web-tool", query });
   const SERPER_API_KEY = Deno.env.get("SERPER_API_KEY");
 
   if (!SERPER_API_KEY) {
-    console.error("[browseWeb] SERPER_API_KEY not configured");
-    Sentry.captureMessage("SERPER_API_KEY not configured", {
-      level: "error",
-      tags: { source: "agent", feature: "tools", tool: "web" },
-    });
+    log.error("SERPER_API_KEY not configured", { source: "agent", feature: "web-tool" });
     return "Web search is not configured. Please contact the administrator.";
   }
 
@@ -77,25 +73,14 @@ async function searchWeb(query: string): Promise<SerperResponse | string> {
     });
 
     if (!response.ok) {
-      console.error(
-        `Serper API error: ${response.status} ${response.statusText}`
-      );
-      Sentry.captureMessage(`Serper API error: ${response.status} ${response.statusText}`, {
-        level: "error",
-        tags: { source: "agent", feature: "tools", tool: "web" },
-        extra: { query, statusCode: response.status },
-      });
+      log.error(`Serper API error: ${response.status} ${response.statusText}`, { source: "agent", feature: "web-tool", query, statusCode: response.status });
       return `Web search failed with status ${response.status}. Please try again later.`;
     }
 
     const data: SerperResponse = await response.json();
     return data;
   } catch (error) {
-    console.error("Error searching web:", error);
-    Sentry.captureException(error, {
-      tags: { source: "agent-web-tool", feature: "web-search" },
-      extra: { query },
-    });
+    log.error("Error searching web", { source: "agent", feature: "web-tool", query }, error);
     return "An error occurred while searching the web. Please try again later.";
   }
 }
@@ -156,11 +141,7 @@ async function fetchUrl(url: string): Promise<string> {
     if (error instanceof TypeError && error.message.includes("Invalid URL")) {
       return "Invalid URL format. Please provide a valid URL.";
     }
-    console.error("Error fetching URL:", error);
-    Sentry.captureException(error, {
-      tags: { source: "agent-web-tool", feature: "fetch-url" },
-      extra: { url },
-    });
+    log.error("Error fetching URL", { source: "agent", feature: "web-tool", url }, error);
     return `An error occurred while retrieving the URL: ${error instanceof Error ? error.message : String(error)}`;
   }
 }

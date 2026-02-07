@@ -17,6 +17,7 @@ import { SignJWT } from "jose";
 import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { sql } from "kysely";
 import { db } from "../src/db/client.ts";
+import { log } from "@/lib/logger.ts";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv, AuthUser, Session } from "../types.ts";
@@ -115,7 +116,10 @@ const hasDbConfig =
 
 // In dev mode without database, provide mock auth endpoints
 if (Deno.env.get("ENVIRONMENT") !== "production" && !hasDbConfig) {
-  console.log("[auth] Database not configured - using mock auth mode");
+  log.info("Database not configured - using mock auth mode", {
+    source: "auth",
+    feature: "init",
+  });
 
   auth.get("/me", (c) => {
     return c.json(MOCK_USER);
@@ -492,7 +496,11 @@ auth.get("/callback/:provider", async (c) => {
     // All users go to / which handles routing decision (may route to import for legacy data)
     return c.redirect(`${webAppUrl}/#/`);
   } catch (error) {
-    console.error("OAuth callback error:", error);
+    log.error("OAuth callback error", {
+      source: "auth",
+      feature: "oauth-callback",
+      provider,
+    }, error);
     return c.redirect(`${webAppUrl}/#/login?error=auth_failed`);
   }
 });
@@ -580,7 +588,10 @@ auth.post("/login/credentials", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[auth] Credentials login error:", error);
+    log.error("Credentials login error", {
+      source: "auth",
+      feature: "credentials-login",
+    }, error);
     return c.json({ error: "Login failed" }, 500);
   }
 });
@@ -696,7 +707,7 @@ if (Deno.env.get("ENVIRONMENT") !== "production") {
         .execute();
 
       user = { id: userId, email, name };
-      console.log(`[dev-login] Created dev user: ${email}`);
+      log.info("Created dev user", { source: "auth", feature: "dev-login", email });
     } else {
       // Existing user - ensure they have a workspace membership
       const membership = await db
@@ -751,9 +762,11 @@ if (Deno.env.get("ENVIRONMENT") !== "production") {
             })
             .execute();
 
-          console.log(
-            `[dev-login] Created workspace membership for existing user: ${email}`
-          );
+          log.info("Created workspace membership for existing user", {
+            source: "auth",
+            feature: "dev-login",
+            email,
+          });
         }
       }
     }
@@ -866,7 +879,10 @@ auth.post("/check-email", async (c) => {
 
     return c.json({ exists: false });
   } catch (error) {
-    console.error("[auth] Check email error:", error);
+    log.error("Check email error", {
+      source: "auth",
+      feature: "check-email",
+    }, error);
     return c.json({ error: "Failed to check email" }, 500);
   }
 });
@@ -923,7 +939,10 @@ auth.post("/send-otp", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Send OTP error:", error);
+    log.error("Send OTP error", {
+      source: "auth",
+      feature: "send-otp",
+    }, error);
     return c.json({ error: "Failed to send verification code" }, 500);
   }
 });
@@ -1042,7 +1061,10 @@ auth.post("/signup", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[auth] Signup error:", error);
+    log.error("Signup error", {
+      source: "auth",
+      feature: "signup",
+    }, error);
     return c.json({ error: "Signup failed" }, 500);
   }
 });
@@ -1115,7 +1137,10 @@ auth.post("/forgot-password", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Forgot password error:", error);
+    log.error("Forgot password error", {
+      source: "auth",
+      feature: "forgot-password",
+    }, error);
     return c.json({ error: "Failed to process request" }, 500);
   }
 });
@@ -1183,7 +1208,10 @@ auth.post("/reset-password", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Reset password error:", error);
+    log.error("Reset password error", {
+      source: "auth",
+      feature: "reset-password",
+    }, error);
     return c.json({ error: "Failed to reset password" }, 500);
   }
 });
@@ -1246,7 +1274,10 @@ auth.post("/provision", async (c) => {
     if (error instanceof HTTPException) {
       throw error;
     }
-    console.error("[auth] Provision error:", error);
+    log.error("Provision error", {
+      source: "auth",
+      feature: "provision",
+    }, error);
     return c.json({ error: "Failed to provision user" }, 500);
   }
 });
@@ -1313,7 +1344,10 @@ auth.post("/session-create", async (c) => {
     if (error instanceof HTTPException) {
       throw error;
     }
-    console.error("[auth] Session create error:", error);
+    log.error("Session create error", {
+      source: "auth",
+      feature: "session-create",
+    }, error);
     return c.json({ error: "Failed to create session" }, 500);
   }
 });

@@ -18,7 +18,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { emailService } from "../../../services/email.service.ts";
 import { handleEmailMessage } from "../../../services/email-chat.service.ts";
@@ -124,7 +124,7 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
       const token = c.req.query("token");
 
       if (!token) {
-        console.log("[EmailWebhook] Missing token");
+        log.info("Missing token", { source: "email-webhook", feature: "per-app", applicationId });
         return c.json({ error: "Missing token" }, 401);
       }
 
@@ -134,13 +134,15 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
         token
       );
       if (!isValid) {
-        console.log("[EmailWebhook] Invalid token");
+        log.info("Invalid token", { source: "email-webhook", feature: "per-app", applicationId });
         return c.json({ error: "Invalid token" }, 403);
       }
 
       const email = c.req.valid("json");
 
-      console.log("[EmailWebhook] Received email", {
+      log.info("Received email", {
+        source: "email-webhook",
+        feature: "per-app",
         applicationId,
         messageId: email.MessageID,
         from: email.From,
@@ -150,12 +152,12 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
       // Get config
       const config = await emailService.getConfigByApplicationId(applicationId);
       if (!config) {
-        console.log("[EmailWebhook] Config not found");
+        log.info("Config not found", { source: "email-webhook", feature: "per-app", applicationId });
         return c.json({ success: true }); // Acknowledge but don't process
       }
 
       if (!config.isActive) {
-        console.log("[EmailWebhook] Config is inactive");
+        log.info("Config is inactive", { source: "email-webhook", feature: "per-app", applicationId });
         return c.json({ success: true });
       }
 
@@ -167,16 +169,14 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
           senderEmail
         );
         if (!isWhitelisted) {
-          console.log("[EmailWebhook] Sender not whitelisted", { senderEmail });
+          log.info("Sender not whitelisted", { source: "email-webhook", feature: "per-app", applicationId, senderEmail });
           return c.json({ success: true }); // Acknowledge but don't process
         }
       }
 
       // Check for duplicate
       if (emailService.isDuplicateMessage(email.MessageID, applicationId)) {
-        console.log("[EmailWebhook] Duplicate message, skipping", {
-          messageId: email.MessageID,
-        });
+        log.debug("Duplicate message, skipping", { source: "email-webhook", feature: "per-app", applicationId, messageId: email.MessageID });
         return c.json({ success: true });
       }
 
@@ -213,14 +213,13 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
         },
         correlationId,
       }).catch((err) => {
-        console.error("[EmailWebhook] Error processing email", {
+        log.error("Error processing email", {
+          source: "email-webhook",
+          feature: "per-app",
           correlationId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-          tags: { source: "email-webhook", feature: "per-app" },
-          extra: { correlationId, applicationId, messageId: email.MessageID },
-        });
+          applicationId,
+          messageId: email.MessageID,
+        }, err);
       });
 
       // Acknowledge the webhook immediately
@@ -249,13 +248,15 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
     const token = c.req.query("token");
 
     if (!token) {
-      console.log("[EmailWebhook] Missing token for global webhook");
+      log.info("Missing token for global webhook", { source: "email-webhook", feature: "global" });
       return c.json({ error: "Missing token" }, 401);
     }
 
     const email = c.req.valid("json");
 
-    console.log("[EmailWebhook] Global webhook received email", {
+    log.info("Global webhook received email", {
+      source: "email-webhook",
+      feature: "global",
       messageId: email.MessageID,
       from: email.From,
       to: email.To,
@@ -279,10 +280,7 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
     }
 
     if (!config) {
-      console.log("[EmailWebhook] No config found for recipient", {
-        to: email.To,
-        toFull: toAddresses,
-      });
+      log.info("No config found for recipient", { source: "email-webhook", feature: "global", to: email.To, toFull: toAddresses });
       return c.json({ success: true }); // Acknowledge but don't process
     }
 
@@ -295,13 +293,13 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
       // For global webhook, we use a shared token from env
       const sharedToken = Deno.env.get("POSTMARK_SHARED_WEBHOOK_TOKEN");
       if (!sharedToken || token !== sharedToken) {
-        console.log("[EmailWebhook] Invalid token for global webhook");
+        log.info("Invalid token for global webhook", { source: "email-webhook", feature: "global" });
         return c.json({ error: "Invalid token" }, 403);
       }
     }
 
     if (!config.isActive) {
-      console.log("[EmailWebhook] Config is inactive");
+      log.info("Config is inactive", { source: "email-webhook", feature: "global", applicationId: config.applicationId });
       return c.json({ success: true });
     }
 
@@ -313,7 +311,7 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
         senderEmail
       );
       if (!isWhitelisted) {
-        console.log("[EmailWebhook] Sender not whitelisted", { senderEmail });
+        log.info("Sender not whitelisted", { source: "email-webhook", feature: "global", applicationId: config.applicationId, senderEmail });
         return c.json({ success: true });
       }
     }
@@ -322,9 +320,7 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
     if (
       emailService.isDuplicateMessage(email.MessageID, config.applicationId)
     ) {
-      console.log("[EmailWebhook] Duplicate message, skipping", {
-        messageId: email.MessageID,
-      });
+      log.debug("Duplicate message, skipping", { source: "email-webhook", feature: "global", applicationId: config.applicationId, messageId: email.MessageID });
       return c.json({ success: true });
     }
 
@@ -358,14 +354,13 @@ export const emailWebhookRoutes = new Hono<WebhookContext>()
       },
       correlationId,
     }).catch((err) => {
-      console.error("[EmailWebhook] Error processing email", {
+      log.error("Error processing email", {
+        source: "email-webhook",
+        feature: "global",
         correlationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-        tags: { source: "email-webhook", feature: "global" },
-        extra: { correlationId, applicationId: config.applicationId, messageId: email.MessageID },
-      });
+        applicationId: config.applicationId,
+        messageId: email.MessageID,
+      }, err);
     });
 
     // Acknowledge the webhook immediately

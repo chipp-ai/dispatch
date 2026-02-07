@@ -15,7 +15,7 @@ import type {
   StreamOptions,
   ToolCall,
 } from "../types.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export class AnthropicProvider implements LLMProvider {
   readonly name = "anthropic";
@@ -126,14 +126,7 @@ export class AnthropicProvider implements LLMProvider {
                 },
               };
             } catch (parseError) {
-              console.error("Failed to parse Anthropic tool call arguments");
-              Sentry.captureException(parseError, {
-                tags: {
-                  source: "anthropic-provider",
-                  feature: "tool-call-parse",
-                },
-                extra: { model },
-              });
+              log.error("Failed to parse Anthropic tool call arguments", { source: "llm", feature: "anthropic", model }, parseError);
             }
           }
           break;
@@ -272,15 +265,10 @@ export class AnthropicProvider implements LLMProvider {
     url: string
   ): Promise<{ base64: string; mediaType: string } | null> {
     try {
-      console.log(`[anthropic] Fetching image for base64 conversion: ${url}`);
+      log.debug("Fetching image for base64 conversion", { source: "llm", feature: "anthropic", imageUrl: url });
       const response = await fetch(url);
       if (!response.ok) {
-        console.error(`[anthropic] Failed to fetch image: ${response.status}`);
-        Sentry.captureMessage(`[anthropic] Failed to fetch image: ${response.status}`, {
-          level: "error",
-          tags: { source: "llm", provider: "anthropic", feature: "fetch-image" },
-          extra: { imageUrl: url, statusCode: response.status },
-        });
+        log.error("Failed to fetch image", { source: "llm", feature: "anthropic", imageUrl: url, statusCode: response.status });
         return null;
       }
 
@@ -294,16 +282,10 @@ export class AnthropicProvider implements LLMProvider {
         )
       );
 
-      console.log(
-        `[anthropic] Image converted: ${(arrayBuffer.byteLength / 1024).toFixed(1)}KB, type: ${contentType}`
-      );
+      log.debug("Image converted", { source: "llm", feature: "anthropic", sizeKB: (arrayBuffer.byteLength / 1024).toFixed(1), contentType });
       return { base64, mediaType: contentType };
     } catch (error) {
-      console.error(`[anthropic] Error fetching image:`, error);
-      Sentry.captureException(error, {
-        tags: { source: "anthropic-provider", feature: "fetch-image" },
-        extra: { imageUrl: url },
-      });
+      log.error("Error fetching image", { source: "llm", feature: "anthropic", imageUrl: url }, error);
       return null;
     }
   }

@@ -12,6 +12,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
+import { log } from "@/lib/logger.ts";
 import { db } from "../../../db/client.ts";
 import {
   getUserConnectionCount,
@@ -214,7 +215,7 @@ router.post("/set-tier", zValidator("json", tierSchema), async (c) => {
       message: `Subscription tier updated to ${tier}`,
     });
   } catch (error) {
-    console.error("Failed to update subscription tier:", error);
+    log.error("Failed to update subscription tier", { source: "dev-api", feature: "set-tier" }, error);
     return c.json({ error: "Failed to update subscription tier" }, 500);
   }
 });
@@ -289,7 +290,7 @@ router.get("/stripe-info", async (c) => {
       customerUrl: customerId ? `${dashboardBase}/customers/${customerId}` : null,
     });
   } catch (error) {
-    console.error("Failed to fetch Stripe info:", error);
+    log.error("Failed to fetch Stripe info", { source: "dev-api", feature: "stripe-info" }, error);
     return c.json({
       mode,
       customerId: null,
@@ -381,7 +382,7 @@ router.post("/app-state", zValidator("json", appStateSchema), async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("Failed to write app state:", error);
+    log.error("Failed to write app state", { source: "dev-api", feature: "app-state" }, error);
     return c.json({ error: "Failed to write app state" }, 500);
   }
 });
@@ -448,7 +449,7 @@ router.post("/reset-credits", zValidator("json", resetCreditsSchema), async (c) 
     // Note: In a real implementation, we would update Stripe credit grants.
     // For dev purposes, we log the action and return success.
     // The credit balance would need to be managed via Stripe's billing API.
-    console.log(`[dev] Reset credits for org ${org.id}: ${credits} credits`);
+    log.info("Credits reset (simulated)", { source: "dev-api", feature: "reset-credits", orgId: org.id, credits });
 
     // Notify connected clients about credit update (if we have a user)
     if (userId) {
@@ -469,7 +470,7 @@ router.post("/reset-credits", zValidator("json", resetCreditsSchema), async (c) 
       message: `Credits reset to ${credits} for testing`,
     });
   } catch (error) {
-    console.error("Failed to reset credits:", error);
+    log.error("Failed to reset credits", { source: "dev-api", feature: "reset-credits" }, error);
     return c.json({ error: "Failed to reset credits" }, 500);
   }
 });
@@ -613,7 +614,7 @@ router.post("/trigger-ws-event", zValidator("json", wsEventSchema), async (c) =>
         : `Failed to deliver event (user may not be connected)`,
     });
   } catch (error) {
-    console.error("Failed to trigger WebSocket event:", error);
+    log.error("Failed to trigger WebSocket event", { source: "dev-api", feature: "trigger-ws-event", event }, error);
     return c.json({ error: "Failed to trigger WebSocket event" }, 500);
   }
 });
@@ -817,7 +818,7 @@ router.post("/simulate-webhook", zValidator("json", webhookSchema), async (c) =>
       message: `Webhook '${event}' simulated successfully`,
     });
   } catch (error) {
-    console.error("Failed to simulate webhook:", error);
+    log.error("Failed to simulate webhook", { source: "dev-api", feature: "simulate-webhook", event }, error);
     return c.json({
       error: "Failed to simulate webhook",
       details: error instanceof Error ? error.message : "Unknown error",
