@@ -35,6 +35,8 @@ COPY --from=base /app/.next ./.next
 COPY --from=base /app/package.json ./
 COPY --from=base /app/next.config.js ./
 COPY --from=base /app/server.ts ./
+COPY --from=base /app/app ./app
+COPY --from=base /app/components ./components
 COPY --from=base /app/lib ./lib
 COPY --from=base /app/dist ./dist
 
