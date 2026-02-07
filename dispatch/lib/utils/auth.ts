@@ -1,0 +1,45 @@
+import { cookies } from "next/headers";
+import crypto from "crypto";
+
+const SESSION_COOKIE_NAME = "chipp_issues_session";
+const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+export async function verifyPassword(password: string): Promise<boolean> {
+  const correctPassword = process.env.CHIPP_ISSUES_PASSWORD;
+  if (!correctPassword) {
+    console.error("CHIPP_ISSUES_PASSWORD not set");
+    return false;
+  }
+  return password === correctPassword;
+}
+
+export async function createSession(): Promise<string> {
+  const sessionToken = crypto.randomBytes(32).toString("hex");
+  const cookieStore = await cookies();
+
+  cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: SESSION_DURATION_MS / 1000,
+    path: "/",
+  });
+
+  return sessionToken;
+}
+
+export async function getSession(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const session = cookieStore.get(SESSION_COOKIE_NAME);
+  return session?.value || null;
+}
+
+export async function clearSession(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(SESSION_COOKIE_NAME);
+}
+
+export async function requireAuth(): Promise<boolean> {
+  const session = await getSession();
+  return session !== null;
+}
