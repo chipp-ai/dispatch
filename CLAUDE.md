@@ -78,10 +78,15 @@ For detailed workflows (subagents, migration patterns, MCP tools, worktrees, bro
 
 @docs/claude-code-workflows.md
 
+## Database Migrations
+
+Migrations run automatically in CI before deploy. **Every migration must be backward-compatible** with the currently running code (expand/contract pattern). See full rules in @db/CLAUDE.md.
+
 ## Key Documentation
 
 | Topic | File |
 |-------|------|
+| DB migrations & deploy | @db/CLAUDE.md |
 | Migration checkpoint | @docs/migrations/CHECKPOINT.json |
 | Stripe billing | @docs/stripe-development.md |
 | Voice agents | @docs/voice/README.md |
