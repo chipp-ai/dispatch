@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chipp-deno-migrate
+  labels:
+    app: chipp-deno
+    component: migration
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: chipp-deno
+        component: migration
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: gcp-artifact-registry
+      containers:
+        - name: migrate
+          image: IMAGE_PLACEHOLDER
+          command: ["deno", "task", "db:migrate"]
+          envFrom:
+            - secretRef:
+                name: chipp-deno
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
