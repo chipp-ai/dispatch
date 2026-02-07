@@ -59,7 +59,7 @@ log.info("Webhook received", {
 
 Context fields: `source` (module name) and `feature` (operation) are required. Add relevant IDs (`orgId`, `appId`, `userId`, `requestId`, etc.) and domain data.
 
-In dev: pretty-printed. In staging/prod: NDJSON with version, env, pod auto-injected.
+In dev: pretty-printed. In staging/prod: NDJSON with version, env, pod auto-injected. All prod logs are persisted in Loki (30-day retention) and queryable via Grafana at `https://grafana.chipp.ai`.
 
 **Client-side** (Svelte): Use `captureException` from `$lib/sentry` -- it does both console.error AND Sentry:
 ```typescript
@@ -119,3 +119,5 @@ Migrations run automatically in CI before deploy. **Every migration must be back
 | Custom actions | @docs/custom-actions/README.md |
 | RAG/embeddings | @docs/knowledge-sources-rag/ |
 | Whitelabel | @docs/enterprise-whitelabel/ |
+| Monitoring (Loki/Grafana) | @monitoring/README.md |
+| Dispatch (issue tracker) | @dispatch/CLAUDE.md |
