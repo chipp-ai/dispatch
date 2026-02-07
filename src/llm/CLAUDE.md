@@ -43,15 +43,15 @@ Normalization Layer              Provider APIs
 
 ## Error Handling
 
-All LLM errors must go to Sentry with model/provider context:
+All LLM errors use the unified logger with model/provider context:
 ```typescript
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
-console.error("[LLM] Provider error:", error);
-Sentry.captureException(error, {
-  tags: { source: "llm", feature: "provider-name" },
-  extra: { model, customerId },
-});
+log.error("Provider error", {
+  source: "llm",
+  feature: "provider-name",
+  model, customerId,
+}, error);
 ```
 
 ## Billing Flow

@@ -12,6 +12,7 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { log } from "@/lib/logger.ts";
 import { db } from "../../../db/client.ts";
 
 const builderPwaRoutes = new Hono();
@@ -170,7 +171,7 @@ async function resolveBrand(hostname: string): Promise<BrandConfig> {
       };
     }
   } catch (e) {
-    console.warn("[builder-pwa] Failed to resolve whitelabel tenant", { hostname, error: e });
+    log.warn("Failed to resolve whitelabel tenant", { source: "builder-pwa", feature: "resolve-brand", hostname, error: String(e) });
   }
 
   return DEFAULT_BRAND;

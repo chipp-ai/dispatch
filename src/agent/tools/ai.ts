@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { ToolRegistry } from "../registry.ts";
 import { uploadImageToPublicBucket } from "../../services/storage.service.ts";
 import { GoogleGenAI } from "@google/genai";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 type ContentPart =
   | { text: string }
@@ -49,12 +49,7 @@ async function generateImageWithGemini(
       try {
         const response = await fetch(imageUrl);
         if (!response.ok) {
-          console.error(`Failed to fetch image: ${imageUrl}`);
-          Sentry.captureMessage(`Failed to fetch reference image: ${response.status}`, {
-            level: "error",
-            tags: { source: "agent", feature: "tools", tool: "ai" },
-            extra: { imageUrl, statusCode: response.status },
-          });
+          log.error("Failed to fetch reference image", { source: "agent", feature: "ai-tool", imageUrl, statusCode: response.status });
           continue;
         }
         const arrayBuffer = await response.arrayBuffer();
@@ -68,11 +63,7 @@ async function generateImageWithGemini(
           },
         });
       } catch (error) {
-        console.error(`Error fetching image ${imageUrl}:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "agent-ai-tool", feature: "generate-image-fetch" },
-          extra: { imageUrl },
-        });
+        log.error("Error fetching reference image", { source: "agent", feature: "ai-tool", imageUrl }, error);
       }
     }
   }
@@ -170,9 +161,7 @@ async function analyzeVideoWithGemini(
     const filePath = decodeURIComponent(gcsMatch[2]);
     const gcsUri = `gs://${bucket}/${filePath}`;
 
-    console.log(
-      `[analyzeVideo] Using GCS fileUri: ${gcsUri.substring(0, 50)}...`
-    );
+    log.debug("Using GCS fileUri for video analysis", { source: "agent", feature: "ai-tool", gcsUri: gcsUri.substring(0, 50) });
 
     // Use fileData.fileUri for GCS files (supports up to 2GB)
     const contents: VideoPart[] = [
@@ -203,9 +192,7 @@ async function analyzeVideoWithGemini(
   }
 
   // For non-GCS URLs, download and use inline base64
-  console.log(
-    `[analyzeVideo] Downloading video from: ${videoUrl.substring(0, 50)}...`
-  );
+  log.info("Downloading video for analysis", { source: "agent", feature: "ai-tool", videoUrl: videoUrl.substring(0, 50) });
 
   const videoResponse = await fetch(videoUrl);
   if (!videoResponse.ok) {
@@ -218,7 +205,7 @@ async function analyzeVideoWithGemini(
   const videoBytes = new Uint8Array(arrayBuffer);
   const sizeMB = videoBytes.length / 1024 / 1024;
 
-  console.log(`[analyzeVideo] Video downloaded: ${sizeMB.toFixed(2)}MB`);
+  log.debug("Video downloaded", { source: "agent", feature: "ai-tool", sizeMB: sizeMB.toFixed(2) });
 
   // Gemini inline data limit is ~15MB, check if too large
   if (sizeMB > 15) {

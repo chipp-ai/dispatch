@@ -7,7 +7,7 @@
 
 import { Storage } from "npm:@google-cloud/storage";
 import { decode as base64Decode } from "https://deno.land/std@0.208.0/encoding/base64.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 let storageClient: Storage | null = null;
 
@@ -27,16 +27,17 @@ function getStorageClient(): Storage {
         const jsonString = new TextDecoder().decode(base64Decode(base64Key));
         credentials = JSON.parse(jsonString);
       } catch (error) {
-        console.error("[storage] Failed to parse service key:", error);
-        Sentry.captureException(error, {
-          tags: { source: "storage", feature: "service-key-parse" },
-          extra: { bucket: bucketName },
-        });
+        log.error("Failed to parse service key", {
+          source: "storage",
+          feature: "service-key-parse",
+          bucket: bucketName,
+        }, error);
       }
     } else {
-      console.warn(
-        "[storage] GOOGLE_SERVICE_KEY_BASE_64 not set, using default credentials"
-      );
+      log.warn("GOOGLE_SERVICE_KEY_BASE_64 not set, using default credentials", {
+        source: "storage",
+        feature: "service-key-parse",
+      });
     }
 
     storageClient = new Storage({

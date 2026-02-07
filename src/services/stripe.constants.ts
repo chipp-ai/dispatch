@@ -5,6 +5,8 @@
  * Uses v2 usage-based pricing plans for new subscriptions.
  */
 
+import { log } from "@/lib/logger.ts";
+
 // Subscription tier type
 export type SubscriptionTier =
   | "FREE"
@@ -223,9 +225,10 @@ export function getStripeApiKey(): string {
   }
 
   // Fallback to test key if no sandbox configured (will fail for v2 billing)
-  console.warn(
-    "[stripe] STRIPE_SANDBOX_KEY not configured - v2 billing will not work in test mode"
-  );
+  log.warn("STRIPE_SANDBOX_KEY not configured - v2 billing will not work in test mode", {
+    source: "stripe",
+    feature: "api-key",
+  });
   return (
     Deno.env.get("STRIPE_SECRET_KEY_TEST") ||
     Deno.env.get("STRIPE_CHIPP_KEY") ||

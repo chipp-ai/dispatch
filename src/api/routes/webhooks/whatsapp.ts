@@ -7,7 +7,7 @@
  */
 
 import { Hono } from "hono";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { whatsappService } from "../../../services/whatsapp.service.ts";
 import { handleWhatsAppMessage } from "../../../services/whatsapp-chat.service.ts";
@@ -96,7 +96,9 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
     const token = c.req.query("hub.verify_token");
     const challenge = c.req.query("hub.challenge");
 
-    console.log("[WhatsAppWebhook] Verification request", {
+    log.info("Verification request", {
+      source: "whatsapp-webhook",
+      feature: "verification",
       applicationId,
       mode,
       hasToken: !!token,
@@ -108,27 +110,27 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
       await whatsappService.getConfigByApplicationId(applicationId);
 
     if (!config) {
-      console.log("[WhatsAppWebhook] Config not found for verification");
+      log.info("Config not found for verification", { source: "whatsapp-webhook", feature: "verification", applicationId });
       return c.json({ error: "Config not found" }, 404);
     }
 
     // Validate the request
     if (mode !== "subscribe") {
-      console.log("[WhatsAppWebhook] Invalid mode", { mode });
+      log.info("Invalid mode", { source: "whatsapp-webhook", feature: "verification", applicationId, mode });
       return c.json({ error: "Invalid mode" }, 403);
     }
 
     if (token !== config.webhookSecret) {
-      console.log("[WhatsAppWebhook] Invalid verify token");
+      log.info("Invalid verify token", { source: "whatsapp-webhook", feature: "verification", applicationId });
       return c.json({ error: "Invalid verify token" }, 403);
     }
 
     if (!challenge) {
-      console.log("[WhatsAppWebhook] Missing challenge");
+      log.info("Missing challenge", { source: "whatsapp-webhook", feature: "verification", applicationId });
       return c.json({ error: "Missing challenge" }, 400);
     }
 
-    console.log("[WhatsAppWebhook] Verification successful");
+    log.info("Verification successful", { source: "whatsapp-webhook", feature: "verification", applicationId });
     // Return challenge as plain text (required by Meta)
     return c.text(challenge, 200, {
       "Content-Type": "text/plain",
@@ -154,7 +156,9 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    console.log("[WhatsAppWebhook] Received event", {
+    log.info("Received event", {
+      source: "whatsapp-webhook",
+      feature: "message",
       applicationId,
       object: payload.object,
       hasEntry: !!payload.entry?.length,
@@ -170,22 +174,20 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
 
     // Check if this is a status update (not a message) - acknowledge silently
     if (value?.statuses && !value?.messages) {
-      console.log("[WhatsAppWebhook] Status update, acknowledging");
+      log.debug("Status update, acknowledging", { source: "whatsapp-webhook", feature: "message", applicationId });
       return c.json({ success: true });
     }
 
     // Get the first message
     const message = value?.messages?.[0];
     if (!message) {
-      console.log("[WhatsAppWebhook] No message in payload");
+      log.debug("No message in payload", { source: "whatsapp-webhook", feature: "message", applicationId });
       return c.json({ success: true });
     }
 
     // Check for duplicate messages
     if (whatsappService.isDuplicateMessage(message.id, applicationId)) {
-      console.log("[WhatsAppWebhook] Duplicate message, skipping", {
-        messageId: message.id,
-      });
+      log.debug("Duplicate message, skipping", { source: "whatsapp-webhook", feature: "message", applicationId, messageId: message.id });
       return c.json({ success: true });
     }
 
@@ -193,19 +195,19 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
     const config =
       await whatsappService.getConfigByApplicationId(applicationId);
     if (!config) {
-      console.log("[WhatsAppWebhook] Config not found");
+      log.info("Config not found", { source: "whatsapp-webhook", feature: "message", applicationId });
       return c.json({ success: true }); // Acknowledge but don't process
     }
 
     if (!config.isActive) {
-      console.log("[WhatsAppWebhook] Config is inactive");
+      log.info("Config is inactive", { source: "whatsapp-webhook", feature: "message", applicationId });
       return c.json({ success: true });
     }
 
     const credentials =
       await whatsappService.getDecryptedCredentials(applicationId);
     if (!credentials) {
-      console.log("[WhatsAppWebhook] Failed to get credentials");
+      log.warn("Failed to get credentials", { source: "whatsapp-webhook", feature: "message", applicationId });
       return c.json({ success: true });
     }
 
@@ -231,14 +233,14 @@ export const whatsappWebhookRoutes = new Hono<WebhookContext>()
       credentials,
       correlationId,
     }).catch((err) => {
-      console.error("[WhatsAppWebhook] Error processing message", {
+      log.error("Error processing message", {
+        source: "whatsapp-webhook",
+        feature: "message",
         correlationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-        tags: { source: "whatsapp-webhook" },
-        extra: { correlationId, applicationId, messageId: message.id, messageType: message.type },
-      });
+        applicationId,
+        messageId: message.id,
+        messageType: message.type,
+      }, err);
     });
 
     // Acknowledge the webhook immediately

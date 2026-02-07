@@ -5,7 +5,7 @@
  * ~150 LOC as per migration plan.
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { StreamChunk } from "../llm/types.ts";
 
 // ========================================
@@ -134,12 +134,7 @@ export async function* parseSSEStream(
           const chunk = JSON.parse(data) as StreamChunk;
           yield chunk;
         } catch (parseError) {
-          console.error("Failed to parse SSE data:", data);
-          Sentry.captureMessage("Failed to parse SSE data", {
-            level: "error",
-            tags: { source: "agent", feature: "stream" },
-            extra: { data: data.slice(0, 200) },
-          });
+          log.error("Failed to parse SSE data", { source: "agent", feature: "stream", data: data.slice(0, 200) }, parseError);
         }
       }
     }

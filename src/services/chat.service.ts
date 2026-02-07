@@ -5,6 +5,7 @@
  * Uses Kysely query builder with CamelCasePlugin for automatic snake_case to camelCase conversion.
  */
 
+import { log } from "@/lib/logger.ts";
 import { db, sql as rawSql } from "../db/client.ts";
 import { sql } from "kysely";
 import { ForbiddenError, NotFoundError } from "../utils/errors.ts";
@@ -965,10 +966,11 @@ export const chatService = {
           Deno.env.get("STRIPE_CHIPP_INTERNAL_CUSTOMER_ID") ||
           null;
         if (customerId) {
-          console.log(
-            "[billing] Using internal customer ID for local development:",
-            customerId
-          );
+          log.debug("Using internal customer ID for local development", {
+            source: "billing",
+            feature: "customer-lookup",
+            customerId,
+          });
         }
       }
     }

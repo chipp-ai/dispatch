@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type Stripe from "npm:stripe";
 
 import {
@@ -255,11 +255,7 @@ consumerCreditsRoutes.get(
 
       return c.json({ url: checkoutSession.url });
     } catch (error) {
-      console.error("[consumer-credits] Checkout session error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "consumer-credits-api", feature: "checkout-session" },
-        extra: { consumerId: consumer.id, appId: app.id, packageId: pkg?.id },
-      });
+      log.error("Checkout session error", { source: "consumer-credits", feature: "checkout-session", consumerId: consumer.id, appId: app.id, packageId: pkg?.id }, error);
       return c.json(
         { error: error instanceof Error ? error.message : "Payment error" },
         500
@@ -337,15 +333,7 @@ consumerCreditsRoutes.get("/manage-subscription", async (c) => {
 
     return c.json({ url: portalSession.url });
   } catch (error) {
-    console.error("[consumer-credits] Billing portal error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "consumer-credits-api", feature: "billing-portal" },
-      extra: {
-        consumerId: consumer.id,
-        appId: app.id,
-        stripeCustomerId: consumer.stripeCustomerId,
-      },
-    });
+    log.error("Billing portal error", { source: "consumer-credits", feature: "billing-portal", consumerId: consumer.id, appId: app.id, stripeCustomerId: consumer.stripeCustomerId }, error);
     return c.json(
       { error: error instanceof Error ? error.message : "Billing error" },
       500

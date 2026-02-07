@@ -6,6 +6,7 @@
  */
 
 import { connect, type Redis } from "redis";
+import { log } from "@/lib/logger.ts";
 
 let client: Redis | null = null;
 
@@ -16,7 +17,7 @@ export async function initRedis(): Promise<void> {
   const redisUrl = Deno.env.get("REDIS_URL");
 
   if (!redisUrl) {
-    console.log("[redis] No REDIS_URL configured, skipping initialization");
+    log.info("No REDIS_URL configured, skipping initialization", { source: "redis", feature: "init" });
     return;
   }
 
@@ -34,9 +35,9 @@ export async function initRedis(): Promise<void> {
       maxRetryCount: 10,
     });
 
-    console.log("[redis] Connected");
+    log.info("Connected", { source: "redis", feature: "init" });
   } catch (error) {
-    console.error("[redis] Failed to initialize:", error);
+    log.error("Failed to initialize", { source: "redis", feature: "init" }, error);
     client = null;
   }
 }
@@ -62,7 +63,7 @@ export async function closeRedis(): Promise<void> {
   if (client) {
     client.close();
     client = null;
-    console.log("[redis] Disconnected");
+    log.info("Disconnected", { source: "redis", feature: "shutdown" });
   }
 }
 
@@ -83,7 +84,7 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
     if (!value) return null;
     return JSON.parse(value) as T;
   } catch (error) {
-    console.error("[redis] Cache get error:", error);
+    log.error("Cache get error", { source: "redis", feature: "cache-get", key }, error);
     return null;
   }
 }
@@ -102,7 +103,7 @@ export async function cacheSet<T>(
     await client.set(key, JSON.stringify(value), { ex: ttlSeconds });
     return true;
   } catch (error) {
-    console.error("[redis] Cache set error:", error);
+    log.error("Cache set error", { source: "redis", feature: "cache-set", key }, error);
     return false;
   }
 }
@@ -117,7 +118,7 @@ export async function cacheDelete(key: string): Promise<boolean> {
     await client.del(key);
     return true;
   } catch (error) {
-    console.error("[redis] Cache delete error:", error);
+    log.error("Cache delete error", { source: "redis", feature: "cache-delete", key }, error);
     return false;
   }
 }
@@ -133,7 +134,7 @@ export async function cacheDeletePattern(pattern: string): Promise<number> {
     if (keys.length === 0) return 0;
     return await client.del(...keys);
   } catch (error) {
-    console.error("[redis] Cache delete pattern error:", error);
+    log.error("Cache delete pattern error", { source: "redis", feature: "cache-delete-pattern", pattern }, error);
     return 0;
   }
 }

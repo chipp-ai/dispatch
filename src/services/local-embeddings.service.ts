@@ -8,6 +8,8 @@
  * Quality: Competitive with OpenAI text-embedding-3-small on MTEB benchmarks
  */
 
+import { log } from "@/lib/logger.ts";
+
 // deno-lint-ignore no-explicit-any
 let pipeline: any = null;
 
@@ -22,9 +24,10 @@ const MODEL_ID = "Xenova/bge-base-en-v1.5";
 export async function initEmbedder(): Promise<void> {
   // Skip in development if no model needed
   if (Deno.env.get("SKIP_LOCAL_EMBEDDINGS") === "true") {
-    console.log(
-      "[embeddings] Skipping local embeddings (SKIP_LOCAL_EMBEDDINGS=true)"
-    );
+    log.info("Skipping local embeddings (SKIP_LOCAL_EMBEDDINGS=true)", {
+      source: "embeddings",
+      feature: "init",
+    });
     return;
   }
 
@@ -38,9 +41,9 @@ export async function initEmbedder(): Promise<void> {
       // quantized: true, // Use quantized model for faster inference (not available in this version)
     });
 
-    console.log(`[embeddings] Local embedding model loaded: ${MODEL_ID}`);
+    log.info("Local embedding model loaded", { source: "embeddings", feature: "init", model: MODEL_ID });
   } catch (error) {
-    console.warn("[embeddings] Failed to load local model:", error);
+    log.warn("Failed to load local model", { source: "embeddings", feature: "init", error: String(error) });
     // Don't throw - allow server to start without local embeddings
   }
 }

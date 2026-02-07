@@ -19,7 +19,7 @@ import type {
   StreamOptions,
   ToolCall,
 } from "../types.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export class GoogleProvider implements LLMProvider {
   readonly name = "google";
@@ -233,15 +233,10 @@ export class GoogleProvider implements LLMProvider {
     url: string
   ): Promise<{ base64: string; mimeType: string } | null> {
     try {
-      console.log(`[google] Fetching media for base64 conversion: ${url}`);
+      log.debug("Fetching media for base64 conversion", { source: "llm", feature: "google", mediaUrl: url });
       const response = await fetch(url);
       if (!response.ok) {
-        console.error(`[google] Failed to fetch media: ${response.status}`);
-        Sentry.captureMessage(`[google] Failed to fetch media: ${response.status}`, {
-          level: "error",
-          tags: { source: "llm", provider: "google", feature: "fetch-media" },
-          extra: { mediaUrl: url, statusCode: response.status },
-        });
+        log.error("Failed to fetch media", { source: "llm", feature: "google", mediaUrl: url, statusCode: response.status });
         return null;
       }
 
@@ -255,16 +250,10 @@ export class GoogleProvider implements LLMProvider {
         )
       );
 
-      console.log(
-        `[google] Media converted: ${(arrayBuffer.byteLength / 1024).toFixed(1)}KB, type: ${contentType}`
-      );
+      log.debug("Media converted", { source: "llm", feature: "google", sizeKB: (arrayBuffer.byteLength / 1024).toFixed(1), contentType });
       return { base64, mimeType: contentType };
     } catch (error) {
-      console.error(`[google] Error fetching media:`, error);
-      Sentry.captureException(error, {
-        tags: { source: "google-provider", feature: "fetch-media" },
-        extra: { mediaUrl: url },
-      });
+      log.error("Error fetching media", { source: "llm", feature: "google", mediaUrl: url }, error);
       return null;
     }
   }

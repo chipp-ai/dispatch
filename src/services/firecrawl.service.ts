@@ -5,7 +5,7 @@
  * Uses native fetch() - no npm SDK needed for Deno.
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 const FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v1";
 const SCRAPE_TIMEOUT_MS = 60_000;
@@ -91,9 +91,12 @@ async function firecrawlFetch(
         attempt < MAX_RETRY_ATTEMPTS - 1
       ) {
         const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
-        console.warn(
-          `[firecrawl] Rate limited (429), retrying in ${delay}ms (attempt ${attempt + 1})`
-        );
+        log.warn("Rate limited (429), retrying", {
+          source: "firecrawl-service",
+          feature: "request",
+          delay,
+          attempt: attempt + 1,
+        });
         lastResponse = response;
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -119,9 +122,11 @@ async function firecrawlFetch(
       if (attempt === MAX_RETRY_ATTEMPTS - 1) throw error;
 
       const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
-      console.warn(`[firecrawl] Request failed, retrying in ${delay}ms`, {
+      log.warn("Request failed, retrying", {
+        source: "firecrawl-service",
+        feature: "request",
+        delay,
         attempt: attempt + 1,
-        error: error instanceof Error ? error.message : String(error),
       });
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -136,7 +141,7 @@ export const firecrawlService = {
    * Scrape a single URL and return markdown content
    */
   async scrapeUrl(url: string): Promise<FirecrawlScrapeResult> {
-    console.log("[firecrawl] Scraping URL", { url });
+    log.info("Scraping URL", { source: "firecrawl-service", feature: "scrape", url });
 
     const response = await firecrawlFetch("/scrape", {
       method: "POST",
@@ -153,10 +158,13 @@ export const firecrawlService = {
       const error = new Error(
         `Firecrawl scrape failed (${response.status}): ${errorBody}`
       );
-      Sentry.captureException(error, {
-        tags: { source: "firecrawl-service", feature: "scrape" },
-        extra: { url, status: response.status, errorBody },
-      });
+      log.error("Firecrawl scrape failed", {
+        source: "firecrawl-service",
+        feature: "scrape",
+        url,
+        status: response.status,
+        errorBody,
+      }, error);
       throw error;
     }
 
@@ -169,7 +177,9 @@ export const firecrawlService = {
       throw new Error("Firecrawl scrape returned no content");
     }
 
-    console.log("[firecrawl] Scrape complete", {
+    log.info("Scrape complete", {
+      source: "firecrawl-service",
+      feature: "scrape",
       url,
       contentLength: result.data.markdown.length,
     });
@@ -191,7 +201,7 @@ export const firecrawlService = {
   }): Promise<{ id: string }> {
     const { url, maxPages, maxDepth } = params;
 
-    console.log("[firecrawl] Starting crawl", { url, maxPages, maxDepth });
+    log.info("Starting crawl", { source: "firecrawl-service", feature: "crawl-start", url, maxPages, maxDepth });
 
     const response = await firecrawlFetch("/crawl", {
       method: "POST",
@@ -211,10 +221,15 @@ export const firecrawlService = {
       const error = new Error(
         `Firecrawl crawl start failed (${response.status}): ${errorBody}`
       );
-      Sentry.captureException(error, {
-        tags: { source: "firecrawl-service", feature: "crawl-start" },
-        extra: { url, maxPages, maxDepth, status: response.status, errorBody },
-      });
+      log.error("Firecrawl crawl start failed", {
+        source: "firecrawl-service",
+        feature: "crawl-start",
+        url,
+        maxPages,
+        maxDepth,
+        status: response.status,
+        errorBody,
+      }, error);
       throw error;
     }
 
@@ -224,7 +239,7 @@ export const firecrawlService = {
       throw new Error("Firecrawl crawl did not return a crawl ID");
     }
 
-    console.log("[firecrawl] Crawl started", { crawlId: result.id, url });
+    log.info("Crawl started", { source: "firecrawl-service", feature: "crawl-start", crawlId: result.id, url });
 
     return { id: result.id };
   },
@@ -269,7 +284,7 @@ export const firecrawlService = {
    * Cancel an active crawl
    */
   async cancelCrawl(crawlId: string): Promise<void> {
-    console.log("[firecrawl] Cancelling crawl", { crawlId });
+    log.info("Cancelling crawl", { source: "firecrawl-service", feature: "crawl-cancel", crawlId });
 
     try {
       const response = await firecrawlFetch(`/crawl/${crawlId}`, {
@@ -279,26 +294,20 @@ export const firecrawlService = {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        console.error("[firecrawl] Cancel crawl failed", {
+        log.error("Firecrawl cancel crawl failed", {
+          source: "firecrawl-service",
+          feature: "crawl-cancel-response",
           crawlId,
           status: response.status,
           errorBody,
         });
-        Sentry.captureMessage("Firecrawl cancel crawl failed", {
-          level: "error",
-          tags: { source: "firecrawl", feature: "crawl-cancel-response" },
-          extra: { crawlId, status: response.status, errorBody },
-        });
       }
     } catch (error) {
-      console.error("[firecrawl] Cancel crawl error", {
+      log.error("Cancel crawl error", {
+        source: "firecrawl-service",
+        feature: "crawl-cancel",
         crawlId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "firecrawl-service", feature: "crawl-cancel" },
-        extra: { crawlId },
-      });
+      }, error);
     }
   },
 };

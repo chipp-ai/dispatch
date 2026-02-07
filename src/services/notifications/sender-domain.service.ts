@@ -6,7 +6,7 @@
  */
 
 import { sql } from "../../db/client.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -66,7 +66,7 @@ async function smtp2goRequest<T>(
 ): Promise<T | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
-    console.log(`[sender-domain] SMTP2GO_API_KEY not configured, skipping ${endpoint}`);
+    log.info("SMTP2GO_API_KEY not configured, skipping request", { source: "sender-domain", feature: "smtp2go", endpoint });
     return null;
   }
 
@@ -212,11 +212,13 @@ export const senderDomainService = {
         newStatus = "pending";
       }
     } catch (error) {
-      console.error("[sender-domain] Verification check failed:", error);
-      Sentry.captureException(error, {
-        tags: { source: "sender-domain", feature: "verification" },
-        extra: { domainId, domain, organizationId },
-      });
+      log.error("Verification check failed", {
+        source: "sender-domain",
+        feature: "verification",
+        domainId,
+        domain,
+        organizationId,
+      }, error);
       newStatus = "failed";
     }
 

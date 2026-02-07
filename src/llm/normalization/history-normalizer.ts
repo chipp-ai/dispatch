@@ -14,7 +14,7 @@
  * - Fallback to text conversion only when data is malformed
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type {
   UnifiedMessage,
   UnifiedContentPart,
@@ -82,27 +82,16 @@ export function normalizeHistory(
 
   // If same provider family, minimal normalization needed
   if (sourceProvider && isSameProviderFamily(sourceProvider, targetProvider)) {
-    console.log(
-      `[normalize-history] Same provider family (${targetProvider}), keeping tool calls`
-    );
+    log.debug("Same provider family, keeping tool calls", { source: "llm", feature: "history-normalizer", targetProvider });
     return messages;
   }
 
-  console.log(
-    `[normalize-history] Converting from ${sourceProvider || "unknown"} to ${targetProvider}`
-  );
+  log.info("Converting history between providers", { source: "llm", feature: "history-normalizer", sourceProvider: sourceProvider || "unknown", targetProvider });
 
   try {
     return convertHistoryForProvider(messages, targetProvider, sourceProvider);
   } catch (error) {
-    console.error(
-      `[normalize-history] Conversion failed, falling back to text:`,
-      error
-    );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "llm", feature: "history-normalizer" },
-      extra: { targetProvider, sourceProvider, messageCount: messages.length },
-    });
+    log.error("Conversion failed, falling back to text", { source: "llm", feature: "history-normalizer", targetProvider, sourceProvider, messageCount: messages.length }, error);
     return fallbackToTextConversion(messages);
   }
 }
@@ -252,7 +241,7 @@ function regenerateToolCallIds(messages: UnifiedMessage[]): UnifiedMessage[] {
   const idMap = new Map<string, string>(); // old ID -> new ID
   let idCounter = 0;
 
-  console.log(`[regenerateToolCallIds] Processing ${messages.length} messages`);
+  log.debug("Processing messages for ID regeneration", { source: "llm", feature: "history-normalizer", messageCount: messages.length });
 
   for (const msg of messages) {
     if (msg.role === "assistant" && typeof msg.content !== "string") {
@@ -262,9 +251,7 @@ function regenerateToolCallIds(messages: UnifiedMessage[]): UnifiedMessage[] {
         if (isToolCallPart(part)) {
           // Generate new consistent ID
           const newId = `call_${++idCounter}_${Date.now().toString(36)}`;
-          console.log(
-            `[regenerateToolCallIds] Mapping tool call: ${part.toolCallId || "MISSING"} -> ${newId}`
-          );
+          log.debug("Mapping tool call ID", { source: "llm", feature: "history-normalizer", oldId: part.toolCallId || "MISSING", newId });
           if (part.toolCallId) {
             idMap.set(part.toolCallId, newId);
           }
@@ -286,9 +273,7 @@ function regenerateToolCallIds(messages: UnifiedMessage[]): UnifiedMessage[] {
       const originalId = msg.toolCallId;
       const newId = originalId ? idMap.get(originalId) : undefined;
 
-      console.log(
-        `[regenerateToolCallIds] Tool result: originalId=${originalId || "MISSING"}, newId=${newId || "NOT_FOUND"}, idMapSize=${idMap.size}`
-      );
+      log.debug("Tool result ID mapping", { source: "llm", feature: "history-normalizer", originalId: originalId || "MISSING", newId: newId || "NOT_FOUND", idMapSize: idMap.size });
 
       result.push({
         ...msg,
@@ -300,9 +285,7 @@ function regenerateToolCallIds(messages: UnifiedMessage[]): UnifiedMessage[] {
     result.push(msg);
   }
 
-  console.log(
-    `[regenerateToolCallIds] ID map: ${JSON.stringify([...idMap.entries()])}`
-  );
+  log.debug("ID regeneration complete", { source: "llm", feature: "history-normalizer", idMap: [...idMap.entries()] });
   return result;
 }
 
@@ -332,9 +315,7 @@ function extractToolNameFromContent(msg: UnifiedMessage): string {
 export function fallbackToTextConversion(
   messages: UnifiedMessage[]
 ): UnifiedMessage[] {
-  console.warn(
-    "[normalize-history] Falling back to text conversion - tool calls will be lost"
-  );
+  log.warn("Falling back to text conversion - tool calls will be lost", { source: "llm", feature: "history-normalizer" });
 
   const result: UnifiedMessage[] = [];
 

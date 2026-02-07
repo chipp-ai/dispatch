@@ -9,7 +9,7 @@ import { db } from "../db/client.ts";
 import { slackService, type SlackInstallation } from "./slack.service.ts";
 import { chatService } from "./chat.service.ts";
 import { decrypt } from "./crypto.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Agent framework imports
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
@@ -109,7 +109,9 @@ export async function handleSlackMessage(
     isThreadFollowup,
   } = params;
 
-  console.log("[SlackChat] Processing message", {
+  log.info("Processing message", {
+    source: "slack-chat",
+    feature: "message-processing",
     user: event.user,
     channel: event.channel,
     isAppMention,
@@ -128,7 +130,12 @@ export async function handleSlackMessage(
   // Join channel if not a DM (to ensure we receive future events)
   if (event.channel && event.channel_type !== "im") {
     await slackService.joinChannel(botToken, event.channel).catch((err) => {
-      console.log("[SlackChat] Failed to join channel", err);
+      log.warn("Failed to join channel", {
+        source: "slack-chat",
+        feature: "channel-join",
+        channel: event.channel,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 
@@ -148,7 +155,11 @@ export async function handleSlackMessage(
   );
 
   if (mappings.length === 0) {
-    console.log("[SlackChat] No chat mapping found for installation");
+    log.info("No chat mapping found for installation", {
+      source: "slack-chat",
+      feature: "message-processing",
+      installationId: installation.id,
+    });
     return;
   }
 
@@ -156,7 +167,7 @@ export async function handleSlackMessage(
   const mapping = mappings[0];
   const applicationId = mapping.applicationId;
 
-  console.log("[SlackChat] Found application", { applicationId });
+  log.info("Found application", { source: "slack-chat", feature: "message-processing", applicationId });
 
   // Get or create thread context
   let threadContext = threadTs
@@ -206,11 +217,17 @@ export async function handleSlackMessage(
   const userMessage = extractMessageText(event.text);
 
   if (!userMessage) {
-    console.log("[SlackChat] Empty message after processing");
+    log.info("Empty message after processing", {
+      source: "slack-chat",
+      feature: "message-processing",
+      channel: event.channel,
+    });
     return;
   }
 
-  console.log("[SlackChat] Processing user message", {
+  log.info("Processing user message", {
+    source: "slack-chat",
+    feature: "message-processing",
     sessionId: session.id,
     userMessage: userMessage.substring(0, 100),
   });
@@ -309,7 +326,7 @@ export async function handleSlackMessage(
     registerWebTools(registry);
 
     // Run agent loop
-    console.log("[SlackChat] Running agent loop");
+    log.info("Running agent loop", { source: "slack-chat", feature: "agent-loop", applicationId });
     let responseText = "";
     for await (const chunk of agentLoop(messages, registry, adapter, {
       model: modelId,
@@ -322,7 +339,10 @@ export async function handleSlackMessage(
       }
     }
 
-    console.log("[SlackChat] Got response", {
+    log.info("Got response", {
+      source: "slack-chat",
+      feature: "agent-loop",
+      applicationId,
       length: responseText.length,
     });
 
@@ -341,18 +361,16 @@ export async function handleSlackMessage(
       );
     }
   } catch (error) {
-    console.error("[SlackChat] Error generating response", error);
-    Sentry.captureException(error, {
-      tags: { source: "slack", feature: "chat", operation: "message-processing" },
-      extra: {
-        channelId: event.channel,
-        threadTs: event.thread_ts || event.ts,
-        userId: event.user,
-        teamId,
-        applicationId,
-        sessionId: session?.id,
-      },
-    });
+    log.error("Error generating response", {
+      source: "slack-chat",
+      feature: "message-processing",
+      channelId: event.channel,
+      threadTs: event.thread_ts || event.ts,
+      userId: event.user,
+      teamId,
+      applicationId,
+      sessionId: session?.id,
+    }, error);
 
     // Post error message
     if (event.channel) {

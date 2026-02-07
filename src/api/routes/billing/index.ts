@@ -7,7 +7,7 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { billingService } from "../../../services/billing.service.ts";
 import { createPortalSessionSchema } from "../../validators/billing.ts";
@@ -219,11 +219,7 @@ billingRoutes.post(
         },
       });
     } catch (error) {
-      console.error("[billing] Failed to create portal session:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-api", feature: "portal-session" },
-        extra: { userId: user.id },
-      });
+      log.error("Failed to create portal session", { source: "billing-api", feature: "portal-session", userId: user.id }, error);
       return c.json(
         {
           error: "Failed to create portal session",
