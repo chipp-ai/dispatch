@@ -15,6 +15,9 @@ web/dist/
 landing/dist/
 docs-site/dist/
 cloudflare-worker/dist/
+dispatch/.next/
+dispatch/dist/
+*.tsbuildinfo
 
 # Deno cache
 .deno/

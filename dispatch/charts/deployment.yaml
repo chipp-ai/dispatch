@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chipp-issues
+  labels:
+    app: chipp-issues
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chipp-issues
+  template:
+    metadata:
+      labels:
+        app: chipp-issues
+    spec:
+      imagePullSecrets:
+        - name: gcp-artifact-registry
+      containers:
+        - name: chipp-issues
+          image: us-central1-docker.pkg.dev/chippai-398019/chipp-issues/chipp-issues:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          ports:
+            - containerPort: 3002
+          envFrom:
+            - secretRef:
+                name: chipp-issues
