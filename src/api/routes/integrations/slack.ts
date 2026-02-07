@@ -7,6 +7,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { applicationService } from "../../../services/application.service.ts";
 import { slackService } from "../../../services/slack.service.ts";
@@ -189,7 +190,7 @@ slackRoutes.get("/oauth/callback", async (c) => {
   const state = c.req.query("state");
   const error = c.req.query("error");
 
-  console.log("[SlackOAuth] Callback received", { code: !!code, state, error });
+  log.info("OAuth callback received", { source: "slack-api", feature: "oauth-callback", hasCode: !!code, state: state ?? "", error: error ?? "" });
 
   if (error) {
     return c.html(createErrorHtml("OAuth was cancelled", error));
@@ -205,10 +206,7 @@ slackRoutes.get("/oauth/callback", async (c) => {
     return c.html(createErrorHtml("Invalid or expired state", "invalid_state"));
   }
 
-  console.log("[SlackOAuth] State validated", {
-    applicationId: stateRecord.applicationId,
-    developerId: stateRecord.developerId,
-  });
+  log.info("OAuth state validated", { source: "slack-api", feature: "oauth-callback", applicationId: stateRecord.applicationId, developerId: stateRecord.developerId });
 
   // Get application
   const app = await db
@@ -238,12 +236,7 @@ slackRoutes.get("/oauth/callback", async (c) => {
     redirectUri
   );
 
-  console.log("[SlackOAuth] Token exchange result", {
-    ok: tokenResponse.ok,
-    team: tokenResponse.team,
-    appId: tokenResponse.app_id,
-    error: tokenResponse.error,
-  });
+  log.info("Token exchange completed", { source: "slack-api", feature: "oauth-callback", ok: tokenResponse.ok, team: tokenResponse.team, slackAppId: tokenResponse.app_id, tokenError: tokenResponse.error });
 
   if (!tokenResponse.ok || !tokenResponse.access_token) {
     return c.html(
@@ -270,12 +263,7 @@ slackRoutes.get("/oauth/callback", async (c) => {
   // Generate chat name
   const chatName = getShortenedAppIdentifier(app);
 
-  console.log("[SlackOAuth] Creating installation", {
-    teamId,
-    slackAppId,
-    teamName,
-    chatName,
-  });
+  log.info("Creating Slack installation", { source: "slack-api", feature: "oauth-callback", teamId, slackAppId, teamName: teamName ?? "", chatName });
 
   // Create or update installation
   const installation = await slackService.upsertInstallation({
@@ -298,10 +286,7 @@ slackRoutes.get("/oauth/callback", async (c) => {
     applicationId: stateRecord.applicationId,
   });
 
-  console.log("[SlackOAuth] Installation complete", {
-    installationId: installation.id,
-    chatName,
-  });
+  log.info("Slack installation complete", { source: "slack-api", feature: "oauth-callback", installationId: installation.id, chatName });
 
   return c.html(
     createSuccessHtml(

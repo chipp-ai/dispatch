@@ -23,6 +23,7 @@
 
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
+import { log } from "@/lib/logger.ts";
 import type { AppEnv } from "../types.ts";
 
 export const webhooks = new Hono<AppEnv>();
@@ -207,7 +208,10 @@ webhooks.post("/stripe", async (c) => {
     // Verify Stripe webhook signature
     const isValid = await verifyStripeSignature(body, signature, webhookSecret);
     if (!isValid) {
-      console.error("[webhook] Invalid Stripe signature");
+      log.warn("Invalid Stripe webhook signature", {
+        source: "webhook",
+        feature: "stripe",
+      });
       return c.json({ error: "Invalid webhook signature" }, 401);
     }
 
@@ -216,31 +220,51 @@ webhooks.post("/stripe", async (c) => {
     switch (event.type) {
       case "checkout.session.completed":
         // Handle successful checkout
-        console.log("[webhook] Checkout completed:", event.data.object.id);
+        log.info("Checkout completed", {
+          source: "webhook",
+          feature: "stripe",
+          objectId: event.data.object.id,
+        });
         break;
 
       case "customer.subscription.updated":
         // Handle subscription update
-        console.log("[webhook] Subscription updated:", event.data.object.id);
+        log.info("Subscription updated", {
+          source: "webhook",
+          feature: "stripe",
+          objectId: event.data.object.id,
+        });
         break;
 
       case "customer.subscription.deleted":
         // Handle subscription cancellation
-        console.log("[webhook] Subscription deleted:", event.data.object.id);
+        log.info("Subscription deleted", {
+          source: "webhook",
+          feature: "stripe",
+          objectId: event.data.object.id,
+        });
         break;
 
       case "invoice.payment_failed":
         // Handle failed payment
-        console.log("[webhook] Payment failed:", event.data.object.id);
+        log.info("Payment failed", {
+          source: "webhook",
+          feature: "stripe",
+          objectId: event.data.object.id,
+        });
         break;
 
       default:
-        console.log("[webhook] Unhandled event type:", event.type);
+        log.info("Unhandled Stripe event type", {
+          source: "webhook",
+          feature: "stripe",
+          eventType: event.type,
+        });
     }
 
     return c.json({ received: true });
   } catch (error) {
-    console.error("[webhook] Stripe webhook error:", error);
+    log.error("Stripe webhook error", { source: "webhook", feature: "stripe" }, error);
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
@@ -258,7 +282,10 @@ webhooks.post("/twilio/voice", async (c) => {
   }
 
   if (!authToken) {
-    console.error("[webhook] TWILIO_AUTH_TOKEN not configured");
+    log.error("TWILIO_AUTH_TOKEN not configured", {
+      source: "webhook",
+      feature: "twilio-voice",
+    });
     return c.json({ error: "Webhook verification not configured" }, 500);
   }
 
@@ -282,7 +309,10 @@ webhooks.post("/twilio/voice", async (c) => {
     );
 
     if (!isValid) {
-      console.error("[webhook] Invalid Twilio voice signature");
+      log.warn("Invalid Twilio voice signature", {
+        source: "webhook",
+        feature: "twilio-voice",
+      });
       return c.json({ error: "Invalid webhook signature" }, 401);
     }
 
@@ -291,7 +321,14 @@ webhooks.post("/twilio/voice", async (c) => {
     const to = params["To"] || "";
     const callStatus = params["CallStatus"] || "";
 
-    console.log("[webhook] Twilio voice:", { callSid, from, to, callStatus });
+    log.info("Twilio voice webhook", {
+      source: "webhook",
+      feature: "twilio-voice",
+      callSid,
+      from,
+      to,
+      callStatus,
+    });
 
     // TODO: Implement voice call handling
     // Return TwiML response
@@ -304,7 +341,10 @@ webhooks.post("/twilio/voice", async (c) => {
       "Content-Type": "application/xml",
     });
   } catch (error) {
-    console.error("[webhook] Twilio webhook error:", error);
+    log.error("Twilio voice webhook error", {
+      source: "webhook",
+      feature: "twilio-voice",
+    }, error);
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
@@ -322,7 +362,10 @@ webhooks.post("/twilio/whatsapp", async (c) => {
   }
 
   if (!authToken) {
-    console.error("[webhook] TWILIO_AUTH_TOKEN not configured");
+    log.error("TWILIO_AUTH_TOKEN not configured", {
+      source: "webhook",
+      feature: "twilio-whatsapp",
+    });
     return c.json({ error: "Webhook verification not configured" }, 500);
   }
 
@@ -346,7 +389,10 @@ webhooks.post("/twilio/whatsapp", async (c) => {
     );
 
     if (!isValid) {
-      console.error("[webhook] Invalid Twilio WhatsApp signature");
+      log.warn("Invalid Twilio WhatsApp signature", {
+        source: "webhook",
+        feature: "twilio-whatsapp",
+      });
       return c.json({ error: "Invalid webhook signature" }, 401);
     }
 
@@ -354,7 +400,9 @@ webhooks.post("/twilio/whatsapp", async (c) => {
     const from = params["From"] || "";
     const messageBody = params["Body"] || "";
 
-    console.log("[webhook] WhatsApp message:", {
+    log.info("WhatsApp message received", {
+      source: "webhook",
+      feature: "twilio-whatsapp",
       messageSid,
       from,
       body: messageBody,
@@ -368,7 +416,10 @@ webhooks.post("/twilio/whatsapp", async (c) => {
       { "Content-Type": "application/xml" }
     );
   } catch (error) {
-    console.error("[webhook] WhatsApp webhook error:", error);
+    log.error("WhatsApp webhook error", {
+      source: "webhook",
+      feature: "twilio-whatsapp",
+    }, error);
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
@@ -393,22 +444,34 @@ webhooks.post("/slack/events", async (c) => {
       switch (event.type) {
         case "message":
           // Handle incoming message
-          console.log("[webhook] Slack message:", event.text);
+          log.info("Slack message received", {
+            source: "webhook",
+            feature: "slack",
+            text: event.text,
+          });
           break;
 
         case "app_mention":
           // Handle @mention
-          console.log("[webhook] Slack mention:", event.text);
+          log.info("Slack mention received", {
+            source: "webhook",
+            feature: "slack",
+            text: event.text,
+          });
           break;
 
         default:
-          console.log("[webhook] Unhandled Slack event:", event.type);
+          log.info("Unhandled Slack event type", {
+            source: "webhook",
+            feature: "slack",
+            eventType: event.type,
+          });
       }
     }
 
     return c.json({ ok: true });
   } catch (error) {
-    console.error("[webhook] Slack webhook error:", error);
+    log.error("Slack webhook error", { source: "webhook", feature: "slack" }, error);
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
@@ -423,13 +486,22 @@ webhooks.post("/custom/:webhookId", async (c) => {
   try {
     const body = await c.req.json();
 
-    console.log(`[webhook] Custom webhook ${webhookId}:`, body);
+    log.info("Custom webhook received", {
+      source: "webhook",
+      feature: "custom",
+      webhookId,
+      body,
+    });
 
     // TODO: Look up webhook configuration and process accordingly
 
     return c.json({ received: true, webhookId });
   } catch (error) {
-    console.error(`[webhook] Custom webhook ${webhookId} error:`, error);
+    log.error("Custom webhook error", {
+      source: "webhook",
+      feature: "custom",
+      webhookId,
+    }, error);
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });

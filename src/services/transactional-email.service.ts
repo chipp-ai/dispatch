@@ -7,7 +7,7 @@
  * Falls back to structured console.log when SMTP is not configured (local dev).
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { db } from "@/src/db/client.ts";
 
 // ========================================
@@ -49,7 +49,10 @@ async function getTransport(): Promise<unknown | null> {
   const pass = Deno.env.get("SMTP_PASSWORD");
 
   if (!host || !user || !pass) {
-    console.log("[transactional-email] SMTP not configured, emails will be logged to console");
+    log.info("SMTP not configured, emails will be logged to console", {
+      source: "transactional-email",
+      feature: "smtp-transport",
+    });
     return null;
   }
 
@@ -121,15 +124,13 @@ async function resolveFromAddress(context: EmailContext): Promise<FromAddress> {
       }
     }
   } catch (err) {
-    console.error("[transactional-email] Error resolving from address:", err);
-    Sentry.captureException(err, {
-      tags: { source: "transactional-email", feature: "from-address-resolution" },
-      extra: {
-        appId: context.appId,
-        organizationId: context.organizationId,
-        appName: context.appName,
-      },
-    });
+    log.error("Error resolving from address", {
+      source: "transactional-email",
+      feature: "from-address-resolution",
+      appId: context.appId,
+      organizationId: context.organizationId,
+      appName: context.appName,
+    }, err);
   }
 
   // 3. Default
@@ -225,7 +226,9 @@ async function sendEmail(params: {
     const transport = await getTransport();
 
     if (!transport) {
-      console.log("[transactional-email] SMTP not configured — would send:", {
+      log.info("SMTP not configured -- would send email", {
+        source: "transactional-email",
+        feature: "send-email",
         to,
         subject,
         from: fromFormatted,
@@ -242,18 +245,21 @@ async function sendEmail(params: {
       text: template.text,
     });
 
-    console.log(`[transactional-email] Sent "${subject}" to ${to}`);
-    return true;
-  } catch (err) {
-    console.error("[transactional-email] Failed to send email:", {
+    log.info("Email sent successfully", {
+      source: "transactional-email",
+      feature: "send-email",
       to,
       subject,
-      error: err instanceof Error ? err.message : String(err),
     });
-    Sentry.captureException(err, {
-      tags: { source: "transactional-email", feature: "send-email" },
-      extra: { to, subject, from: fromFormatted },
-    });
+    return true;
+  } catch (err) {
+    log.error("Failed to send email", {
+      source: "transactional-email",
+      feature: "send-email",
+      to,
+      subject,
+      from: fromFormatted,
+    }, err);
     return false;
   }
 }

@@ -7,7 +7,7 @@
 
 import { db } from "../db/client.ts";
 import { sql } from "kysely";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import {
   generateVanitySlug,
   ensureUniqueSlug,
@@ -365,11 +365,12 @@ export const applicationService = {
         brandStyles: (params.brandStyles as SyncAppBrandingParams["brandStyles"]) ?? null,
       })
       .catch((err) => {
-        console.error("[ApplicationService] Brand sync failed on create:", err);
-        Sentry.captureException(err, {
-          tags: { source: "application-service", feature: "brand-sync-create" },
-          extra: { appId: app.id, appNameId: app.appNameId },
-        });
+        log.error("Brand sync failed on create", {
+          source: "application-service",
+          feature: "brand-sync-create",
+          appId: app.id,
+          appNameId: app.appNameId,
+        }, err);
       });
 
     return app;
@@ -502,14 +503,12 @@ export const applicationService = {
             updatedApp.brandStyles as SyncAppBrandingParams["brandStyles"],
         })
         .catch((err) => {
-          console.error("[ApplicationService] Brand sync failed:", err);
-          Sentry.captureException(err, {
-            tags: {
-              source: "application-service",
-              feature: "brand-sync-update",
-            },
-            extra: { appId: updatedApp.id, appNameId: updatedApp.appNameId },
-          });
+          log.error("Brand sync failed on update", {
+            source: "application-service",
+            feature: "brand-sync-update",
+            appId: updatedApp.id,
+            appNameId: updatedApp.appNameId,
+          }, err);
         });
     }
 
@@ -539,11 +538,12 @@ export const applicationService = {
 
     // Delete branding from R2 (fire-and-forget)
     brandSyncService.deleteBranding(app.appNameId).catch((err) => {
-      console.error("[ApplicationService] Brand delete failed:", err);
-      Sentry.captureException(err, {
-        tags: { source: "application-service", feature: "brand-delete" },
-        extra: { appId: app.id, appNameId: app.appNameId },
-      });
+      log.error("Brand delete failed", {
+        source: "application-service",
+        feature: "brand-delete",
+        appId: app.id,
+        appNameId: app.appNameId,
+      }, err);
     });
   },
 

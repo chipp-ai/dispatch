@@ -5,6 +5,7 @@
  */
 
 import Stripe from "npm:stripe";
+import { log } from "@/lib/logger.ts";
 
 // Support multiple env var names for Stripe keys
 const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
@@ -65,9 +66,10 @@ export function getStripeApiKey(useSandbox: boolean = false): string | null {
 }
 
 if (!stripeKey && !STRIPE_CHIPP_KEY) {
-  console.warn(
-    "[stripe] Stripe secret key not configured. Billing features will not work."
-  );
+  log.warn("Stripe secret key not configured. Billing features will not work.", {
+    source: "stripe",
+    feature: "init",
+  });
 }
 
 export const stripe = stripeKey

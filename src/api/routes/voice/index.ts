@@ -5,7 +5,7 @@
  */
 
 import { Hono } from "hono";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { applicationService } from "../../../services/application.service.ts";
 import { billingService } from "../../../services/billing.service.ts";
@@ -14,7 +14,7 @@ export const voiceRoutes = new Hono<AuthContext>();
 
 // Debug: Log all requests to voice routes
 voiceRoutes.use("*", async (c, next) => {
-  console.log("[voiceRoutes] Request received:", c.req.method, c.req.path);
+  log.debug("Request received", { source: "voice-api", feature: "routing", method: c.req.method, path: c.req.path });
   await next();
 });
 
@@ -39,10 +39,7 @@ const VOICE_ID_MAPPING: Record<string, string> = {
  */
 voiceRoutes.get("/session", async (c) => {
   const applicationId = c.req.query("applicationId");
-  console.log(
-    "[Voice Session] Request received, applicationId:",
-    applicationId
-  );
+  log.debug("Voice session request received", { source: "voice-api", feature: "session", applicationId });
 
   // Require applicationId - voice sessions must be scoped to an application
   if (!applicationId) {
@@ -59,11 +56,7 @@ voiceRoutes.get("/session", async (c) => {
   try {
     app = await applicationService.get(applicationId, user.id);
   } catch (error) {
-    console.error("[Voice Session] Authorization failed:", error);
-    Sentry.captureException(error, {
-      tags: { source: "voice-api", feature: "authorization" },
-      extra: { applicationId, userId: user.id },
-    });
+    log.error("Authorization failed", { source: "voice-api", feature: "authorization", applicationId, userId: user.id }, error);
     return c.json({ error: "Application not found or access denied" }, 404);
   }
 
@@ -97,11 +90,7 @@ voiceRoutes.get("/session", async (c) => {
         app.organizationId
       );
       if (!creditCheck.hasCredits) {
-        console.log("[Voice Session] Insufficient credits, rejecting session", {
-          applicationId,
-          organizationId: app.organizationId,
-          balance: creditCheck.balance,
-        });
+        log.info("Insufficient credits, rejecting voice session", { source: "voice-api", feature: "credit-check", applicationId, organizationId: app.organizationId, balance: creditCheck.balance });
         return c.json(
           {
             error: "Insufficient credits for voice session",
@@ -112,11 +101,7 @@ voiceRoutes.get("/session", async (c) => {
       }
     } catch (error) {
       // Log but don't block on credit check errors (fail open)
-      console.error("[Voice Session] Error checking credits:", error);
-      Sentry.captureException(error, {
-        tags: { source: "voice-api", feature: "credit-check" },
-        extra: { applicationId, organizationId: app.organizationId },
-      });
+      log.error("Error checking credits", { source: "voice-api", feature: "credit-check", applicationId, organizationId: app.organizationId }, error);
     }
   }
 
@@ -138,11 +123,7 @@ voiceRoutes.get("/session", async (c) => {
   const voice = VOICE_ID_MAPPING[rawVoice] || "marin";
   const tools: unknown[] = [];
 
-  console.log("[Voice Session] Config loaded:", {
-    applicationId,
-    voice,
-    hasVoiceConfig: !!voiceConfig,
-  });
+  log.debug("Voice session config loaded", { source: "voice-api", feature: "session", applicationId, voice, hasVoiceConfig: !!voiceConfig });
 
   // Build session config
   const sessionConfig = {
@@ -163,17 +144,12 @@ voiceRoutes.get("/session", async (c) => {
   // Request ephemeral key from OpenAI
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) {
-    console.error("[Voice Session] OPENAI_API_KEY not configured");
-    Sentry.captureMessage("OPENAI_API_KEY not configured for voice session", {
-      level: "error",
-      tags: { source: "voice-api", feature: "configuration" },
-      extra: { applicationId },
-    });
+    log.error("OPENAI_API_KEY not configured for voice session", { source: "voice-api", feature: "configuration", applicationId });
     return c.json({ error: "OpenAI API key not configured" }, 500);
   }
 
   try {
-    console.log("[Voice Session] Requesting ephemeral key from OpenAI");
+    log.debug("Requesting ephemeral key from OpenAI", { source: "voice-api", feature: "ephemeral-key", applicationId });
     const res = await fetch(
       "https://api.openai.com/v1/realtime/client_secrets",
       {
@@ -186,7 +162,7 @@ voiceRoutes.get("/session", async (c) => {
       }
     );
 
-    console.log("[Voice Session] OpenAI response status:", res.status);
+    log.debug("OpenAI response received", { source: "voice-api", feature: "ephemeral-key", applicationId, statusCode: res.status });
 
     if (!res.ok) {
       const errorText = await res.text();
@@ -203,16 +179,7 @@ voiceRoutes.get("/session", async (c) => {
         (parsed?.message as string) ||
         errorText.slice(0, 500);
 
-      console.error("[Voice Session] OpenAI error:", errorMessage);
-      Sentry.captureMessage(`OpenAI Realtime API error: ${errorMessage}`, {
-        level: "error",
-        tags: { source: "voice-api", feature: "openai-realtime" },
-        extra: {
-          applicationId,
-          statusCode: res.status,
-          errorCode: errorObj?.code,
-        },
-      });
+      log.error(`OpenAI Realtime API error: ${errorMessage}`, { source: "voice-api", feature: "openai-realtime", applicationId, statusCode: res.status, errorCode: errorObj?.code });
 
       if (res.status >= 400 && res.status < 500) {
         return c.json(
@@ -228,14 +195,10 @@ voiceRoutes.get("/session", async (c) => {
     }
 
     const data = await res.json();
-    console.log("[Voice Session] Successfully created session");
+    log.info("Voice session created successfully", { source: "voice-api", feature: "session", applicationId });
     return c.json(data);
   } catch (error) {
-    console.error("[Voice Session] Error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "voice-api", feature: "ephemeral-key" },
-      extra: { applicationId },
-    });
+    log.error("Error fetching ephemeral key", { source: "voice-api", feature: "ephemeral-key", applicationId }, error);
     return c.json({ error: "Error fetching ephemeral key" }, 500);
   }
 });

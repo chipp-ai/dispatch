@@ -7,7 +7,7 @@
 
 import type { Context, ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { AppError } from "../src/utils/errors.ts";
 
 export interface ApiError extends Error {
@@ -132,8 +132,13 @@ export const errorHandler: ErrorHandler = (err: Error, c: Context) => {
 
     // Log validation errors in development
     if (!isProduction) {
-      console.log(`[validation] ${requestId}: ${message}`);
-      console.log(`[validation] Issues:`, JSON.stringify(issues, null, 2));
+      log.debug("Validation error", {
+        source: "error-handler",
+        feature: "validation",
+        requestId,
+        message,
+        issues,
+      });
     }
   } else if (err.name === "SyntaxError" && err.message.includes("JSON")) {
     status = 400;
@@ -143,18 +148,26 @@ export const errorHandler: ErrorHandler = (err: Error, c: Context) => {
 
   // Log error
   if (status >= 500) {
-    console.error(`[error] ${requestId}:`, err);
-
-    // Report to Sentry
-    Sentry.captureException(err, {
-      extra: {
-        requestId,
-        path: c.req.path,
-        method: c.req.method,
-      },
-    });
+    log.error("Server error", {
+      source: "error-handler",
+      feature: "response",
+      requestId,
+      path: c.req.path,
+      method: c.req.method,
+      status,
+      code,
+    }, err);
   } else {
-    console.warn(`[warn] ${requestId}: ${code} - ${message}`);
+    log.warn("Client error", {
+      source: "error-handler",
+      feature: "response",
+      requestId,
+      path: c.req.path,
+      method: c.req.method,
+      status,
+      code,
+      message,
+    });
   }
 
   // Build response

@@ -6,7 +6,7 @@
 
 import { sql } from "../db/client.ts";
 import { NotFoundError } from "../utils/errors.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // LiveKit SIP client - dynamically imported for Deno
 let SipClient: any = null;
@@ -185,11 +185,12 @@ export const outboundCallService = {
         sipCallId: participant.sipCallId,
       };
     } catch (error) {
-      console.error("[OutboundCall] Failed to initiate call:", error);
-      Sentry.captureException(error, {
-        tags: { source: "voice", feature: "outbound-call" },
-        extra: { applicationId, phoneNumber },
-      });
+      log.error("Failed to initiate outbound call", {
+        source: "voice",
+        feature: "outbound-call",
+        applicationId,
+        phoneNumber,
+      }, error);
       return {
         success: false,
         error:

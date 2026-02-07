@@ -59,13 +59,17 @@ jobs:
             --description="Chipp Deno API Docker images"
 
       - name: Build and Push Container
+        env:
+          GIT_SHA: ${{ github.sha }}
         run: |-
+          IMAGE_BASE="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}"
           docker build \
-            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}" \
-            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production" \
+            --build-arg GIT_SHA="${GIT_SHA}" \
+            -t "${IMAGE_BASE}:prod-${GIT_SHA}" \
+            -t "${IMAGE_BASE}:production" \
             .
-          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}"
-          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production"
+          docker push "${IMAGE_BASE}:prod-${GIT_SHA}"
+          docker push "${IMAGE_BASE}:production"
 
       - name: Deploy Secrets
         env:
@@ -95,6 +99,7 @@ jobs:
 
       - name: Run Database Migrations
         env:
+          GIT_SHA: ${{ github.sha }}
           DEPLOY_IMAGE: "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}"
         run: |
           # Delete any previous migration job (may exist from failed deploy)
@@ -116,8 +121,10 @@ jobs:
           kubectl logs job/chipp-deno-migrate
 
       - name: Deploy
+        env:
+          GIT_SHA: ${{ github.sha }}
         run: |-
-          kubectl set image deployment/chipp-deno chipp-deno=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}
+          kubectl set image deployment/chipp-deno chipp-deno="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${GIT_SHA}"
           kubectl rollout status deployment/chipp-deno
           kubectl get services -o wide
 

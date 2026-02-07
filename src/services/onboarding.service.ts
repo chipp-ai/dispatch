@@ -7,7 +7,7 @@
 
 import { db } from "../db/index.ts";
 import type { UserOnboarding } from "../db/schema.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export interface OnboardingQuestion {
   questionSlug: string;
@@ -213,11 +213,12 @@ class OnboardingService {
 
         success++;
       } catch (error) {
-        console.error(`Failed to create invite for ${email}:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "onboarding-service", feature: "workspace-invite" },
-          extra: { workspaceId, email },
-        });
+        log.error("Failed to create workspace invite", {
+          source: "onboarding-service",
+          feature: "workspace-invite",
+          workspaceId,
+          email,
+        }, error);
         failed++;
       }
     }

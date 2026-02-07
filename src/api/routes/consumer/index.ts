@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 import {
   appMiddleware,
@@ -475,11 +475,7 @@ consumerRoutes.post("/:appNameId/upload/video", async (c) => {
 
     return c.json({ url });
   } catch (error) {
-    console.error("[consumer-upload] Error uploading video:", error);
-    Sentry.captureException(error, {
-      tags: { source: "consumer", feature: "video-upload" },
-      extra: { appId: c.get("app")?.id },
-    });
+    log.error("Error uploading video", { source: "consumer", feature: "video-upload", appId: c.get("app")?.id }, error);
     return c.json(
       {
         error: "Upload failed",

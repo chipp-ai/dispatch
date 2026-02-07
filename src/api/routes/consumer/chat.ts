@@ -28,7 +28,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 import {
   optionalConsumerAuthMiddleware,
@@ -105,11 +105,7 @@ async function getOrgMemberUserIds(organizationId: string): Promise<string[]> {
     });
     return userIds;
   } catch (err) {
-    console.error("[consumer-chat] Failed to get org members:", err);
-    Sentry.captureException(err, {
-      tags: { source: "consumer-chat", feature: "org-members" },
-      extra: { organizationId },
-    });
+    log.error("Failed to get org members", { source: "consumer-chat", feature: "org-members", organizationId }, err);
     return [];
   }
 }
@@ -221,15 +217,11 @@ async function generateTitleIfNeeded(
 
     if (title) {
       await chatService.updateSessionTitle(sessionId, title);
-      console.log("[chat] Generated title for session", { sessionId, title });
+      log.info("Generated title for session", { source: "consumer-chat", feature: "title-generation", sessionId, title });
     }
   } catch (err) {
     // Non-critical - log but don't fail the request
-    console.error("[chat] Failed to generate title:", err);
-    Sentry.captureException(err, {
-      tags: { source: "consumer-chat", feature: "title-generation" },
-      extra: { sessionId },
-    });
+    log.error("Failed to generate title", { source: "consumer-chat", feature: "title-generation", sessionId }, err);
   }
 }
 
@@ -615,9 +607,7 @@ consumerChatRoutes.post(
 
       let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
       if (isDevOrStaging && devModelOverride) {
-        console.log(
-          `[consumer-chat] Using dev model override: ${devModelOverride} (app default: ${modelId})`
-        );
+        log.debug("Using dev model override", { source: "consumer-chat", feature: "model-override", devModelOverride, appDefault: modelId });
         modelId = devModelOverride;
       }
 
@@ -651,21 +641,11 @@ consumerChatRoutes.post(
           if (!messageText.trim()) {
             messageText = "[Voice message]";
           }
-          console.log(
-            "[consumer-chat] Audio: native input_audio for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: native input_audio", { source: "consumer-chat", feature: "audio-input", modelId, audioFormat });
         } else {
           // Transcribe via Whisper (model doesn't support audio, or format not compatible)
           audioWasTranscribed = true;
-          console.log(
-            "[consumer-chat] Audio: transcribing via Whisper for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: transcribing via Whisper", { source: "consumer-chat", feature: "audio-input", modelId, audioFormat });
           const { text } = await transcribeAudio(
             body.audio.data,
             body.audio.mimeType
@@ -676,10 +656,7 @@ consumerChatRoutes.post(
             messageText =
               messageText.trim() || "[Voice message - no speech detected]";
           }
-          console.log(
-            "[consumer-chat] Whisper transcript:",
-            messageText.slice(0, 100)
-          );
+          log.debug("Whisper transcript", { source: "consumer-chat", feature: "audio-input", transcript: messageText.slice(0, 100) });
         }
       }
 
@@ -698,17 +675,13 @@ consumerChatRoutes.post(
           if (!messageText.trim()) {
             messageText = "Please watch and respond to this video.";
           }
-          console.log("[consumer-chat] Video: native input_video for", modelId);
+          log.debug("Video: native input_video", { source: "consumer-chat", feature: "video-input", modelId });
         } else {
           // Model doesn't support video - add text placeholder
           if (!messageText.trim()) {
             messageText = "[User attached a video]";
           }
-          console.log(
-            "[consumer-chat] Video: model",
-            modelId,
-            "does not support video input, using text placeholder"
-          );
+          log.debug("Video: model does not support video input, using text placeholder", { source: "consumer-chat", feature: "video-input", modelId });
         }
       }
 
@@ -736,17 +709,10 @@ consumerChatRoutes.post(
               storagePath,
               body.audio!.mimeType.split(";")[0]
             );
-            console.log("[consumer-chat] Audio uploaded to GCS:", url);
+            log.debug("Audio uploaded to GCS", { source: "consumer-chat", feature: "audio-upload", sessionId, url });
             return url;
           } catch (err) {
-            console.error(
-              "[consumer-chat] Failed to upload audio to GCS:",
-              err
-            );
-            Sentry.captureException(err, {
-              tags: { source: "consumer-chat", feature: "audio-upload" },
-              extra: { sessionId, appId: app.id },
-            });
+            log.error("Failed to upload audio to GCS", { source: "consumer-chat", feature: "audio-upload", sessionId, appId: app.id }, err);
             return null;
           }
         })();
@@ -922,7 +888,7 @@ consumerChatRoutes.post(
         }
       } catch (err) {
         // Log but don't fail - custom tools are optional
-        console.warn("[consumer-chat] Failed to load custom tools:", err);
+        log.warn("Failed to load custom tools", { source: "consumer-chat", feature: "custom-tools", appId: app.id });
       }
 
       // Create abort controller for stopping the stream
@@ -952,16 +918,12 @@ consumerChatRoutes.post(
             // Skip if nothing to save or aborted
             if (!result.text || result.aborted) {
               if (result.aborted) {
-                console.log(
-                  "[consumer-chat] onComplete: Stream aborted, skipping persistence"
-                );
+                log.debug("onComplete: Stream aborted, skipping persistence", { source: "consumer-chat", feature: "persistence", sessionId });
               }
               return;
             }
 
-            console.log(
-              `[consumer-chat] onComplete: Persisting message - ${result.text.length} chars`
-            );
+            log.debug("onComplete: Persisting message", { source: "consumer-chat", feature: "persistence", sessionId, textLength: result.text.length });
 
             // Save bot response with tool calls/results if present
             await chatService.addMessage(sessionId, "assistant", result.text, {
@@ -980,11 +942,7 @@ consumerChatRoutes.post(
               result.text,
               billingContext
             ).catch((err) => {
-              console.error("[consumer-chat] Title generation error:", err);
-              Sentry.captureException(err, {
-                tags: { source: "consumer-chat", feature: "title-generation" },
-                extra: { sessionId, appId: app.id },
-              });
+              log.error("Title generation error", { source: "consumer-chat", feature: "title-generation", sessionId, appId: app.id }, err);
             });
 
             // Record token usage
@@ -1000,14 +958,7 @@ consumerChatRoutes.post(
                   outputTokens,
                 })
                 .catch((err) => {
-                  console.error(
-                    "[consumer-chat] Failed to record token usage:",
-                    err
-                  );
-                  Sentry.captureException(err, {
-                    tags: { source: "consumer-chat", feature: "token-usage" },
-                    extra: { appId: app.id, sessionId, model: modelId, consumerId: consumer?.id },
-                  });
+                  log.error("Failed to record token usage", { source: "consumer-chat", feature: "token-usage", appId: app.id, sessionId, model: modelId, consumerId: consumer?.id }, err);
                 });
             }
 
@@ -1028,7 +979,7 @@ consumerChatRoutes.post(
       return streamSSE(c, async (stream) => {
         // Handle client disconnect - abort the agent loop
         stream.onAbort(() => {
-          console.log("[consumer-chat] Client disconnected, aborting stream");
+          log.debug("Client disconnected, aborting stream", { source: "consumer-chat", feature: "stream", sessionId });
           abortController.abort();
         });
 
@@ -1079,14 +1030,7 @@ consumerChatRoutes.post(
                 .where("id", "=", userMessage.id)
                 .execute();
             } catch (err) {
-              console.error(
-                "[consumer-chat] Failed to send/patch audio URL:",
-                err
-              );
-              Sentry.captureException(err, {
-                tags: { source: "consumer-chat", feature: "audio-url-patch" },
-                extra: { sessionId, messageId: userMessage.id, appId: app.id },
-              });
+              log.error("Failed to send/patch audio URL", { source: "consumer-chat", feature: "audio-url-patch", sessionId, messageId: userMessage.id, appId: app.id }, err);
             }
           });
         }
@@ -1265,17 +1209,7 @@ consumerChatRoutes.post(
 
           await stream.writeSSE({ data: "[DONE]" });
         } catch (error) {
-          console.error("[consumer-chat] Stream error:", error);
-          Sentry.captureException(error, {
-            tags: { source: "consumer-chat", feature: "stream" },
-            extra: {
-              requestId,
-              appId: app.id,
-              sessionId,
-              consumerId: consumer?.id,
-              model: modelId,
-            },
-          });
+          log.error("Stream error", { source: "consumer-chat", feature: "stream", requestId, appId: app.id, sessionId, consumerId: consumer?.id, model: modelId }, error);
 
           await stream.writeSSE({
             data: JSON.stringify({
@@ -1286,11 +1220,7 @@ consumerChatRoutes.post(
         }
       });
     } catch (error) {
-      console.error("[consumer-chat] Setup error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "consumer-chat", feature: "setup" },
-        extra: { requestId, appId: app.id, consumerId: consumer?.id },
-      });
+      log.error("Setup error", { source: "consumer-chat", feature: "setup", requestId, appId: app.id, consumerId: consumer?.id }, error);
       throw error;
     }
   }
@@ -1437,9 +1367,7 @@ consumerChatRoutes.post(
 
       let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
       if (isDevOrStaging && devModelOverride) {
-        console.log(
-          `[consumer-chat-nonstream] Using dev model override: ${devModelOverride} (app default: ${modelId})`
-        );
+        log.debug("Using dev model override", { source: "consumer-chat", feature: "model-override-nonstream", devModelOverride, appDefault: modelId });
         modelId = devModelOverride;
       }
 
@@ -1523,7 +1451,7 @@ consumerChatRoutes.post(
           });
         }
       } catch (err) {
-        console.warn("[consumer-chat] Failed to load custom tools:", err);
+        log.warn("Failed to load custom tools", { source: "consumer-chat", feature: "custom-tools-nonstream", appId: app.id });
       }
 
       let responseContent = "";
@@ -1550,11 +1478,7 @@ consumerChatRoutes.post(
         responseContent,
         billingContext
       ).catch((err) => {
-        console.error("[consumer-chat] Title generation error:", err);
-        Sentry.captureException(err, {
-          tags: { source: "consumer-chat", feature: "title-generation" },
-          extra: { sessionId, appId: app.id },
-        });
+        log.error("Title generation error", { source: "consumer-chat", feature: "title-generation", sessionId, appId: app.id }, err);
       });
 
       return c.json({
@@ -1562,11 +1486,7 @@ consumerChatRoutes.post(
         message: responseContent,
       });
     } catch (error) {
-      console.error("[consumer-chat] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "consumer-chat", feature: "non-streaming" },
-        extra: { appId: app.id, consumerId: consumer?.id, sessionId: body.sessionId },
-      });
+      log.error("Non-streaming chat error", { source: "consumer-chat", feature: "non-streaming", appId: app.id, consumerId: consumer?.id, sessionId: body.sessionId }, error);
       throw error;
     }
   }
@@ -1605,11 +1525,7 @@ consumerChatRoutes.post(
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.error("[consumer-chat] Session end error:", err);
-      Sentry.captureException(err, {
-        tags: { source: "consumer-chat", feature: "session-end" },
-        extra: { sessionId: body.sessionId, appId: app.id },
-      });
+      log.error("Session end error", { source: "consumer-chat", feature: "session-end", sessionId: body.sessionId, appId: app.id }, err);
     }
 
     return c.json({ ok: true });

@@ -6,9 +6,9 @@ Business logic layer between API routes and database. Services handle validation
 
 1. **Service exports**: Export a `const xyzService = { ... }` object with methods, not a class
 2. **Access control**: Services check ownership via `userId` parameter before mutations
-3. **Error handling**: Throw `NotFoundError`, `ForbiddenError`, `BadRequestError` from `src/utils/errors.ts`. In catch blocks, always add `Sentry.captureException(error, { tags: { source, feature }, extra: { ...context } })` alongside `console.error`
+3. **Error handling**: Throw `NotFoundError`, `ForbiddenError`, `BadRequestError` from `src/utils/errors.ts`. In catch blocks, use `log.error(msg, { source, feature, ...context }, error)` from `@/lib/logger.ts` -- never bare `console.error` or direct `Sentry.captureException`
 4. **DB access**: Use Kysely `db` for typed queries, raw `sql` template for complex queries
-5. **Fire-and-forget billing**: Billing meter calls never throw - log errors, capture to Sentry, continue
+5. **Fire-and-forget billing**: Billing meter calls never throw - `log.error()` and continue (logger handles Sentry)
 
 ## Critical Gotchas
 

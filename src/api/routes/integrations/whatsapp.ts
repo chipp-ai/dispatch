@@ -10,7 +10,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { whatsappService } from "../../../services/whatsapp.service.ts";
 import { applicationService } from "../../../services/application.service.ts";
@@ -164,11 +164,7 @@ export const whatsappRoutes = new Hono<AuthContext>()
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save config";
-      console.error("[WhatsApp] Save config error:", err);
-      Sentry.captureException(err, {
-        tags: { source: "whatsapp-api", feature: "save-config" },
-        extra: { appId: body.applicationId, phoneNumberId: body.phoneNumberId },
-      });
+      log.error("Failed to save WhatsApp config", { source: "whatsapp-api", feature: "save-config", appId: body.applicationId, phoneNumberId: body.phoneNumberId }, err);
       return c.json({ error: message }, 500);
     }
   })
@@ -198,11 +194,7 @@ export const whatsappRoutes = new Hono<AuthContext>()
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to disconnect";
-      console.error("[WhatsApp] Disconnect error:", err);
-      Sentry.captureException(err, {
-        tags: { source: "whatsapp-api", feature: "disconnect" },
-        extra: { appId: applicationId },
-      });
+      log.error("Failed to disconnect WhatsApp", { source: "whatsapp-api", feature: "disconnect", appId: applicationId }, err);
       return c.json({ error: message }, 500);
     }
   });

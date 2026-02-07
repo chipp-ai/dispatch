@@ -4,11 +4,13 @@ import path from "path";
 
 /**
  * Generates version.json in the build output and defines __APP_VERSION__
- * as a compile-time constant. The version check module polls version.json
- * to detect new deployments and nudge users to refresh.
+ * as a compile-time constant. Uses git SHA when available (CI builds),
+ * falls back to timestamp for local dev. The version check module polls
+ * version.json to detect new deployments and nudge users to refresh.
  */
 function versionPlugin(): Plugin {
-  const version = Date.now().toString(36);
+  const gitSha = process.env.GITHUB_SHA || process.env.GIT_SHA;
+  const version = gitSha ? gitSha.slice(0, 7) : Date.now().toString(36);
   return {
     name: "chipp-version",
     config() {

@@ -6,7 +6,7 @@
  */
 
 import { Hono } from "hono";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import { stripeWebhookMiddleware } from "../../middleware/webhookAuth.ts";
 import { billingService } from "../../../services/billing.service.ts";
@@ -60,7 +60,7 @@ stripeWebhookRoutes.post("/", async (c) => {
 
   const requestId = c.get("requestId") || "unknown";
 
-  console.log(`[${requestId}] Stripe webhook received: ${event.type}`);
+  log.info("Stripe webhook received", { source: "stripe-webhook", feature: "routing", requestId, eventType: event.type, eventId: event.id });
 
   try {
     switch (event.type) {
@@ -300,7 +300,10 @@ stripeWebhookRoutes.post("/", async (c) => {
         const alertTitle =
           alert.credit_balance_threshold?.title || alert.title || "";
 
-        console.log(`[${requestId}] Billing alert triggered`, {
+        log.info("Billing alert triggered", {
+          source: "stripe-webhook",
+          feature: "billing-alert",
+          requestId,
           alertId: alert.id,
           alertType: alert.alert_type,
           title: alertTitle,
@@ -432,7 +435,7 @@ stripeWebhookRoutes.post("/", async (c) => {
           };
         };
 
-        console.log(`[${requestId}] Account updated: ${account.id}`);
+        log.info("Account updated", { source: "stripe-webhook", feature: "account-updated", requestId, accountId: account.id });
         // TODO: Handle Connect account updates
         // Check if account is ready to receive payments
         break;
@@ -440,18 +443,12 @@ stripeWebhookRoutes.post("/", async (c) => {
 
       default:
         // Log unhandled event types for debugging
-        console.log(
-          `[${requestId}] Unhandled Stripe event type: ${event.type}`
-        );
+        log.info("Unhandled Stripe event type", { source: "stripe-webhook", feature: "routing", requestId, eventType: event.type });
     }
 
     return c.json({ received: true });
   } catch (error) {
-    console.error(`[${requestId}] Error processing Stripe webhook:`, error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-      tags: { source: "stripe-webhook" },
-      extra: { requestId, eventType: event.type, eventId: event.id },
-    });
+    log.error("Error processing Stripe webhook", { source: "stripe-webhook", feature: "routing", requestId, eventType: event.type, eventId: event.id }, error);
 
     // Return 200 to acknowledge receipt even on error
     // This prevents Stripe from retrying and potentially causing duplicate processing

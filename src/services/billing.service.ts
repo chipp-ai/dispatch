@@ -10,6 +10,7 @@ import { NotFoundError, BadRequestError } from "../utils/errors.ts";
 import type { SubscriptionTier } from "../db/schema.ts";
 import Stripe from "npm:stripe";
 import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import {
   stripe,
   isStripeConfigured,
@@ -382,11 +383,12 @@ export const billingService = {
 
       if (!balanceRes.ok) {
         const errText = await balanceRes.text();
-        console.error("[billing] Failed to fetch credit balance:", errText);
-        Sentry.captureMessage("[billing] Failed to fetch credit balance", {
-          level: "error",
-          tags: { source: "billing", feature: "credit-balance" },
-          extra: { customerId, useSandbox, responseText: errText },
+        log.error("Failed to fetch credit balance", {
+          source: "billing",
+          feature: "credit-balance",
+          customerId,
+          useSandbox,
+          responseText: errText,
         });
         return null;
       }
@@ -398,11 +400,12 @@ export const billingService = {
       };
       return balanceData?.balances?.[0]?.available_balance?.monetary?.value ?? 0;
     } catch (error) {
-      console.error("[billing] Error fetching credit balance:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing", feature: "credit-balance" },
-        extra: { customerId, useSandbox },
-      });
+      log.error("Error fetching credit balance", {
+        source: "billing",
+        feature: "credit-balance",
+        customerId,
+        useSandbox,
+      }, error);
       return null;
     }
   },
@@ -655,7 +658,9 @@ export const billingService = {
   ): Promise<void> {
     const { subscriptionId, customerId, status, metadata, livemode } = params;
 
-    console.log("Processing subscription created", {
+    log.info("Processing subscription created", {
+      source: "billing",
+      feature: "subscription-created",
       subscriptionId,
       customerId,
       status,
@@ -690,7 +695,9 @@ export const billingService = {
     const { consumerIdentifier, developerId, applicationId, packageId } =
       metadata;
 
-    console.log("Processing consumer subscription", {
+    log.info("Processing consumer subscription", {
+      source: "billing",
+      feature: "consumer-subscription-created",
       subscriptionId,
       consumerIdentifier,
       developerId,
@@ -710,7 +717,9 @@ export const billingService = {
   ): Promise<void> {
     const { subscriptionId, customerId, metadata } = params;
 
-    console.log("Processing organization subscription", {
+    log.info("Processing organization subscription", {
+      source: "billing",
+      feature: "org-subscription-created",
       subscriptionId,
       customerId,
       tier: metadata.subscriptionTier,
@@ -724,7 +733,11 @@ export const billingService = {
     `;
 
     if (orgs.length === 0) {
-      console.warn(`No organization found for Stripe customer: ${customerId}`);
+      log.warn("No organization found for Stripe customer", {
+        source: "billing",
+        feature: "org-subscription-created",
+        customerId,
+      });
       return;
     }
 
@@ -740,9 +753,12 @@ export const billingService = {
       WHERE id = ${org.id}
     `;
 
-    console.log(
-      `Updated organization ${org.id} subscription to ${subscriptionId}`
-    );
+    log.info("Updated organization subscription", {
+      source: "billing",
+      feature: "org-subscription-created",
+      organizationId: org.id,
+      subscriptionId,
+    });
   },
 
   /**
@@ -769,7 +785,9 @@ export const billingService = {
       currentPeriodEnd,
     } = params;
 
-    console.log("[webhook] Processing subscription updated", {
+    log.info("Processing subscription updated", {
+      source: "billing-webhook",
+      feature: "subscription-updated",
       subscriptionId,
       customerId,
       status,
@@ -786,7 +804,9 @@ export const billingService = {
 
     if (isConsumer) {
       // Handle consumer subscription update
-      console.log("[webhook] Consumer subscription updated", {
+      log.info("Consumer subscription updated", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
         consumerIdentifier: metadata.consumerIdentifier,
         applicationId: metadata.applicationId,
         status,
@@ -805,9 +825,11 @@ export const billingService = {
     `;
 
     if (orgs.length === 0) {
-      console.warn(
-        `[webhook] No organization found for Stripe customer: ${customerId}`
-      );
+      log.warn("No organization found for Stripe customer", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        customerId,
+      });
       return;
     }
 
@@ -822,9 +844,11 @@ export const billingService = {
         // Skip v2 billing subscriptions that don't have tier metadata
         // (v2 state is managed via checkout.session.completed)
         if (isV2BillingPriceId(priceId)) {
-          console.log(
-            "[webhook] Skipping subscription update for v2 billing - state managed via checkout"
-          );
+          log.info("Skipping subscription update for v2 billing - state managed via checkout", {
+            source: "billing-webhook",
+            feature: "subscription-updated",
+            subscriptionId,
+          });
           // Still process cancellation scheduling for v2 subscriptions
           if (cancelAtPeriodEnd && currentPeriodEnd) {
             await this.handlePendingCancellation(
@@ -852,9 +876,13 @@ export const billingService = {
     const tierChanged = newTier && newTier !== currentTier;
 
     if (tierChanged) {
-      console.log(
-        `[webhook] Tier change detected: ${currentTier} -> ${newTier}`
-      );
+      log.info("Tier change detected", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+        previousTier: currentTier,
+        newTier,
+      });
 
       // Update organization tier
       await sql`
@@ -865,9 +893,12 @@ export const billingService = {
         WHERE id = ${org.id}
       `;
 
-      console.log(
-        `[webhook] Updated organization ${org.id} tier to ${newTier}`
-      );
+      log.info("Updated organization tier", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+        newTier,
+      });
 
       // Log tier change for analytics
       Sentry.addBreadcrumb({
@@ -903,7 +934,12 @@ export const billingService = {
     // Handle status transitions
     if (status === "active" && previousStatus !== "active") {
       // Subscription became active
-      console.log(`[webhook] Subscription ${subscriptionId} is now active`);
+      log.info("Subscription is now active", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        subscriptionId,
+        organizationId: org.id,
+      });
 
       // Clear any cancellation flags if subscription reactivated
       await sql`
@@ -917,23 +953,23 @@ export const billingService = {
       `;
     } else if (status === "past_due") {
       // Payment failed but subscription still active
-      console.log(`[webhook] Subscription ${subscriptionId} is past due`);
-
-      Sentry.captureMessage("Subscription payment past due", {
-        level: "warning",
-        tags: { source: "billing-webhook", feature: "subscription-status" },
-        extra: {
-          organizationId: org.id,
-          subscriptionId,
-          customerId,
-        },
+      log.warn("Subscription payment past due", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        organizationId: org.id,
+        subscriptionId,
+        customerId,
       });
       // TODO: Send payment failed notification email
     } else if (status === "canceled" || status === "unpaid") {
       // Subscription ended
-      console.log(
-        `[webhook] Subscription ${subscriptionId} ended with status: ${status}`
-      );
+      log.info("Subscription ended", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        subscriptionId,
+        status,
+        organizationId: org.id,
+      });
 
       // Downgrade to FREE tier
       await sql`
@@ -949,19 +985,13 @@ export const billingService = {
         WHERE id = ${org.id}
       `;
 
-      console.log(
-        `[webhook] Downgraded organization ${org.id} to FREE due to ${status} status`
-      );
-
-      Sentry.captureMessage(`Subscription ${status} - organization downgraded`, {
-        level: "warning",
-        tags: { source: "billing-webhook", feature: "subscription-status" },
-        extra: {
-          organizationId: org.id,
-          subscriptionId,
-          previousTier: currentTier,
-          status,
-        },
+      log.warn("Subscription ended - organization downgraded to FREE", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        organizationId: org.id,
+        subscriptionId,
+        previousTier: currentTier,
+        status,
       });
     }
 
@@ -970,9 +1000,11 @@ export const billingService = {
       await this.handlePendingCancellation(org.id, currentPeriodEnd, cancelAt);
     } else if (!cancelAtPeriodEnd && org.subscription_cancelled_at) {
       // Cancellation was undone
-      console.log(
-        `[webhook] Cancellation undone for organization ${org.id}`
-      );
+      log.info("Cancellation undone for organization", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+      });
       await sql`
         UPDATE app.organizations
         SET
@@ -996,9 +1028,12 @@ export const billingService = {
       ? new Date(cancelAt * 1000)
       : new Date(currentPeriodEnd * 1000);
 
-    console.log(
-      `[webhook] Subscription scheduled for cancellation, ends at: ${subscriptionEndsAt.toISOString()}`
-    );
+    log.info("Subscription scheduled for cancellation", {
+      source: "billing-webhook",
+      feature: "pending-cancellation",
+      organizationId,
+      subscriptionEndsAt: subscriptionEndsAt.toISOString(),
+    });
 
     await sql`
       UPDATE app.organizations
@@ -1021,7 +1056,9 @@ export const billingService = {
   ): Promise<void> {
     const { subscriptionId, customerId, metadata, items, created } = params;
 
-    console.log("[webhook] Processing subscription deleted", {
+    log.info("Processing subscription deleted", {
+      source: "billing-webhook",
+      feature: "subscription-deleted",
       subscriptionId,
       customerId,
     });
@@ -1035,7 +1072,9 @@ export const billingService = {
 
     if (isConsumer) {
       // Deactivate consumer access
-      console.log("[webhook] Deactivating consumer subscription", {
+      log.info("Deactivating consumer subscription", {
+        source: "billing-webhook",
+        feature: "subscription-deleted",
         consumerIdentifier: metadata.consumerIdentifier,
         applicationId: metadata.applicationId,
       });
@@ -1064,9 +1103,12 @@ export const billingService = {
     }
 
     if (orgs.length === 0) {
-      console.warn(
-        `[webhook] No organization found for deleted subscription: ${subscriptionId}`
-      );
+      log.warn("No organization found for deleted subscription", {
+        source: "billing-webhook",
+        feature: "subscription-deleted",
+        subscriptionId,
+        customerId,
+      });
       return;
     }
 
@@ -1096,30 +1138,15 @@ export const billingService = {
     }
 
     // Log churn analytics
-    console.log("[webhook] Churn event captured", {
+    log.info("Subscription churned", {
+      source: "billing-webhook",
+      feature: "churn-analytics",
       organizationId: org.id,
       organizationName: org.name,
       previousTier: churnedFromTier,
       subscriptionTenureDays: tenureDays,
       subscriptionId,
-    });
-
-    // Capture churn analytics in Sentry for tracking
-    Sentry.captureMessage("Subscription churned", {
-      level: "info",
-      tags: {
-        source: "billing-webhook",
-        feature: "churn-analytics",
-        previousTier: churnedFromTier,
-      },
-      extra: {
-        organizationId: org.id,
-        organizationName: org.name,
-        previousTier: churnedFromTier,
-        subscriptionTenureDays: tenureDays,
-        subscriptionId,
-        customerId,
-      },
+      customerId,
     });
 
     // Update organization to FREE tier and clear all subscription-related fields
@@ -1137,9 +1164,13 @@ export const billingService = {
       WHERE id = ${org.id}
     `;
 
-    console.log(
-      `[webhook] Downgraded organization ${org.id} (${org.name}) from ${churnedFromTier} to FREE tier`
-    );
+    log.info("Downgraded organization to FREE tier", {
+      source: "billing-webhook",
+      feature: "subscription-deleted",
+      organizationId: org.id,
+      organizationName: org.name,
+      previousTier: churnedFromTier,
+    });
 
     // TODO: Send churn notification to Slack (#chipp-churn)
     // TODO: Send subscription canceled email to organization admins
@@ -1164,7 +1195,9 @@ export const billingService = {
       lines,
     } = params;
 
-    console.log("[invoice.paid] Processing invoice", {
+    log.info("Processing invoice paid", {
+      source: "billing-webhook",
+      feature: "invoice-paid",
       invoiceId,
       customerId,
       subscriptionId,
@@ -1198,9 +1231,12 @@ export const billingService = {
     if (subscriptionId) {
       // Subscription invoice - access is managed by subscription events
       // Clear any payment failure flags on the organization
-      console.log(
-        `[invoice.paid] Subscription payment successful: ${subscriptionId}`
-      );
+      log.info("Subscription payment successful", {
+        source: "billing-webhook",
+        feature: "invoice-paid",
+        subscriptionId,
+        customerId,
+      });
 
       // Find organization by Stripe customer ID and clear payment failure tracking
       const orgs = await sql`
@@ -1210,17 +1246,24 @@ export const billingService = {
       `;
 
       if (orgs.length > 0) {
-        console.log(
-          `[invoice.paid] Payment successful for organization ${orgs[0].id} (${orgs[0].name})`
-        );
+        log.info("Payment successful for organization", {
+          source: "billing-webhook",
+          feature: "invoice-paid",
+          organizationId: orgs[0].id,
+          organizationName: orgs[0].name,
+        });
         // Note: If we had a payment_failure_count column, we would reset it here:
         // UPDATE app.organizations SET payment_failure_count = 0 WHERE id = ${orgs[0].id}
       }
     } else {
       // One-time payment that isn't a credit package
-      console.log(
-        `[invoice.paid] One-time invoice paid: ${invoiceId} - ${amountPaid} ${currency}`
-      );
+      log.info("One-time invoice paid", {
+        source: "billing-webhook",
+        feature: "invoice-paid",
+        invoiceId,
+        amountPaid,
+        currency,
+      });
     }
   },
 
@@ -1239,7 +1282,9 @@ export const billingService = {
   }): Promise<void> {
     const { invoiceId, customerId, metadata, lines } = params;
 
-    console.log("[invoice.paid] Processing credit package purchase", {
+    log.info("Processing credit package purchase", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
       invoiceId,
       customerId,
       consumerIdentifier: metadata?.consumerIdentifier,
@@ -1253,14 +1298,13 @@ export const billingService = {
     const packageId = metadata?.packageId;
 
     if (!consumerIdentifier || !applicationId) {
-      console.warn(
-        "[invoice.paid] Credit package purchase missing consumer metadata",
-        {
-          invoiceId,
-          hasConsumerIdentifier: !!consumerIdentifier,
-          hasApplicationId: !!applicationId,
-        }
-      );
+      log.warn("Credit package purchase missing consumer metadata", {
+        source: "billing-webhook",
+        feature: "credit-package-purchase",
+        invoiceId,
+        hasConsumerIdentifier: !!consumerIdentifier,
+        hasApplicationId: !!applicationId,
+      });
       // Log but don't fail - we need the checkout.session.completed handler
       // to have the full context for credit purchases
       return;
@@ -1286,20 +1330,21 @@ export const billingService = {
     }
 
     if (!creditAmount) {
-      console.warn(
-        "[invoice.paid] Could not determine credit amount for package purchase",
-        {
-          invoiceId,
-          packageId,
-          linesCount: lines?.length,
-        }
-      );
+      log.warn("Could not determine credit amount for package purchase", {
+        source: "billing-webhook",
+        feature: "credit-package-purchase",
+        invoiceId,
+        packageId,
+        linesCount: lines?.length,
+      });
       // TODO: Look up package from database by packageId to get tokenQty
       // For now, log and return - checkout.session.completed should handle this
       return;
     }
 
-    console.log("[invoice.paid] Adding credits to consumer", {
+    log.info("Adding credits to consumer", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
       consumerIdentifier,
       applicationId,
       creditAmount,
@@ -1309,14 +1354,15 @@ export const billingService = {
     // TODO: Create transaction record and update consumer credits
     // This requires the consumer billing tables to be fully implemented
     // For now, log the intent for audit purposes
-    console.log("[invoice.paid] CREDIT_GRANT_INTENT", {
+    log.info("Credit grant intent", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
       type: "REFILL",
       consumerIdentifier,
       applicationId,
       creditAmount,
       invoiceId,
       customerId,
-      timestamp: new Date().toISOString(),
     });
   },
 
@@ -1340,7 +1386,9 @@ export const billingService = {
       lastFinalizationError,
     } = params;
 
-    console.log("[invoice.payment_failed] Processing payment failure", {
+    log.info("Processing payment failure", {
+      source: "billing-webhook",
+      feature: "invoice-payment-failed",
       invoiceId,
       customerId,
       subscriptionId,
@@ -1361,9 +1409,12 @@ export const billingService = {
     `;
 
     if (orgs.length === 0) {
-      console.warn(
-        `[invoice.payment_failed] No organization found for customer: ${customerId}`
-      );
+      log.warn("No organization found for customer", {
+        source: "billing-webhook",
+        feature: "invoice-payment-failed",
+        customerId,
+        invoiceId,
+      });
       return;
     }
 
@@ -1371,7 +1422,9 @@ export const billingService = {
 
     // Log the failure details for querying/debugging
     // This provides an audit trail even without a dedicated column
-    console.log("[invoice.payment_failed] PAYMENT_FAILURE_RECORD", {
+    log.info("Payment failure record", {
+      source: "billing-webhook",
+      feature: "invoice-payment-failed",
       organizationId: org.id,
       organizationName: org.name,
       invoiceId,
@@ -1383,7 +1436,6 @@ export const billingService = {
       nextRetry: nextPaymentAttempt
         ? new Date(nextPaymentAttempt * 1000).toISOString()
         : null,
-      timestamp: new Date().toISOString(),
     });
 
     // Determine severity based on attempt count
@@ -1392,20 +1444,9 @@ export const billingService = {
 
     if (attempts >= MAX_ATTEMPTS_BEFORE_REVIEW) {
       // Flag organization for review after multiple failures
-      console.warn(
-        `[invoice.payment_failed] Organization ${org.id} has ${attempts} payment failures - flagging for review`,
-        {
-          organizationId: org.id,
-          organizationName: org.name,
-          attemptCount: attempts,
-          invoiceId,
-          subscriptionId,
-        }
-      );
-
-      // Log a structured event for alerting/monitoring
-      console.error("[invoice.payment_failed] PAYMENT_REVIEW_REQUIRED", {
-        severity: "high",
+      log.error("Payment review required - multiple failures", {
+        source: "billing",
+        feature: "payment-failure",
         organizationId: org.id,
         organizationName: org.name,
         attemptCount: attempts,
@@ -1413,20 +1454,6 @@ export const billingService = {
         currency,
         invoiceId,
         subscriptionId,
-        timestamp: new Date().toISOString(),
-      });
-      Sentry.captureMessage("Payment review required - multiple failures", {
-        level: "error",
-        tags: { source: "billing", feature: "payment-failure" },
-        extra: {
-          organizationId: org.id,
-          organizationName: org.name,
-          attemptCount: attempts,
-          totalAmountDue: amountDue,
-          currency,
-          invoiceId,
-          subscriptionId,
-        },
       });
 
       // TODO: Consider suspending access or downgrading tier
@@ -1450,25 +1477,20 @@ export const billingService = {
       },
     }).catch(() => {});
 
-    // Capture to Sentry for monitoring
+    // Log to Sentry for monitoring via appropriate level
     if (attempts >= 2) {
-      Sentry.captureMessage("Payment failed for organization", {
-        level: attempts >= MAX_ATTEMPTS_BEFORE_REVIEW ? "error" : "warning",
-        tags: {
-          source: "stripe-webhook",
-          feature: "billing",
-          eventType: "invoice.payment_failed",
-        },
-        extra: {
-          organizationId: org.id,
-          organizationName: org.name,
-          invoiceId,
-          subscriptionId,
-          attemptCount: attempts,
-          amountDue,
-          currency,
-          failureReason: lastFinalizationError,
-        },
+      const logFn = attempts >= MAX_ATTEMPTS_BEFORE_REVIEW ? log.error : log.warn;
+      logFn("Payment failed for organization", {
+        source: "stripe-webhook",
+        feature: "invoice-payment-failed",
+        organizationId: org.id,
+        organizationName: org.name,
+        invoiceId,
+        subscriptionId,
+        attemptCount: attempts,
+        amountDue,
+        currency,
+        failureReason: lastFinalizationError,
       });
     }
   },
@@ -1492,7 +1514,9 @@ export const billingService = {
       livemode,
     } = params;
 
-    console.log("[checkout] Processing checkout completed", {
+    log.info("Processing checkout completed", {
+      source: "billing-webhook",
+      feature: "checkout-completed",
       sessionId,
       customerId,
       mode,
@@ -1517,7 +1541,12 @@ export const billingService = {
         break;
 
       default:
-        console.log(`[checkout] Unhandled checkout type: ${metadata.type}`);
+        log.info("Unhandled checkout type", {
+          source: "billing-webhook",
+          feature: "checkout-completed",
+          type: metadata.type,
+          sessionId,
+        });
     }
   },
 
@@ -1542,7 +1571,9 @@ export const billingService = {
     const { consumerIdentifier, developerId, applicationId, packageId } =
       metadata;
 
-    console.log("[checkout] Processing PACKAGE purchase", {
+    log.info("Processing PACKAGE purchase", {
+      source: "billing-service",
+      feature: "checkout-package",
       sessionId,
       consumerIdentifier,
       developerId,
@@ -1552,17 +1583,13 @@ export const billingService = {
 
     // Validate required metadata
     if (!consumerIdentifier || !applicationId) {
-      console.error(
-        "[checkout] Missing required metadata for PACKAGE purchase",
-        {
-          consumerIdentifier,
-          applicationId,
-        }
-      );
-      Sentry.captureMessage("Missing metadata for package purchase checkout", {
-        level: "warning",
-        tags: { source: "billing-service", feature: "checkout-package" },
-        extra: { sessionId, metadata },
+      log.warn("Missing required metadata for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
+        sessionId,
+        consumerIdentifier,
+        applicationId,
+        metadata,
       });
       return;
     }
@@ -1582,20 +1609,13 @@ export const billingService = {
     `;
 
     if (consumers.length === 0) {
-      console.error("[checkout] Consumer not found for PACKAGE purchase", {
+      log.error("Consumer not found for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
         consumerIdentifier,
         applicationId,
         mode: consumerMode,
-      });
-      Sentry.captureMessage("Consumer not found for package purchase", {
-        level: "error",
-        tags: { source: "billing-service", feature: "checkout-package" },
-        extra: {
-          consumerIdentifier,
-          applicationId,
-          mode: consumerMode,
-          sessionId,
-        },
+        sessionId,
       });
       return;
     }
@@ -1609,30 +1629,31 @@ export const billingService = {
     if (metadata.creditsAmount) {
       // If credits amount is passed in metadata, use it
       creditsToAdd = parseInt(metadata.creditsAmount, 10);
-      console.log("[checkout] Using creditsAmount from metadata", {
+      log.info("Using creditsAmount from metadata", {
+        source: "billing-service",
+        feature: "checkout-package",
         creditsAmount: creditsToAdd,
       });
     } else if (packageId) {
       // TODO: Look up package from database when packages table exists
       // ChippMono does: Package.findUnique({ where: { id: packageId } }) -> tokenQty
       // For now, log a warning and use a default
-      console.warn(
-        "[checkout] Package lookup not implemented - packages table does not exist yet",
-        { packageId }
-      );
+      log.warn("Package lookup not implemented - packages table does not exist yet", {
+        source: "billing-service",
+        feature: "checkout-package",
+        packageId,
+      });
       // Default credit amount (should be replaced with actual package lookup)
       creditsToAdd = 100;
     }
 
     if (creditsToAdd <= 0) {
-      console.error(
-        "[checkout] Could not determine credits amount for PACKAGE purchase",
-        { packageId, metadata }
-      );
-      Sentry.captureMessage("Could not determine credits for package", {
-        level: "error",
-        tags: { source: "billing-service", feature: "checkout-package" },
-        extra: { packageId, metadata, sessionId },
+      log.error("Could not determine credits amount for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
+        packageId,
+        metadata,
+        sessionId,
       });
       return;
     }
@@ -1650,7 +1671,9 @@ export const billingService = {
       WHERE id = ${consumer.id}::uuid
     `;
 
-    console.log("[checkout] Added credits to consumer", {
+    log.info("Added credits to consumer", {
+      source: "billing-service",
+      feature: "checkout-package",
       consumerId: consumer.id,
       creditsAdded: creditsToAdd,
       previousBalance: currentCredits,
@@ -1671,7 +1694,9 @@ export const billingService = {
     //   )
     // `;
 
-    console.log("[checkout] PACKAGE purchase completed successfully", {
+    log.info("PACKAGE purchase completed successfully", {
+      source: "billing-service",
+      feature: "checkout-package",
       consumerId: consumer.id,
       creditsGranted: creditsToAdd,
       paymentIntentId,
@@ -1717,7 +1742,9 @@ export const billingService = {
   ): Promise<void> {
     const { sessionId, customerId, metadata } = params;
 
-    console.log("[checkout] Processing ORG_PAYMENT_SETUP", {
+    log.info("Processing ORG_PAYMENT_SETUP", {
+      source: "billing-service",
+      feature: "checkout-payment-setup",
       sessionId,
       customerId,
       organizationId: metadata.organizationId,
@@ -1739,20 +1766,20 @@ export const billingService = {
     }
 
     if (!orgId) {
-      console.warn("[checkout] Could not find organization for payment setup", {
+      log.warn("Could not find organization for payment setup", {
+        source: "billing-service",
+        feature: "checkout-payment-setup",
         customerId,
         metadata,
-      });
-      Sentry.captureMessage("Could not find organization for payment setup", {
-        level: "warning",
-        tags: { source: "billing-service", feature: "checkout-payment-setup" },
-        extra: { customerId, metadata, sessionId },
+        sessionId,
       });
       return;
     }
 
     // Log the successful payment method setup
-    console.log("[checkout] Organization payment method setup completed", {
+    log.info("Organization payment method setup completed", {
+      source: "billing-service",
+      feature: "checkout-payment-setup",
       organizationId: orgId,
       customerId,
       sessionId,
@@ -1788,7 +1815,9 @@ export const billingService = {
     const workspaceId = metadata.workspaceId || metadata.hqId;
     const userId = metadata.userId || metadata.developerId;
 
-    console.log("[checkout] Processing HQ_ACCESS purchase", {
+    log.info("Processing HQ_ACCESS purchase", {
+      source: "billing-service",
+      feature: "checkout-hq-access",
       sessionId,
       customerId,
       workspaceId,
@@ -1796,25 +1825,21 @@ export const billingService = {
     });
 
     if (!workspaceId) {
-      console.error("[checkout] Missing workspaceId for HQ_ACCESS purchase", {
+      log.error("Missing workspaceId for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
         metadata,
-      });
-      Sentry.captureMessage("Missing workspaceId for HQ access purchase", {
-        level: "error",
-        tags: { source: "billing-service", feature: "checkout-hq-access" },
-        extra: { metadata, sessionId },
+        sessionId,
       });
       return;
     }
 
     if (!userId) {
-      console.error("[checkout] Missing userId for HQ_ACCESS purchase", {
+      log.error("Missing userId for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
         metadata,
-      });
-      Sentry.captureMessage("Missing userId for HQ access purchase", {
-        level: "error",
-        tags: { source: "billing-service", feature: "checkout-hq-access" },
-        extra: { metadata, sessionId },
+        sessionId,
       });
       return;
     }
@@ -1827,13 +1852,11 @@ export const billingService = {
     `;
 
     if (workspaces.length === 0) {
-      console.error("[checkout] Workspace not found for HQ_ACCESS purchase", {
+      log.error("Workspace not found for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
         workspaceId,
-      });
-      Sentry.captureMessage("Workspace not found for HQ access purchase", {
-        level: "error",
-        tags: { source: "billing-service", feature: "checkout-hq-access" },
-        extra: { workspaceId, sessionId },
+        sessionId,
       });
       return;
     }
@@ -1849,7 +1872,9 @@ export const billingService = {
     `;
 
     if (existingMembership.length > 0) {
-      console.log("[checkout] User already has workspace access", {
+      log.info("User already has workspace access", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
         workspaceId,
         userId,
         existingMembershipId: existingMembership[0].id,
@@ -1865,7 +1890,9 @@ export const billingService = {
       VALUES (${workspaceId}::uuid, ${userId}::uuid, 'VIEWER', true)
     `;
 
-    console.log("[checkout] HQ_ACCESS granted successfully", {
+    log.info("HQ_ACCESS granted successfully", {
+      source: "billing-service",
+      feature: "checkout-hq-access",
       workspaceId,
       workspaceName: workspace.name,
       userId,
@@ -1915,7 +1942,9 @@ export const billingService = {
       (evidenceDeadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
     );
 
-    console.log("[dispute.created] Processing dispute", {
+    log.info("Processing dispute", {
+      source: "billing-webhook",
+      feature: "dispute",
       disputeId,
       chargeId,
       paymentIntentId,
@@ -1939,9 +1968,10 @@ export const billingService = {
 
     const org = orgs[0] as { id: string; name: string } | undefined;
 
-    // Log structured dispute record for querying
-    console.error("[dispute.created] DISPUTE_RECORD", {
-      severity: "critical",
+    // Alert team immediately - disputes are compliance-critical
+    log.error("Dispute created - review and submit evidence before deadline", {
+      source: "billing-webhook",
+      feature: "dispute",
       disputeId,
       chargeId,
       paymentIntentId,
@@ -1956,53 +1986,7 @@ export const billingService = {
       evidenceDeadline: evidenceDeadline.toISOString(),
       daysUntilDeadline,
       livemode,
-      timestamp: new Date().toISOString(),
-    });
-    Sentry.captureMessage(`Dispute record logged: ${disputeId}`, {
-      level: "error",
-      tags: { source: "billing", feature: "dispute", reason, livemode: String(livemode) },
-      extra: {
-        disputeId,
-        chargeId,
-        paymentIntentId,
-        customerId,
-        organizationId: org?.id,
-        organizationName: org?.name,
-        amount,
-        currency,
-        evidenceDeadline: evidenceDeadline.toISOString(),
-        daysUntilDeadline,
-      },
-    });
-
-    // Alert team immediately via Sentry at error level for high visibility
-    // Disputes are compliance-critical and require prompt attention
-    Sentry.captureMessage(`Dispute created: ${disputeId}`, {
-      level: "error", // Error level ensures high visibility and alerts
-      tags: {
-        source: "stripe-webhook",
-        feature: "dispute",
-        eventType: "charge.dispute.created",
-        reason,
-        livemode: String(livemode),
-      },
-      extra: {
-        disputeId,
-        chargeId,
-        paymentIntentId,
-        customerId,
-        organizationId: org?.id,
-        organizationName: org?.name,
-        amount,
-        currency,
-        amountFormatted: `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`,
-        reason,
-        status,
-        evidenceDeadline: evidenceDeadline.toISOString(),
-        daysUntilDeadline,
-        actionRequired:
-          "Review dispute and submit evidence before deadline. Contact customer if possible.",
-      },
+      actionRequired: "Review dispute and submit evidence before deadline. Contact customer if possible.",
     });
 
     // TODO: Consider adding a disputes table for tracking
@@ -2023,7 +2007,9 @@ export const billingService = {
     const { disputeId, chargeId, customerId, amount, status, livemode } =
       params;
 
-    console.log("[dispute.closed] Processing dispute resolution", {
+    log.info("Processing dispute resolution", {
+      source: "billing-webhook",
+      feature: "dispute-closed",
       disputeId,
       chargeId,
       customerId,
@@ -2043,7 +2029,9 @@ export const billingService = {
     const org = orgs[0] as { id: string; name: string } | undefined;
 
     // Log structured resolution record for financial reporting
-    console.log("[dispute.closed] DISPUTE_RESOLUTION", {
+    log.info("Dispute resolution", {
+      source: "billing-webhook",
+      feature: "dispute-closed",
       disputeId,
       chargeId,
       customerId,
@@ -2051,15 +2039,16 @@ export const billingService = {
       organizationName: org?.name || null,
       amount,
       amountFormatted: `${(amount / 100).toFixed(2)} USD`,
-      resolution: status, // 'won', 'lost', or 'withdrawn'
+      resolution: status,
       livemode,
-      timestamp: new Date().toISOString(),
     });
 
     // Different handling based on resolution
     if (status === "lost") {
       // Log loss for financial reporting - this is revenue that's gone
-      console.warn("[dispute.closed] DISPUTE_LOST", {
+      log.warn("Dispute lost - amount deducted from account", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
         disputeId,
         chargeId,
         customerId,
@@ -2068,31 +2057,11 @@ export const billingService = {
         amountLost: amount,
         amountLostFormatted: `${(amount / 100).toFixed(2)} USD`,
         livemode,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Capture to Sentry for tracking lost disputes
-      Sentry.captureMessage(`Dispute lost: ${disputeId}`, {
-        level: "warning",
-        tags: {
-          source: "stripe-webhook",
-          feature: "dispute",
-          eventType: "charge.dispute.closed",
-          resolution: "lost",
-          livemode: String(livemode),
-        },
-        extra: {
-          disputeId,
-          chargeId,
-          customerId,
-          organizationId: org?.id,
-          organizationName: org?.name,
-          amountLost: amount,
-          note: "Dispute was lost. Amount has been deducted from account.",
-        },
       });
     } else if (status === "won") {
-      console.log("[dispute.closed] Dispute won", {
+      log.info("Dispute won", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
         disputeId,
         chargeId,
         amount,
@@ -2113,7 +2082,9 @@ export const billingService = {
         },
       });
     } else if (status === "withdrawn") {
-      console.log("[dispute.closed] Dispute withdrawn by customer", {
+      log.info("Dispute withdrawn by customer", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
         disputeId,
         chargeId,
         amount,
@@ -2142,7 +2113,9 @@ export const billingService = {
       metadata,
     } = params;
 
-    console.log("[charge.refunded] Processing refund", {
+    log.info("Processing refund", {
+      source: "billing-webhook",
+      feature: "charge-refunded",
       chargeId,
       refundId,
       customerId,
@@ -2165,7 +2138,9 @@ export const billingService = {
     const org = orgs[0] as { id: string; name: string } | undefined;
 
     // Log structured refund record for financial reporting
-    console.log("[charge.refunded] REFUND_RECORD", {
+    log.info("Refund record", {
+      source: "billing-webhook",
+      feature: "charge-refunded",
       refundId,
       chargeId,
       paymentIntentId,
@@ -2178,7 +2153,6 @@ export const billingService = {
       amountFormatted: `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`,
       reason: reason || "not_specified",
       livemode,
-      timestamp: new Date().toISOString(),
     });
 
     // Check if this refund relates to a credit purchase
@@ -2188,37 +2162,21 @@ export const billingService = {
       metadata?.type?.toUpperCase() === "PACKAGE";
 
     if (isCreditPurchase) {
-      console.warn("[charge.refunded] CREDIT_REFUND_INTENT", {
-        refundId,
-        chargeId,
-        customerId,
-        organizationId: org?.id,
-        amount,
-        note: "Refund is for a credit purchase - credits may need to be deducted",
-        timestamp: new Date().toISOString(),
-      });
-
       // TODO: When credit tracking is fully implemented, deduct credits here
       // This would involve:
       // 1. Finding the original credit grant associated with this charge
       // 2. Voiding or reducing the credit grant proportionally
       // 3. Updating organization's credit balance
 
-      Sentry.captureMessage("Credit purchase refunded - manual review needed", {
-        level: "warning",
-        tags: {
-          source: "stripe-webhook",
-          feature: "refund",
-          eventType: "charge.refunded",
-        },
-        extra: {
-          refundId,
-          chargeId,
-          customerId,
-          organizationId: org?.id,
-          amount,
-          note: "Credits may need to be manually adjusted in Stripe",
-        },
+      log.warn("Credit purchase refunded - manual review needed", {
+        source: "billing-webhook",
+        feature: "charge-refunded",
+        refundId,
+        chargeId,
+        customerId,
+        organizationId: org?.id,
+        amount,
+        note: "Credits may need to be manually adjusted in Stripe",
       });
     }
 
@@ -2270,7 +2228,9 @@ export const billingService = {
       livemode,
     } = params;
 
-    console.log("[billing.alert] Processing billing alert", {
+    log.info("Processing billing alert", {
+      source: "billing-webhook",
+      feature: "billing-alert",
       alertId,
       alertType,
       customerId,
@@ -2280,7 +2240,9 @@ export const billingService = {
     });
 
     if (!customerId) {
-      console.warn("[billing.alert] No customer ID in billing alert", {
+      log.warn("No customer ID in billing alert", {
+        source: "billing-webhook",
+        feature: "billing-alert",
         alertId,
       });
       return;
@@ -2301,7 +2263,9 @@ export const billingService = {
     `;
 
     if (orgs.length === 0) {
-      console.warn("[billing.alert] Organization not found for customer", {
+      log.warn("Organization not found for customer", {
+        source: "billing-webhook",
+        feature: "billing-alert",
         customerId,
         alertId,
       });
@@ -2311,7 +2275,9 @@ export const billingService = {
     const org = orgs[0];
     const isSandboxCustomer = org.stripe_sandbox_customer_id === customerId;
 
-    console.log("[billing.alert] Processing alert for organization", {
+    log.info("Processing alert for organization", {
+      source: "billing-webhook",
+      feature: "billing-alert",
       organizationId: org.id,
       organizationName: org.name,
       customerId,
@@ -2324,7 +2290,9 @@ export const billingService = {
 
     // Handle $0 balance alert - set creditsExhausted flag
     if (thresholdCents === 0) {
-      console.log("[billing.alert] Credits exhausted - setting flag", {
+      log.info("Credits exhausted - setting flag", {
+        source: "billing-webhook",
+        feature: "billing-alert",
         organizationId: org.id,
         customerId,
       });
@@ -2338,12 +2306,13 @@ export const billingService = {
         WHERE id = ${org.id}
       `;
 
-      console.warn("[billing.alert] CREDITS_EXHAUSTED_FLAG_SET", {
+      log.warn("CREDITS_EXHAUSTED_FLAG_SET", {
+        source: "billing-webhook",
+        feature: "billing-alert",
         organizationId: org.id,
         organizationName: org.name,
         customerId,
         isSandbox: isSandboxCustomer,
-        timestamp: new Date().toISOString(),
       });
 
       // Send exhausted credits notification (fire-and-forget)
@@ -2356,11 +2325,12 @@ export const billingService = {
           organizationName: org.name,
         })
         .catch((err) => {
-          console.error("[billing.alert] Failed to send exhausted notification", err);
-          Sentry.captureException(err, {
-            tags: { source: "billing", feature: "credit-exhausted-notification" },
-            extra: { organizationId: org.id, customerId },
-          });
+          log.error("Failed to send exhausted notification", {
+            source: "billing-webhook",
+            feature: "credit-exhausted-notification",
+            organizationId: org.id,
+            customerId,
+          }, err);
         });
 
       // $0 alerts don't trigger auto-topup - just set the flag
@@ -2369,7 +2339,9 @@ export const billingService = {
 
     // Handle notification alerts (not auto-topup)
     if (isNotificationAlert) {
-      console.log("[billing.alert] Processing notification alert", {
+      log.info("Processing notification alert", {
+        source: "billing-webhook",
+        feature: "billing-alert",
         organizationId: org.id,
         thresholdCents,
         title,
@@ -2385,11 +2357,13 @@ export const billingService = {
           organizationName: org.name,
         })
         .catch((err) => {
-          console.error("[billing.alert] Failed to send low credits notification", err);
-          Sentry.captureException(err, {
-            tags: { source: "billing", feature: "low-credits-notification" },
-            extra: { organizationId: org.id, customerId, thresholdCents },
-          });
+          log.error("Failed to send low credits notification", {
+            source: "billing-webhook",
+            feature: "low-credits-notification",
+            organizationId: org.id,
+            customerId,
+            thresholdCents,
+          }, err);
         });
 
       // Notification alerts don't trigger auto-topup
@@ -2426,11 +2400,12 @@ export const billingService = {
   ): Promise<void> {
     const stripeKey = getStripeApiKey(isSandbox);
     if (!stripeKey) {
-      console.error("[billing.alert] Stripe not configured for auto-topup");
-      Sentry.captureMessage("Stripe not configured for auto-topup", {
-        level: "error",
-        tags: { source: "billing", feature: "auto-topup" },
-        extra: { organizationId, customerId, isSandbox },
+      log.error("Stripe not configured for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
+        organizationId,
+        customerId,
+        isSandbox,
       });
       return;
     }
@@ -2446,14 +2421,14 @@ export const billingService = {
         customerId
       )) as Stripe.Customer;
     } catch (error) {
-      console.error("[billing.alert] Failed to retrieve customer", {
+      log.error("Failed to retrieve customer for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
         customerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "billing", feature: "auto-topup" },
-        extra: { customerId, organizationId, isSandbox, alertId },
-      });
+        organizationId,
+        isSandbox,
+        alertId,
+      }, error);
       return;
     }
 
@@ -2465,7 +2440,9 @@ export const billingService = {
 
     // Check if auto-topup is enabled
     if (!topupEnabled) {
-      console.log("[billing.alert] Auto-topup not enabled for customer", {
+      log.info("Auto-topup not enabled for customer", {
+        source: "billing-service",
+        feature: "auto-topup",
         customerId,
         organizationId,
       });
@@ -2478,14 +2455,18 @@ export const billingService = {
       customer.default_source;
 
     if (!defaultPaymentMethod) {
-      console.warn("[billing.alert] No default payment method for auto-topup", {
+      log.warn("No default payment method for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
         customerId,
         organizationId,
       });
       return;
     }
 
-    console.log("[billing.alert] Executing automatic top-up", {
+    log.info("Executing automatic top-up", {
+      source: "billing-service",
+      feature: "auto-topup",
       customerId,
       organizationId,
       amount: topupAmountCents,
@@ -2511,55 +2492,36 @@ export const billingService = {
         },
       });
     } catch (paymentError) {
-      console.error("[billing.alert] Auto-topup payment failed", {
+      log.error("Auto-topup payment failed", {
+        source: "billing-service",
+        feature: "auto-topup-payment",
         customerId,
         organizationId,
-        error:
-          paymentError instanceof Error
-            ? paymentError.message
-            : String(paymentError),
-      });
-
-      Sentry.captureException(paymentError, {
-        tags: {
-          source: "billing-service",
-          feature: "auto-topup-payment",
-        },
-        extra: {
-          customerId,
-          organizationId,
-          amountCents: topupAmountCents,
-          alertId,
-          isSandbox,
-        },
-      });
+        amountCents: topupAmountCents,
+        alertId,
+        isSandbox,
+      }, paymentError);
       return;
     }
 
     if (paymentIntent.status !== "succeeded") {
-      console.error("[billing.alert] Auto-topup payment did not succeed", {
+      log.error("Auto-topup payment did not succeed", {
+        source: "billing-service",
+        feature: "auto-topup",
         customerId,
         organizationId,
-        status: paymentIntent.status,
         paymentIntentId: paymentIntent.id,
-      });
-      Sentry.captureMessage("Auto-topup payment did not succeed", {
-        level: "error",
-        tags: { source: "billing", feature: "auto-topup" },
-        extra: {
-          customerId,
-          organizationId,
-          paymentIntentId: paymentIntent.id,
-          paymentStatus: paymentIntent.status,
-          amountCents: topupAmountCents,
-          isSandbox,
-          alertId,
-        },
+        paymentStatus: paymentIntent.status,
+        amountCents: topupAmountCents,
+        isSandbox,
+        alertId,
       });
       return;
     }
 
-    console.log("[billing.alert] Auto-topup payment succeeded", {
+    log.info("Auto-topup payment succeeded", {
+      source: "billing-service",
+      feature: "auto-topup",
       customerId,
       organizationId,
       paymentIntentId: paymentIntent.id,
@@ -2593,34 +2555,17 @@ export const billingService = {
 
     if (!grantResp.ok) {
       const grantErrorText = await grantResp.text();
-      console.error(
-        "[billing.alert] Failed to create credit grant for auto-topup",
-        {
-          customerId,
-          organizationId,
-          grantError: grantErrorText,
-          paymentIntentId: paymentIntent.id,
-        }
-      );
-
-      Sentry.captureException(
-        new Error(`Failed to create credit grant: ${grantErrorText}`),
-        {
-          tags: {
-            source: "billing-service",
-            feature: "auto-topup-grant",
-          },
-          extra: {
-            customerId,
-            organizationId,
-            paymentIntentId: paymentIntent.id,
-            amountCents: topupAmountCents,
-            responseStatus: grantResp.status,
-            responseBody: grantErrorText,
-            isSandbox,
-          },
-        }
-      );
+      log.error("Failed to create credit grant for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup-grant",
+        customerId,
+        organizationId,
+        paymentIntentId: paymentIntent.id,
+        amountCents: topupAmountCents,
+        responseStatus: grantResp.status,
+        responseBody: grantErrorText,
+        isSandbox,
+      }, new Error(`Failed to create credit grant: ${grantErrorText}`));
 
       // Attempt to refund the successful payment if we couldn't grant credits
       try {
@@ -2628,42 +2573,24 @@ export const billingService = {
           payment_intent: paymentIntent.id,
           amount: topupAmountCents,
         });
-        console.warn(
-          "[billing.alert] Refunded auto-topup payment due to grant failure",
-          {
-            customerId,
-            organizationId,
-            paymentIntentId: paymentIntent.id,
-          }
-        );
-      } catch (refundError) {
-        console.error(
-          "[billing.alert] Failed to refund after grant creation error",
-          {
-            customerId,
-            organizationId,
-            paymentIntentId: paymentIntent.id,
-            error:
-              refundError instanceof Error
-                ? refundError.message
-                : String(refundError),
-          }
-        );
-
-        Sentry.captureException(refundError, {
-          tags: {
-            source: "billing-service",
-            feature: "auto-topup-refund",
-          },
-          extra: {
-            customerId,
-            organizationId,
-            paymentIntentId: paymentIntent.id,
-            amountCents: topupAmountCents,
-            originalError: grantErrorText,
-            isSandbox,
-          },
+        log.warn("Refunded auto-topup payment due to grant failure", {
+          source: "billing-service",
+          feature: "auto-topup-refund",
+          customerId,
+          organizationId,
+          paymentIntentId: paymentIntent.id,
         });
+      } catch (refundError) {
+        log.error("Failed to refund after grant creation error", {
+          source: "billing-service",
+          feature: "auto-topup-refund",
+          customerId,
+          organizationId,
+          paymentIntentId: paymentIntent.id,
+          amountCents: topupAmountCents,
+          originalError: grantErrorText,
+          isSandbox,
+        }, refundError);
       }
 
       return;
@@ -2680,7 +2607,9 @@ export const billingService = {
       WHERE id = ${organizationId}
     `;
 
-    console.log("[billing.alert] Auto-topup completed successfully", {
+    log.info("Auto-topup completed successfully", {
+      source: "billing-service",
+      feature: "auto-topup",
       customerId,
       organizationId,
       paymentIntentId: paymentIntent.id,
@@ -2690,7 +2619,9 @@ export const billingService = {
 
     // Log for Slack notification (fire-and-forget)
     // TODO: Implement notifySlackOfCreditTopup when Slack integration is ready
-    console.log("[billing.alert] SLACK_NOTIFICATION_INTENT", {
+    log.info("SLACK_NOTIFICATION_INTENT", {
+      source: "billing-service",
+      feature: "auto-topup",
       type: "automatic_credit_topup",
       amountCents: topupAmountCents,
       organizationId,
@@ -2698,7 +2629,6 @@ export const billingService = {
       isSandbox,
       paymentIntentId: paymentIntent.id,
       creditGrantId: (grant as Record<string, unknown>)?.id,
-      timestamp: new Date().toISOString(),
     });
   },
 
@@ -2747,14 +2677,12 @@ export const billingService = {
 
       return portalSession.url;
     } catch (error) {
-      console.error("[billing] Stripe portal session creation error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "stripe-portal" },
-        extra: {
-          customerId: params.customerId,
-          organizationName: params.organizationName,
-        },
-      });
+      log.error("Stripe portal session creation error", {
+        source: "billing-service",
+        feature: "stripe-portal",
+        customerId: params.customerId,
+        organizationName: params.organizationName,
+      }, error);
 
       // Handle customer not found
       if (
@@ -3183,19 +3111,14 @@ export const billingService = {
 
     if (!grantResp.ok) {
       const errText = await grantResp.text();
-      console.error("[TOPUP ERROR] Failed to create credit grant:", errText);
-      Sentry.captureException(
-        new Error(`Failed to create credit grant: ${errText}`),
-        {
-          tags: { source: "billing-service", feature: "credit-topup" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            amountCents: params.amount_cents,
-            paymentIntentId: pi.id,
-          },
-        }
-      );
+      log.error("Failed to create credit grant for topup", {
+        source: "billing-service",
+        feature: "credit-topup",
+        organizationId: context.organizationId,
+        customerId,
+        amountCents: params.amount_cents,
+        paymentIntentId: pi.id,
+      }, new Error(`Failed to create credit grant: ${errText}`));
 
       // Attempt to refund the payment if we failed to grant credits
       try {
@@ -3204,16 +3127,14 @@ export const billingService = {
           amount: params.amount_cents,
         });
       } catch (refundErr) {
-        console.error("[TOPUP ERROR] Failed to refund:", refundErr);
-        Sentry.captureException(refundErr, {
-          tags: { source: "billing-service", feature: "credit-topup-refund" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            paymentIntentId: pi.id,
-            amountCents: params.amount_cents,
-          },
-        });
+        log.error("Failed to refund after topup grant failure", {
+          source: "billing-service",
+          feature: "credit-topup-refund",
+          organizationId: context.organizationId,
+          customerId,
+          paymentIntentId: pi.id,
+          amountCents: params.amount_cents,
+        }, refundErr);
       }
 
       throw new Error(`Failed to create credit grant: ${errText}`);
@@ -3272,14 +3193,12 @@ export const billingService = {
 
     if (!cadencesRes.ok) {
       const errText = await cadencesRes.text();
-      console.error("[INVOICE PREVIEW] Cadences error:", errText);
-      Sentry.captureException(
-        new Error(`Failed to fetch billing cadences: ${errText}`),
-        {
-          tags: { source: "billing-service", feature: "invoice-preview" },
-          extra: { organizationId: context.organizationId, customerId },
-        }
-      );
+      log.error("Failed to fetch billing cadences", {
+        source: "billing-service",
+        feature: "invoice-preview",
+        organizationId: context.organizationId,
+        customerId,
+      }, new Error(`Failed to fetch billing cadences: ${errText}`));
       return {
         empty: true,
         reason: "cadences_error",
@@ -3360,18 +3279,13 @@ export const billingService = {
         };
       }
 
-      console.error("[INVOICE PREVIEW] Error:", errText);
-      Sentry.captureException(
-        new Error(`Failed to get invoice preview: ${errorCode}`),
-        {
-          tags: { source: "billing-service", feature: "invoice-preview" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            errorCode,
-          },
-        }
-      );
+      log.error("Failed to get invoice preview", {
+        source: "billing-service",
+        feature: "invoice-preview",
+        organizationId: context.organizationId,
+        customerId,
+        errorCode,
+      }, new Error(`Failed to get invoice preview: ${errorCode}`));
       throw new Error(`Failed to get invoice preview: ${errorCode}`);
     }
 
@@ -3478,11 +3392,12 @@ export const billingService = {
         }, 0);
       }
     } catch (e) {
-      console.error("[CREDIT BALANCE] Exception:", e);
-      Sentry.captureException(e, {
-        tags: { source: "billing-service", feature: "credit-balance" },
-        extra: { organizationId: context.organizationId, customerId },
-      });
+      log.error("Failed to fetch credit balance for invoice preview", {
+        source: "billing-service",
+        feature: "credit-balance",
+        organizationId: context.organizationId,
+        customerId,
+      }, e);
     }
 
     return {
@@ -3522,20 +3437,12 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.error(
-          "[billing] Stripe not configured - cannot create customer"
-        );
-        Sentry.captureMessage(
-          "Stripe not configured - cannot create customer",
-          {
-            level: "warning",
-            tags: {
-              source: "billing-service",
-              feature: "stripe-customer-create",
-            },
-            extra: { organizationId, email },
-          }
-        );
+        log.warn("Stripe not configured - cannot create customer", {
+          source: "billing-service",
+          feature: "stripe-customer-create",
+          organizationId,
+          email,
+        });
         return null;
       }
 
@@ -3570,21 +3477,24 @@ export const billingService = {
         `;
       }
 
-      console.log(
-        `[billing] Created Stripe ${useSandbox ? "sandbox" : "production"} customer ${customer.id} for organization ${organizationId}`
-      );
+      log.info("Created Stripe customer for organization", {
+        source: "billing-service",
+        feature: "stripe-customer-create",
+        customerId: customer.id,
+        organizationId,
+        environment: useSandbox ? "sandbox" : "production",
+      });
 
       return customer.id;
     } catch (error) {
       // Log error but don't fail signup - we can retry later
-      console.error(
-        `[billing] Failed to create Stripe customer for organization ${organizationId}:`,
-        error
-      );
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "stripe-customer-create" },
-        extra: { organizationId, email, useSandbox },
-      });
+      log.error("Failed to create Stripe customer for organization", {
+        source: "billing-service",
+        feature: "stripe-customer-create",
+        organizationId,
+        email,
+        useSandbox,
+      }, error);
       return null;
     }
   },
@@ -3605,15 +3515,12 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.error("[billing] Stripe not configured - cannot subscribe");
-        Sentry.captureMessage(
-          "Stripe not configured - cannot subscribe to FREE plan",
-          {
-            level: "warning",
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.warn("Stripe not configured - cannot subscribe to FREE plan", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        });
         return null;
       }
 
@@ -3624,11 +3531,12 @@ export const billingService = {
         : USAGE_BASED_FREE_PRICE.LIVE;
 
       if (!freePlanId) {
-        console.error("[billing] FREE plan ID not configured");
-        Sentry.captureMessage("FREE plan ID not configured", {
-          level: "warning",
-          tags: { source: "billing-service", feature: "free-subscription" },
-          extra: { organizationId, customerId, useSandbox },
+        log.warn("FREE plan ID not configured", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          useSandbox,
         });
         return null;
       }
@@ -3647,14 +3555,13 @@ export const billingService = {
 
       if (!planResponse.ok) {
         const errorText = await planResponse.text();
-        console.error("[billing] Failed to fetch pricing plan:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to fetch pricing plan: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId, freePlanId },
-          }
-        );
+        log.error("Failed to fetch pricing plan", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          freePlanId,
+        }, new Error(`Failed to fetch pricing plan: ${errorText}`));
         return null;
       }
 
@@ -3673,14 +3580,12 @@ export const billingService = {
 
       if (!profileResponse.ok) {
         const errorText = await profileResponse.text();
-        console.error("[billing] Failed to create billing profile:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing profile: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.error("Failed to create billing profile", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        }, new Error(`Failed to create billing profile: ${errorText}`));
         return null;
       }
 
@@ -3707,14 +3612,12 @@ export const billingService = {
 
       if (!cadenceResponse.ok) {
         const errorText = await cadenceResponse.text();
-        console.error("[billing] Failed to create cadence:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing cadence: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.error("Failed to create billing cadence", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        }, new Error(`Failed to create billing cadence: ${errorText}`));
         return null;
       }
 
@@ -3748,14 +3651,13 @@ export const billingService = {
 
       if (!intentResponse.ok) {
         const errorText = await intentResponse.text();
-        console.error("[billing] Failed to create billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId, cadenceId: cadence.id },
-          }
-        );
+        log.error("Failed to create billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          cadenceId: cadence.id,
+        }, new Error(`Failed to create billing intent: ${errorText}`));
         return null;
       }
 
@@ -3773,18 +3675,13 @@ export const billingService = {
 
       if (!reserveResponse.ok) {
         const errorText = await reserveResponse.text();
-        console.error("[billing] Failed to reserve billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to reserve billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: {
-              organizationId,
-              customerId,
-              billingIntentId: billingIntent.id,
-            },
-          }
-        );
+        log.error("Failed to reserve billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          billingIntentId: billingIntent.id,
+        }, new Error(`Failed to reserve billing intent: ${errorText}`));
         return null;
       }
 
@@ -3800,18 +3697,13 @@ export const billingService = {
 
       if (!commitResponse.ok) {
         const errorText = await commitResponse.text();
-        console.error("[billing] Failed to commit billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to commit billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: {
-              organizationId,
-              customerId,
-              billingIntentId: billingIntent.id,
-            },
-          }
-        );
+        log.error("Failed to commit billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          billingIntentId: billingIntent.id,
+        }, new Error(`Failed to commit billing intent: ${errorText}`));
         return null;
       }
 
@@ -3822,20 +3714,22 @@ export const billingService = {
         WHERE id = ${organizationId}::uuid
       `;
 
-      console.log(
-        `[billing] Subscribed organization ${organizationId} to FREE plan (${billingIntent.id})`
-      );
+      log.info("Subscribed organization to FREE plan", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+        billingIntentId: billingIntent.id,
+      });
 
       return billingIntent.id;
     } catch (error) {
-      console.error(
-        `[billing] Failed to subscribe organization ${organizationId} to FREE plan:`,
-        error
-      );
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "free-subscription" },
-        extra: { organizationId, customerId, useSandbox },
-      });
+      log.error("Failed to subscribe organization to FREE plan", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+        customerId,
+        useSandbox,
+      }, error);
       return null;
     }
   },
@@ -3864,9 +3758,10 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.warn(
-          "[billing] Stripe not configured - skipping web scrape usage report"
-        );
+        log.warn("Stripe not configured - skipping web scrape usage report", {
+          source: "billing-service",
+          feature: "web-scrape-usage",
+        });
         return;
       }
 
@@ -3891,48 +3786,35 @@ export const billingService = {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        console.error("[billing] Failed to report web scrape usage", {
+        log.error("Failed to report web scrape usage", {
+          source: "billing-service",
+          feature: "web-scrape-usage",
           status: response.status,
-          error: errorBody,
           stripeCustomerId,
           pagesScraped,
-        });
-        Sentry.captureException(
-          new Error(`Web scrape usage report failed: ${errorBody}`),
-          {
-            tags: { source: "billing-service", feature: "web-scrape-usage" },
-            extra: {
-              stripeCustomerId,
-              pagesScraped,
-              applicationId,
-              knowledgeSourceId,
-            },
-          }
-        );
+          applicationId,
+          knowledgeSourceId,
+        }, new Error(`Web scrape usage report failed: ${errorBody}`));
         return;
       }
 
-      console.log("[billing] Reported web scrape usage", {
+      log.info("Reported web scrape usage", {
+        source: "billing-service",
+        feature: "web-scrape-usage",
         stripeCustomerId,
         pagesScraped,
         applicationId,
         knowledgeSourceId,
       });
     } catch (error) {
-      console.error("[billing] Error reporting web scrape usage", {
-        error: error instanceof Error ? error.message : String(error),
+      log.error("Error reporting web scrape usage", {
+        source: "billing-service",
+        feature: "web-scrape-usage",
         stripeCustomerId,
         pagesScraped,
-      });
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "web-scrape-usage" },
-        extra: {
-          stripeCustomerId,
-          pagesScraped,
-          applicationId,
-          knowledgeSourceId,
-        },
-      });
+        applicationId,
+        knowledgeSourceId,
+      }, error);
     }
   },
 
@@ -3985,7 +3867,11 @@ export const billingService = {
     `;
 
     if (!orgCheck.length) {
-      console.warn(`[billing] Organization not found: ${organizationId}`);
+      log.warn("Organization not found for free subscription", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+      });
       return;
     }
 
@@ -4014,9 +3900,11 @@ export const billingService = {
     }
 
     if (!customerId) {
-      console.warn(
-        `[billing] Could not get/create customer for organization ${organizationId}`
-      );
+      log.warn("Could not get/create customer for organization", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+      });
       return;
     }
 
@@ -4090,9 +3978,14 @@ export const billingService = {
       WHERE id = ${context.organizationId}
     `;
 
-    console.log(
-      `[billing] Scheduled downgrade for organization ${context.organizationId}: ${context.subscriptionTier} -> ${targetTier} effective ${periodEnd?.toISOString()}`
-    );
+    log.info("Scheduled downgrade for organization", {
+      source: "billing-service",
+      feature: "schedule-downgrade",
+      organizationId: context.organizationId,
+      fromTier: context.subscriptionTier,
+      toTier: targetTier,
+      effectiveAt: periodEnd?.toISOString(),
+    });
 
     return {
       success: true,
@@ -4117,9 +4010,11 @@ export const billingService = {
       WHERE id = ${context.organizationId}
     `;
 
-    console.log(
-      `[billing] Cancelled scheduled downgrade for organization ${context.organizationId}`
-    );
+    log.info("Cancelled scheduled downgrade for organization", {
+      source: "billing-service",
+      feature: "undo-downgrade",
+      organizationId: context.organizationId,
+    });
 
     return { success: true };
   },
@@ -4168,9 +4063,12 @@ export const billingService = {
     // to mark the subscription for cancellation at period end.
     // This is handled via Stripe billing portal in the current implementation.
 
-    console.log(
-      `[billing] Scheduled cancellation for organization ${context.organizationId} effective ${periodEnd?.toISOString()}`
-    );
+    log.info("Scheduled cancellation for organization", {
+      source: "billing-service",
+      feature: "cancel-subscription",
+      organizationId: context.organizationId,
+      effectiveAt: periodEnd?.toISOString(),
+    });
 
     return {
       success: true,
@@ -4193,9 +4091,11 @@ export const billingService = {
       WHERE id = ${context.organizationId}
     `;
 
-    console.log(
-      `[billing] Cancelled scheduled cancellation for organization ${context.organizationId}`
-    );
+    log.info("Cancelled scheduled cancellation for organization", {
+      source: "billing-service",
+      feature: "undo-cancellation",
+      organizationId: context.organizationId,
+    });
 
     return { success: true };
   },
@@ -4283,14 +4183,12 @@ export const billingService = {
 
       if (!cadencesRes.ok) {
         const cadencesErrText = await cadencesRes.text();
-        console.error(
-          "[billing] Failed to fetch billing cadences:",
-          cadencesErrText
-        );
-        Sentry.captureMessage("Failed to fetch billing cadences", {
-          level: "error",
-          tags: { source: "billing", feature: "billing-period-end" },
-          extra: { customerId, useSandbox, responseText: cadencesErrText },
+        log.error("Failed to fetch billing cadences", {
+          source: "billing-service",
+          feature: "billing-period-end",
+          customerId,
+          useSandbox,
+          responseText: cadencesErrText,
         });
         return null;
       }
@@ -4310,11 +4208,12 @@ export const billingService = {
 
       return null;
     } catch (error) {
-      console.error("[billing] Error fetching billing period end:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "billing-period-end" },
-        extra: { customerId, useSandbox },
-      });
+      log.error("Error fetching billing period end", {
+        source: "billing-service",
+        feature: "billing-period-end",
+        customerId,
+        useSandbox,
+      }, error);
       return null;
     }
   },

@@ -5,6 +5,7 @@
  * Uses the consolidated database schema.
  */
 
+import { log } from "@/lib/logger.ts";
 import { CamelCasePlugin, Kysely } from "kysely";
 import { PostgresJSDialect } from "kysely-postgres-js";
 import postgres from "postgres";
@@ -24,9 +25,10 @@ function createDatabaseClient(): {
   configured: boolean;
 } {
   if (!connectionString) {
-    console.warn(
-      "[db] WARNING: TEST_DATABASE_URL, DENO_DATABASE_URL, or PG_DATABASE_URL not set. Database features disabled."
-    );
+    log.warn("TEST_DATABASE_URL, DENO_DATABASE_URL, or PG_DATABASE_URL not set. Database features disabled.", {
+      source: "db",
+      feature: "init",
+    });
     // Create a no-op proxy that throws on any operation
     const noOpHandler = {
       get: () => {

@@ -10,7 +10,7 @@
 import { db } from "../db/client.ts";
 import { emailService, type PostmarkInboundEmail } from "./email.service.ts";
 import { chatService } from "./chat.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Agent framework imports
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
@@ -141,7 +141,9 @@ export async function handleEmailMessage(
 ): Promise<void> {
   const { applicationId, configId, email, correlationId } = params;
 
-  console.log("[EmailChat] Processing message", {
+  log.info("Processing message", {
+    source: "email-chat",
+    feature: "message-processing",
     correlationId,
     from: email.FromFull?.Email || email.From,
     subject: email.Subject,
@@ -157,11 +159,11 @@ export async function handleEmailMessage(
     const emailConfig =
       await emailService.getConfigByApplicationId(applicationId);
     if (!emailConfig) {
-      console.error("[EmailChat] Email config not found");
-      Sentry.captureMessage("[EmailChat] Email config not found", {
-        level: "error",
-        tags: { source: "email-chat", feature: "config" },
-        extra: { correlationId, applicationId },
+      log.error("Email config not found", {
+        source: "email-chat",
+        feature: "config",
+        correlationId,
+        applicationId,
       });
       return;
     }
@@ -182,7 +184,9 @@ export async function handleEmailMessage(
       senderEmail,
     });
 
-    console.log("[EmailChat] Thread resolved", {
+    log.info("Thread resolved", {
+      source: "email-chat",
+      feature: "thread-management",
       correlationId,
       threadId: thread.threadId,
       chatSessionId: thread.chatSessionId,
@@ -194,7 +198,11 @@ export async function handleEmailMessage(
       email.StrippedTextReply || cleanEmailBody(email.TextBody || "");
 
     if (!cleanedBody.trim()) {
-      console.log("[EmailChat] Empty message after cleaning, skipping");
+      log.info("Empty message after cleaning, skipping", {
+        source: "email-chat",
+        feature: "message-processing",
+        correlationId,
+      });
       return;
     }
 
@@ -305,7 +313,7 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     registerWebTools(registry);
 
     // Run agent loop
-    console.log("[EmailChat] Running agent loop", { correlationId });
+    log.info("Running agent loop", { source: "email-chat", feature: "agent-loop", correlationId });
     let responseText = "";
     for await (const chunk of agentLoop(messages, registry, adapter, {
       model: modelId,
@@ -318,7 +326,9 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
       }
     }
 
-    console.log("[EmailChat] Got response", {
+    log.info("Got response", {
+      source: "email-chat",
+      feature: "agent-loop",
       correlationId,
       length: responseText.length,
     });
@@ -336,11 +346,13 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     // Get server token
     const serverToken = await emailService.getServerToken(emailConfig);
     if (!serverToken) {
-      console.error("[EmailChat] No Postmark server token available");
-      Sentry.captureMessage("[EmailChat] No Postmark server token available", {
-        level: "error",
-        tags: { source: "email-chat", feature: "send-reply", provider: "postmark" },
-        extra: { correlationId, applicationId, configId },
+      log.error("No Postmark server token available", {
+        source: "email-chat",
+        feature: "send-reply",
+        provider: "postmark",
+        correlationId,
+        applicationId,
+        configId,
       });
       return;
     }
@@ -372,47 +384,30 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     });
 
     if (sendResult.ErrorCode !== 0) {
-      const error = new Error(`Postmark error: ${sendResult.Message}`);
-      Sentry.captureException(error, {
-        tags: {
-          source: "email-chat",
-          feature: "send-reply",
-        },
-        extra: {
-          correlationId,
-          applicationId,
-          errorCode: sendResult.ErrorCode,
-          errorMessage: sendResult.Message,
-        },
-      });
-      console.error("[EmailChat] Failed to send reply", {
+      log.error("Failed to send reply", {
+        source: "email-chat",
+        feature: "send-reply",
         correlationId,
+        applicationId,
         errorCode: sendResult.ErrorCode,
         errorMessage: sendResult.Message,
-      });
+      }, new Error(`Postmark error: ${sendResult.Message}`));
     } else {
-      console.log("[EmailChat] Reply sent successfully", {
+      log.info("Reply sent successfully", {
+        source: "email-chat",
+        feature: "send-reply",
         correlationId,
         messageId: sendResult.MessageID,
       });
     }
   } catch (error) {
-    console.error("[EmailChat] Error processing email", {
+    log.error("Error processing email", {
+      source: "email-chat",
+      feature: "message-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    Sentry.captureException(error, {
-      tags: {
-        source: "email-chat",
-        feature: "message-processing",
-      },
-      extra: {
-        correlationId,
-        applicationId,
-        messageId: email.MessageID,
-      },
-    });
+      applicationId,
+      messageId: email.MessageID,
+    }, error);
 
     // Note: Unlike WhatsApp, we don't send error messages back to the user
     // to avoid potential email loops

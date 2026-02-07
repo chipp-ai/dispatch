@@ -10,7 +10,7 @@
  */
 
 import { sql } from "../../db/client.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { notificationService } from "../notifications/notification.service.ts";
 
 const COOLDOWN_HOURS = 24;
@@ -55,13 +55,12 @@ export const creditNotificationService = {
           (Date.now() - lastSent.getTime()) / (1000 * 60 * 60);
 
         if (hoursSince < COOLDOWN_HOURS) {
-          console.log(
-            "[credit-notifications] Skipping - within 24h cooldown",
-            {
-              organizationId,
-              hoursSince: hoursSince.toFixed(1),
-            }
-          );
+          log.info("Skipping notification - within 24h cooldown", {
+            source: "credit-notifications",
+            feature: "low-credits-email",
+            organizationId,
+            hoursSince: hoursSince.toFixed(1),
+          });
           return false;
         }
       }
@@ -79,7 +78,9 @@ export const creditNotificationService = {
         .filter(Boolean);
 
       if (recipientEmails.length === 0) {
-        console.warn("[credit-notifications] No recipients found", {
+        log.warn("No recipients found for credit notification", {
+          source: "credit-notifications",
+          feature: "low-credits-email",
           organizationId,
         });
         return false;
@@ -137,7 +138,9 @@ export const creditNotificationService = {
       `;
 
       // Log email intent (actual sending deferred until email service is built)
-      console.log("[credit-notifications] EMAIL_NOTIFICATION_INTENT", {
+      log.info("Email notification intent", {
+        source: "credit-notifications",
+        feature: "low-credits-email",
         type: notificationType,
         severity,
         organizationId,
@@ -148,7 +151,6 @@ export const creditNotificationService = {
         recipients: recipientEmails,
         trackingId,
         emailSubject,
-        timestamp: new Date().toISOString(),
       });
 
       // Send via notification service (fire-and-forget)
@@ -171,17 +173,13 @@ export const creditNotificationService = {
 
       return true;
     } catch (error) {
-      console.error("[credit-notifications] Failed to send notification", {
+      log.error("Failed to send notification", {
+        source: "credit-notifications",
+        feature: "low-credits-email",
         organizationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: {
-          source: "credit-notifications",
-          feature: "low-credits-email",
-        },
-        extra: { organizationId, severity, creditBalanceCents },
-      });
+        severity,
+        creditBalanceCents,
+      }, error);
       return false;
     }
   },
@@ -207,14 +205,13 @@ export const creditNotificationService = {
         WHERE tracking_id = ${trackingId}
       `;
     } catch (error) {
-      console.error("[credit-notifications] Failed to track open", {
+      log.error("Failed to track open", {
+        source: "credit-notifications",
+        feature: "track-open",
         trackingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "credit-notifications", feature: "track-open" },
-        extra: { trackingId, ipAddress, userAgent },
-      });
+        ipAddress,
+        userAgent,
+      }, error);
     }
   },
 
@@ -231,14 +228,11 @@ export const creditNotificationService = {
         WHERE tracking_id = ${trackingId}
       `;
     } catch (error) {
-      console.error("[credit-notifications] Failed to track click", {
+      log.error("Failed to track click", {
+        source: "credit-notifications",
+        feature: "track-click",
         trackingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "credit-notifications", feature: "track-click" },
-        extra: { trackingId },
-      });
+      }, error);
     }
   },
 
@@ -259,14 +253,12 @@ export const creditNotificationService = {
         WHERE tracking_id = ${trackingId}
       `;
     } catch (error) {
-      console.error("[credit-notifications] Failed to track conversion", {
+      log.error("Failed to track conversion", {
+        source: "credit-notifications",
+        feature: "track-conversion",
         trackingId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      Sentry.captureException(error, {
-        tags: { source: "credit-notifications", feature: "track-conversion" },
-        extra: { trackingId, amountCents },
-      });
+        amountCents,
+      }, error);
     }
   },
 };
