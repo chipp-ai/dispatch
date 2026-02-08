@@ -24,6 +24,7 @@ interface Issue {
   agent_status?: string;
   plan_status?: string;
   blocked_reason?: string | null;
+  cost_usd?: number | null;
 }
 
 interface KanbanBoardProps {

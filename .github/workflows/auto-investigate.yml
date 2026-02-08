@@ -180,7 +180,7 @@ jobs:
           cat > .scratch/run-claude.sh << 'RUNEOF'
           #!/bin/bash
           PROMPT=$(cat .scratch/investigation-prompt.md)
-          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
+          exec claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
           RUNEOF
           chmod +x .scratch/run-claude.sh
 
@@ -211,6 +211,25 @@ jobs:
               | python3 -u .scratch/stream-filter.py
           fi
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
+
+          # Extract cost data from stream-json result event
+          python3 -c "
+          import json
+          for line in open('.scratch/claude-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      cost = event.get('total_cost_usd', 0)
+                      turns = event.get('num_turns', 0)
+                      model = event.get('model', 'unknown')
+                      with open('.scratch/claude-cost.json', 'w') as f:
+                          json.dump({'cost_usd': cost, 'num_turns': turns, 'model': model}, f)
+                      print(f'Cost: \${cost:.4f}, Turns: {turns}, Model: {model}')
+              except (json.JSONDecodeError, KeyError): pass
+          " 2>/dev/null || echo "Warning: Could not extract cost data"
+
           exit $CLAUDE_EXIT
 
           # Ensure investigation report exists even if Claude didn't create one
@@ -299,6 +318,16 @@ jobs:
             echo "No investigation report was generated." > .scratch/investigation-report.md
           fi
 
+          # Read cost data if available
+          COST_USD="0"
+          NUM_TURNS="0"
+          MODEL="unknown"
+          if [ -f .scratch/claude-cost.json ]; then
+            COST_USD=$(jq -r '.cost_usd // 0' .scratch/claude-cost.json)
+            NUM_TURNS=$(jq -r '.num_turns // 0' .scratch/claude-cost.json)
+            MODEL=$(jq -r '.model // "unknown"' .scratch/claude-cost.json)
+          fi
+
           # Build activity JSON safely with jq (--rawfile handles large reports)
           ACTIVITY_PAYLOAD=$(jq -n \
             --arg type "investigation_complete" \
@@ -310,6 +339,9 @@ jobs:
             --arg source "$INPUT_SOURCE" \
             --arg feature "$INPUT_FEATURE" \
             --arg fingerprint "$INPUT_ERROR_FINGERPRINT" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
             '{
               type: $type,
               content: $content,
@@ -320,7 +352,10 @@ jobs:
                 run_url: $run_url,
                 source: $source,
                 feature: $feature,
-                fingerprint: $fingerprint
+                fingerprint: $fingerprint,
+                cost_usd: $cost_usd,
+                num_turns: $num_turns,
+                model: $model
               }
             }')
 
@@ -329,11 +364,14 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity to Chipp Issues (non-fatal)"
 
-          # Update spawn status
+          # Update spawn status with cost data
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "$SPAWN_STATUS" \
             --arg spawn_completed_at "$TIMESTAMP" \
-            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model}')
 
           curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
