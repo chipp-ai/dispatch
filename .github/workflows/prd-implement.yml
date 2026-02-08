@@ -445,17 +445,27 @@ jobs:
 
           PROMPT=$(cat .scratch/implementation-prompt.md)
 
-          # Use stream-json for real-time output (--print text mode buffers everything)
-          # stdbuf -oL forces line buffering on tee; python3 -u disables Python buffering
-          # Pipeline: raw JSON -> tee to raw log -> filter to readable text -> tee to readable log + stdout
+          # Write claude output directly to file (avoids pipe buffering).
+          # Then tail -f streams it to stdout for real-time GitHub Actions visibility.
+          touch .scratch/claude-raw.log
+          tail -f .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py &
+          TAIL_PID=$!
+
           claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT" 2>&1 \
-            | stdbuf -oL tee .scratch/claude-raw.log \
-            | python3 -u .scratch/stream-filter.py \
-            | stdbuf -oL tee .scratch/claude-output.log
+            --mcp-config .mcp.json "$PROMPT" > .scratch/claude-raw.log 2>&1
+          CLAUDE_EXIT=$?
+
+          # Give tail a moment to catch up with the last writes, then stop it
+          sleep 3
+          kill $TAIL_PID 2>/dev/null || true
+
+          # Create human-readable log from raw JSON for heartbeat/full-log upload
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
 
           # Stop heartbeat when Claude finishes
           [ -n "${HEARTBEAT_PID:-}" ] && kill $HEARTBEAT_PID 2>/dev/null || true
+
+          exit $CLAUDE_EXIT
 
       - name: Verify PR checks pass
         id: verify
@@ -516,11 +526,15 @@ jobs:
           After fixing, commit with a message like 'fix: resolve PR check failures for ISSUE_ID'.
           Do NOT push."
 
+          tail -f .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py &
+          FIX_TAIL_PID=$!
+
           claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$FIX_PROMPT" 2>&1 \
-            | stdbuf -oL tee -a .scratch/claude-raw.log \
-            | python3 -u .scratch/stream-filter.py \
-            | stdbuf -oL tee -a .scratch/claude-output.log
+            --mcp-config .mcp.json "$FIX_PROMPT" >> .scratch/claude-raw.log 2>&1
+
+          sleep 3
+          kill $FIX_TAIL_PID 2>/dev/null || true
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
 
       - name: Re-verify after fix
         if: steps.verify.outputs.checks_failed == 'true'
