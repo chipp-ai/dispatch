@@ -92,6 +92,13 @@ jobs:
       - name: Install MCP browser-devtools dependencies
         run: cd tools/mcp-browser-devtools && npm ci
 
+      - name: Pre-cache Deno MCP server dependencies
+        run: |
+          # Download and compile npm packages ahead of time so the MCP server
+          # starts instantly when Claude launches it (no network fetch at runtime)
+          deno cache tools/mcp-database/index.ts
+          echo "Deno MCP server dependencies cached"
+
       - name: Configure CI MCP servers
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
@@ -420,55 +427,58 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          echo "=== Debug Info ==="
-          echo "which claude: $(which claude)"
-          echo "claude --version: $(claude --version 2>&1 || echo 'failed')"
-          echo "prompt size: $(wc -c < .scratch/implementation-prompt.md) bytes"
-          echo "=================="
-
-          # DIAGNOSTIC: Test if Claude CLI works at all (no MCP, simple prompt)
-          echo ""
-          echo "=== SANITY CHECK 1: Claude without MCP ==="
-          timeout 60 claude --print --dangerously-skip-permissions "Respond with exactly: SANITY_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
+          # Quick MCP readiness check (should complete in <30s now that server init is fixed)
+          echo "=== MCP readiness check ==="
+          timeout 60 claude --print --dangerously-skip-permissions --mcp-config .mcp.json \
+            "Respond with exactly: MCP_READY" 2>&1 && echo "MCP check PASSED" || {
+            echo "MCP check FAILED (exit: $?)"
+            echo "Proceeding anyway - MCP tools may not be available"
+          }
 
           echo ""
-          echo "=== SANITY CHECK 2: Claude with MCP ==="
-          timeout 90 claude --print --dangerously-skip-permissions --mcp-config .mcp.json "Respond with exactly: MCP_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
-
-          echo ""
-          echo "=== SANITY CHECK 3: Claude stream-json mode ==="
-          timeout 60 claude --print --output-format stream-json --dangerously-skip-permissions "Respond with exactly: STREAM_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
-
-          echo ""
-          echo "=== REAL RUN: Implementation ==="
+          echo "=== Starting Implementation ==="
           PROMPT=$(cat .scratch/implementation-prompt.md)
 
-          # Run Claude directly - accept buffered output, no PTY tricks
-          claude --print --output-format stream-json --verbose --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT" \
-            > .scratch/claude-raw.log 2>&1 &
+          # Use script(1) to create a pseudo-TTY so Claude's Node.js flushes stdout
+          # in real-time instead of buffering until exit.
+          cat > .scratch/run-claude.sh << 'RUNEOF'
+          #!/bin/bash
+          PROMPT=$(cat .scratch/implementation-prompt.md)
+          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$PROMPT"
+          RUNEOF
+          chmod +x .scratch/run-claude.sh
+
+          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
 
-          # Monitor file growth in foreground
+          # Stream new output lines to GitHub Actions log as they appear
+          PREV_LINES=0
           while kill -0 $CLAUDE_PID 2>/dev/null; do
-            sleep 30
-            SIZE=$(wc -c < .scratch/claude-raw.log 2>/dev/null || echo 0)
-            LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
-            echo "[$(date -u +%H:%M:%S)] Claude running... (${SIZE} bytes, ${LINES} lines)"
+            sleep 15
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+              PREV_LINES=$CURR_LINES
+            else
+              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines)"
+            fi
           done
           wait $CLAUDE_PID
           CLAUDE_EXIT=$?
 
+          # Flush any remaining lines
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py
+          fi
+
           echo ""
           echo "=== Claude exited with code $CLAUDE_EXIT ==="
-          SIZE=$(wc -c < .scratch/claude-raw.log)
-          LINES=$(wc -l < .scratch/claude-raw.log)
-          echo "=== Raw log: ${SIZE} bytes, ${LINES} lines ==="
-          echo "=== First 20 lines ==="
-          head -20 .scratch/claude-raw.log
-          echo "=== Last 20 lines ==="
-          tail -20 .scratch/claude-raw.log
 
           # Generate readable log from raw JSON
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
