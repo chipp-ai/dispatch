@@ -156,9 +156,14 @@ jobs:
              - Modify files listed in 'Files to Modify'
              - Create database migrations if listed in 'Database Changes'
              - Follow existing code patterns and conventions
-          4. After implementing, verify your work:
-             - Run 'deno check main.ts' for type safety
-             - Run any relevant tests
+          4. After implementing, you MUST verify your work by running the FULL PR check suite.
+             These are the exact checks that will run on your PR -- ALL must pass:
+             a. deno check main.ts          (type checking)
+             b. deno lint                    (linting -- covers src/ AND dispatch/)
+             c. deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/llm/normalization/ src/__tests__/llm/normalize_history_test.ts
+             d. cd web && npm ci && npm run check && npm run build  (Svelte type check + build)
+             If ANY check fails, fix the issue and re-run ALL checks until they pass.
+             Fix pre-existing failures too -- the PR must be green.
           5. Commit your changes with a descriptive message referencing {d['identifier']}
           6. Do NOT push branches - just prepare commits locally
 
@@ -194,6 +199,89 @@ jobs:
         run: |
           PROMPT=$(cat .scratch/implementation-prompt.md)
           claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+      - name: Verify PR checks pass
+        id: verify
+        if: success()
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          echo "Running PR check suite to verify implementation..."
+          FAILURES=""
+
+          echo "=== deno check main.ts ==="
+          if ! deno check main.ts 2>&1 | tee .scratch/verify-typecheck.log; then
+            FAILURES="${FAILURES}deno-check "
+          fi
+
+          echo "=== deno lint ==="
+          if ! deno lint 2>&1 | tee .scratch/verify-lint.log; then
+            FAILURES="${FAILURES}deno-lint "
+          fi
+
+          echo "=== deno test ==="
+          if ! deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi \
+            src/__tests__/llm/normalization/ \
+            src/__tests__/llm/normalize_history_test.ts 2>&1 | tee .scratch/verify-test.log; then
+            FAILURES="${FAILURES}deno-test "
+          fi
+
+          echo "=== svelte build ==="
+          if ! (cd web && npm ci && npm run check && npm run build) 2>&1 | tee .scratch/verify-svelte.log; then
+            FAILURES="${FAILURES}svelte-build "
+          fi
+
+          if [ -n "$FAILURES" ]; then
+            echo "FAILED CHECKS: $FAILURES"
+            echo "checks_failed=true" >> "$GITHUB_OUTPUT"
+            echo "$FAILURES" > .scratch/failed-checks.txt
+          else
+            echo "All PR checks passed!"
+            echo "checks_failed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fix failing checks
+        if: steps.verify.outputs.checks_failed == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          FAILURES=$(cat .scratch/failed-checks.txt)
+          FIX_PROMPT="The implementation is complete but the following PR checks are failing: ${FAILURES}
+
+          Fix ALL failing checks. Here are the logs:
+
+          $([ -f .scratch/verify-typecheck.log ] && echo '--- deno check ---' && tail -30 .scratch/verify-typecheck.log)
+          $([ -f .scratch/verify-lint.log ] && echo '--- deno lint ---' && tail -50 .scratch/verify-lint.log)
+          $([ -f .scratch/verify-test.log ] && echo '--- deno test ---' && tail -30 .scratch/verify-test.log)
+          $([ -f .scratch/verify-svelte.log ] && echo '--- svelte build ---' && tail -30 .scratch/verify-svelte.log)
+
+          Fix every error, even pre-existing ones. The PR must pass all checks.
+          After fixing, commit with a message like 'fix: resolve PR check failures for ISSUE_ID'.
+          Do NOT push."
+
+          claude --print --dangerously-skip-permissions "$FIX_PROMPT" 2>&1 | tee -a .scratch/claude-output.log
+
+      - name: Re-verify after fix
+        if: steps.verify.outputs.checks_failed == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          echo "Re-running PR check suite after fix attempt..."
+          STILL_FAILING=""
+
+          deno check main.ts 2>&1 || STILL_FAILING="${STILL_FAILING}deno-check "
+          deno lint 2>&1 || STILL_FAILING="${STILL_FAILING}deno-lint "
+          deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi \
+            src/__tests__/llm/normalization/ \
+            src/__tests__/llm/normalize_history_test.ts 2>&1 || STILL_FAILING="${STILL_FAILING}deno-test "
+          (cd web && npm run check && npm run build) 2>&1 || STILL_FAILING="${STILL_FAILING}svelte-build "
+
+          if [ -n "$STILL_FAILING" ]; then
+            echo "WARNING: Still failing after fix: $STILL_FAILING"
+            echo "Proceeding anyway - PR will show failures for human review."
+          else
+            echo "All checks pass after fix!"
+          fi
 
       - name: Check for blocker
         id: check-blocker
