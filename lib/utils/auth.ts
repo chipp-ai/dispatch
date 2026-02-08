@@ -51,6 +51,10 @@ export async function requireAuth(): Promise<boolean> {
     const token = authHeader.slice(7);
     const apiKey = process.env.CHIPP_ISSUES_API_KEY;
     if (apiKey && token === apiKey) return true;
+
+    // In dev mode, accept any valid Bearer token (for ngrok tunnel callbacks
+    // where the GH Actions secret differs from the local API key)
+    if (process.env.NODE_ENV !== "production" && token.length > 0) return true;
   }
 
   return false;
