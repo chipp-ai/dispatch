@@ -71,7 +71,9 @@ interface AgentActivity {
     | "file_write"
     | "search"
     | "complete"
-    | "error";
+    | "error"
+    | "agent_heartbeat"
+    | "agent_full_log";
   content: string;
   metadata?: {
     tool?: string;
@@ -239,6 +241,12 @@ const activityTypeConfig: Record<
     color: "#6b7280",
     bgColor: "#6b728010",
     label: "Progress",
+  },
+  agent_full_log: {
+    icon: "📋",
+    color: "#8b5cf6",
+    bgColor: "#8b5cf610",
+    label: "Full Log",
   },
 };
 
@@ -441,6 +449,15 @@ function AgentActivityItem({
           <pre className="text-[11px] text-[#808080] leading-relaxed font-mono bg-[#0a0a0a] rounded p-2 mt-1 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
             {activity.content}
           </pre>
+        ) : activity.type === "agent_full_log" ? (
+          <details className="mt-1">
+            <summary className="text-[11px] text-[#8b5cf6] cursor-pointer hover:text-[#a78bfa]">
+              View full agent log ({Math.round((activity.content?.length || 0) / 1024)}KB)
+            </summary>
+            <pre className="text-[11px] text-[#808080] leading-relaxed font-mono bg-[#0a0a0a] rounded p-2 mt-1 overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap">
+              {activity.content}
+            </pre>
+          </details>
         ) : (
           <p className="text-[12px] text-[#909090] leading-relaxed">
             {activity.content}
