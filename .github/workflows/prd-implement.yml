@@ -213,12 +213,24 @@ jobs:
         run: |
           # Chrome is pre-installed on ubuntu-latest; start after dev servers are up
           google-chrome --headless --no-sandbox --disable-gpu \
+            --disable-dbus \
             --remote-debugging-port=9222 \
             --remote-debugging-address=127.0.0.1 \
             about:blank &
-          sleep 2
-          # Verify Chrome DevTools Protocol is accessible
-          curl -sf http://localhost:9222/json/version && echo "Chrome DevTools ready" || echo "WARNING: Chrome DevTools not responding"
+
+          # Wait for DevTools Protocol to be ready (up to 15s)
+          echo "Waiting for Chrome DevTools at localhost:9222..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:9222/json/version > /dev/null 2>&1; then
+              echo "Chrome DevTools ready after ${i}s"
+              curl -sf http://localhost:9222/json/version
+              break
+            fi
+            if [ $i -eq 15 ]; then
+              echo "WARNING: Chrome DevTools not responding after 15s"
+            fi
+            sleep 1
+          done
 
       - name: Build implementation prompt
         run: |
