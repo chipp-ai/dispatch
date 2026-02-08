@@ -12,6 +12,7 @@ import { twilioWebhookRoutes } from "./twilio.ts";
 import { slackWebhookRoutes } from "./slack.ts";
 import { whatsappWebhookRoutes } from "./whatsapp.ts";
 import { emailWebhookRoutes } from "./email.ts";
+import { firecrawlWebhookRoutes } from "./firecrawl.ts";
 
 export const webhookRoutes = new Hono<WebhookContext>();
 
@@ -71,13 +72,23 @@ webhookRoutes.route("/whatsapp", whatsappWebhookRoutes);
 webhookRoutes.route("/email", emailWebhookRoutes);
 
 /**
+ * Firecrawl webhooks - POST /api/webhooks/firecrawl
+ *
+ * Handles:
+ * - crawl.page: New page scraped (creates processing job)
+ * - crawl.completed: Crawl finished
+ * - crawl.failed: Crawl failed
+ */
+webhookRoutes.route("/firecrawl", firecrawlWebhookRoutes);
+
+/**
  * Health check for webhooks
  * Can be used to verify webhook endpoints are reachable
  */
 webhookRoutes.get("/health", (c) => {
   return c.json({
     status: "ok",
-    webhooks: ["stripe", "twilio", "slack", "whatsapp", "email"],
+    webhooks: ["stripe", "twilio", "slack", "whatsapp", "email", "firecrawl"],
     timestamp: new Date().toISOString(),
   });
 });

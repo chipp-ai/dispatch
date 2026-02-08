@@ -11,6 +11,7 @@ import { initRedis } from "./services/redis/client.ts";
 import { isDatabaseConfigured } from "./src/db/client.ts";
 import { initWebSocket, shutdownWebSocket } from "./src/websocket/index.ts";
 import { initEmbedder } from "./src/services/local-embeddings.service.ts";
+import { processRagJobs } from "./src/services/job-processor.service.ts";
 import { log } from "@/lib/logger.ts";
 
 const PORT = parseInt(Deno.env.get("PORT") ?? "8000");
@@ -99,6 +100,20 @@ async function initServices() {
 // Start server
 async function main() {
   await initServices();
+
+  // Register Deno.cron for RAG job processing (every 30 seconds)
+  if (isDatabaseConfigured() && typeof Deno.cron === "function") {
+    Deno.cron("process-rag-jobs", "*/30 * * * * *", processRagJobs);
+    log.info("RAG job processor cron registered", { source: "server", feature: "startup" });
+  } else if (isDatabaseConfigured()) {
+    // Deno.cron not available (needs --unstable-cron) -- use setInterval fallback
+    setInterval(() => {
+      processRagJobs().catch((err) => {
+        log.error("RAG job processor tick failed", { source: "server", feature: "job-processor" }, err);
+      });
+    }, 30_000);
+    log.info("RAG job processor registered (setInterval fallback)", { source: "server", feature: "startup" });
+  }
 
   log.info("Server listening", { source: "server", feature: "startup", port: PORT });
 
