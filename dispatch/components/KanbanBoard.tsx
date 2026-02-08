@@ -21,6 +21,9 @@ interface Issue {
   assignee: { name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
+  agent_status?: string;
+  plan_status?: string;
+  blocked_reason?: string | null;
 }
 
 interface KanbanBoardProps {
@@ -117,6 +120,15 @@ function getStatusIcon(statusName: string, color: string) {
   );
 }
 
+function needsAttention(issue: Issue): boolean {
+  return (
+    issue.agent_status === "blocked" ||
+    issue.agent_status === "awaiting_review" ||
+    issue.plan_status === "awaiting_review" ||
+    issue.plan_status === "needs_revision"
+  );
+}
+
 export default function KanbanBoard({
   statuses,
   issues,
@@ -124,6 +136,9 @@ export default function KanbanBoard({
 }: KanbanBoardProps) {
   const [draggedIssue, setDraggedIssue] = useState<Issue | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [filterNeedsAttention, setFilterNeedsAttention] = useState(false);
+
+  const attentionCount = issues.filter(needsAttention).length;
 
   function handleDragStart(e: React.DragEvent, issue: Issue) {
     setDraggedIssue(issue);
@@ -151,11 +166,50 @@ export default function KanbanBoard({
   }
 
   const sortedStatuses = [...statuses].sort((a, b) => a.position - b.position);
+  const filteredIssues = filterNeedsAttention
+    ? issues.filter(needsAttention)
+    : issues;
 
   return (
-    <div className="flex gap-4 h-full overflow-x-auto pb-4">
+    <div className="flex flex-col h-full">
+      {/* Filter bar */}
+      {attentionCount > 0 && (
+        <div className="flex items-center gap-2 px-1 pb-3 flex-shrink-0">
+          <button
+            onClick={() => setFilterNeedsAttention(!filterNeedsAttention)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
+              filterNeedsAttention
+                ? "bg-[#facc15]/15 text-[#facc15] border border-[#facc15]/30"
+                : "bg-[#1a1a1a] text-[#808080] border border-[#252525] hover:border-[#404040]"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1.5l1.5 3 3.5.5-2.5 2.5.5 3.5L8 9.5 4.5 11l.5-3.5L2.5 5l3.5-.5L8 1.5z"
+                stroke="currentColor"
+                strokeWidth="1.25"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Needs Attention
+            <span
+              className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] ${
+                filterNeedsAttention
+                  ? "bg-[#facc15]/20 text-[#facc15]"
+                  : "bg-[#252525] text-[#606060]"
+              }`}
+            >
+              {attentionCount}
+            </span>
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-4 flex-1 overflow-x-auto pb-4 min-h-0">
       {sortedStatuses.map((status) => {
-        const columnIssues = issues.filter((i) => i.status_id === status.id);
+        const columnIssues = filteredIssues.filter(
+          (i) => i.status_id === status.id
+        );
         const isDragOver = dragOverColumn === status.id;
 
         return (
@@ -201,6 +255,7 @@ export default function KanbanBoard({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

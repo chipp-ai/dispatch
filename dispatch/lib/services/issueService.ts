@@ -20,6 +20,23 @@ export interface AgentOutput {
   error?: string;
 }
 
+export type WorkflowType = "error_fix" | "prd";
+export type PlanStatus =
+  | "investigating"
+  | "posted"
+  | "awaiting_review"
+  | "approved"
+  | "rejected"
+  | "needs_revision";
+export type SpawnType = "investigate" | "implement" | "error_fix";
+export type BlockerCategory =
+  | "missing_env"
+  | "unclear_requirement"
+  | "missing_dependency"
+  | "test_failure"
+  | "design_decision"
+  | "out_of_scope";
+
 export interface Issue {
   id: string;
   identifier: string;
@@ -39,6 +56,16 @@ export interface Issue {
   agent_tokens_used: number | null;
   agent_started_at: Date | null;
   agent_completed_at: Date | null;
+  // PRD workflow fields
+  workflow_type: WorkflowType;
+  plan_status: PlanStatus | null;
+  plan_content: string | null;
+  plan_feedback: string | null;
+  plan_approved_at: Date | null;
+  plan_approved_by: string | null;
+  spawn_type: SpawnType | null;
+  spawn_attempt_count: number;
+  blocked_reason: string | null;
 }
 
 export interface IssueWithRelations extends Issue {
@@ -73,6 +100,16 @@ export interface UpdateIssueInput {
   agent_output?: AgentOutput | null;
   agent_confidence?: number | null;
   agent_tokens_used?: number | null;
+  // PRD workflow fields
+  workflow_type?: WorkflowType;
+  plan_status?: PlanStatus | null;
+  plan_content?: string | null;
+  plan_feedback?: string | null;
+  plan_approved_at?: Date | null;
+  plan_approved_by?: string | null;
+  spawn_type?: SpawnType | null;
+  spawn_attempt_count?: number;
+  blocked_reason?: string | null;
 }
 
 export async function createIssue(
@@ -269,6 +306,15 @@ export async function updateIssue(
         agent_tokens_used = COALESCE($11, agent_tokens_used),
         agent_started_at = COALESCE($12, agent_started_at),
         agent_completed_at = COALESCE($13, agent_completed_at),
+        workflow_type = COALESCE($14, workflow_type),
+        plan_status = COALESCE($15, plan_status),
+        plan_content = COALESCE($16, plan_content),
+        plan_feedback = COALESCE($17, plan_feedback),
+        plan_approved_at = COALESCE($18, plan_approved_at),
+        plan_approved_by = COALESCE($19, plan_approved_by),
+        spawn_type = COALESCE($20, spawn_type),
+        spawn_attempt_count = COALESCE($21, spawn_attempt_count),
+        blocked_reason = COALESCE($22, blocked_reason),
         updated_at = NOW()
       WHERE id = $7
       RETURNING *`,
@@ -286,6 +332,15 @@ export async function updateIssue(
         input.agent_tokens_used,
         agentStartedAt,
         agentCompletedAt,
+        input.workflow_type,
+        input.plan_status,
+        input.plan_content,
+        input.plan_feedback,
+        input.plan_approved_at,
+        input.plan_approved_by,
+        input.spawn_type,
+        input.spawn_attempt_count,
+        input.blocked_reason,
       ]
     );
 
@@ -542,6 +597,9 @@ export interface BoardIssue {
   assignee: { name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
+  agent_status?: string;
+  plan_status?: string | null;
+  blocked_reason?: string | null;
 }
 
 export async function getIssueForBoard(
@@ -557,10 +615,14 @@ export async function getIssueForBoard(
     assignee_id: string | null;
     assignee_name: string | null;
     created_at: Date;
+    agent_status: string;
+    plan_status: string | null;
+    blocked_reason: string | null;
   }>(
     `SELECT
       i.id, i.identifier, i.title, i.description, i.priority, i.status_id,
-      i.assignee_id, a.name as assignee_name, i.created_at
+      i.assignee_id, a.name as assignee_name, i.created_at,
+      i.agent_status, i.plan_status, i.blocked_reason
     FROM chipp_issue i
     LEFT JOIN chipp_agent a ON i.assignee_id = a.id
     WHERE i.id = $1 OR i.identifier = $1`,
@@ -594,6 +656,9 @@ export async function getIssueForBoard(
       label: { id: l.label_id, name: l.name, color: l.color },
     })),
     created_at: issue.created_at.toISOString(),
+    agent_status: issue.agent_status,
+    plan_status: issue.plan_status,
+    blocked_reason: issue.blocked_reason,
   };
 }
 
