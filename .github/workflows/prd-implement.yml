@@ -358,6 +358,11 @@ jobs:
 
           IMPORTANT: Working around blockers instead of reporting them is a FAILURE.
           It is better to stop and ask for help than to produce incorrect or incomplete work.
+
+          OFF-LIMITS FILES (do NOT modify):
+          - .github/ (workflow files - CI/CD config)
+          - .mcp.json (MCP server config - managed by CI)
+          - scripts/ (dev scripts - not your concern)
           """
           with open('.scratch/implementation-prompt.md', 'w') as f:
               f.write(prompt)
@@ -416,7 +421,7 @@ jobs:
 
           # Quick MCP readiness check (servers registered at user scope - no approval needed)
           echo "=== MCP readiness check ==="
-          timeout 60 claude --print --dangerously-skip-permissions \
+          timeout 60 claude --print --model claude-opus-4-6 --dangerously-skip-permissions \
             "List your available MCP tools. Respond with the count of MCP tools you have access to." 2>&1 \
             && echo "MCP check: PASS" || echo "MCP check: FAIL (exit: $?)"
 
@@ -426,7 +431,7 @@ jobs:
 
           # Servers are registered at user scope (via `claude mcp add-json` above).
           # No --mcp-config flag needed - Claude auto-discovers user-scoped servers.
-          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions \
             "$PROMPT" > .scratch/claude-raw.log 2>&1 &
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
@@ -460,6 +465,25 @@ jobs:
 
           # Generate readable log from raw JSON
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
+
+          # Extract cost and turn count from the stream-json result event
+          python3 -c "
+          import json, sys
+          for line in open('.scratch/claude-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      cost = event.get('total_cost_usd', 0)
+                      turns = event.get('num_turns', 0)
+                      model = event.get('model', 'unknown')
+                      with open('.scratch/claude-cost.json', 'w') as f:
+                          json.dump({'cost_usd': cost, 'num_turns': turns, 'model': model}, f)
+                      print(f'Cost: \${cost:.4f}, Turns: {turns}, Model: {model}')
+              except (json.JSONDecodeError, KeyError):
+                  pass
+          " 2>/dev/null || echo "Warning: Could not extract cost data"
 
           exit $CLAUDE_EXIT
 
@@ -527,7 +551,7 @@ jobs:
           PREV_FIX_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
 
           # Run fix attempt (MCP servers auto-discovered from user config)
-          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions \
             "$(cat .scratch/fix-prompt.md)" > .scratch/claude-fix-raw.log 2>&1 &
           FIX_PID=$!
 
@@ -644,6 +668,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          # Ensure .github/ directory is clean - PAT may lack `workflows` scope
+          # which blocks pushing any changes to workflow files.
+          git checkout -- .github/ 2>/dev/null || true
+
           # Use PAT for push (enterprise blocks default GITHUB_TOKEN writes)
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           BRANCH_NAME=$(git branch --show-current)
@@ -780,6 +808,35 @@ jobs:
             SUMMARY_FILE=".scratch/git-summary.md"
           fi
 
+          # Read cost data if available
+          COST_USD="0"
+          NUM_TURNS="0"
+          MODEL="unknown"
+          if [ -f .scratch/claude-cost.json ]; then
+            COST_USD=$(jq -r '.cost_usd // 0' .scratch/claude-cost.json)
+            NUM_TURNS=$(jq -r '.num_turns // 0' .scratch/claude-cost.json)
+            MODEL=$(jq -r '.model // "unknown"' .scratch/claude-cost.json)
+          fi
+
+          # Also check fix session cost if it exists
+          if [ -f .scratch/claude-fix-raw.log ]; then
+            FIX_COST=$(python3 -c "
+          import json
+          for line in open('.scratch/claude-fix-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      print(event.get('total_cost_usd', 0))
+                      break
+              except: pass
+          " 2>/dev/null || echo "0")
+            if [ -n "$FIX_COST" ] && [ "$FIX_COST" != "0" ]; then
+              COST_USD=$(python3 -c "print(round($COST_USD + $FIX_COST, 4))")
+            fi
+          fi
+
           ACTIVITY_PAYLOAD=$(jq -n \
             --arg type "implementation_complete" \
             --rawfile content "$SUMMARY_FILE" \
@@ -787,7 +844,10 @@ jobs:
             --arg fix_attempted "${FIX_ATTEMPTED:-false}" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_url "$GITHUB_RUN_URL" \
-            '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}')
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
 
           curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
@@ -797,7 +857,10 @@ jobs:
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "$SPAWN_STATUS" \
             --arg spawn_completed_at "$TIMESTAMP" \
-            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model}')
 
           curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
@@ -813,19 +876,19 @@ jobs:
             exit 0
           fi
 
-          # Truncate to ~500KB to stay within reasonable API limits
-          LOG_CONTENT=$(head -c 512000 "$LOG_FILE")
           FULL_SIZE=$(wc -c < "$LOG_FILE")
-          if [ "$FULL_SIZE" -gt 512000 ]; then
-            LOG_CONTENT="${LOG_CONTENT}
 
-... [truncated - full log was $(( FULL_SIZE / 1024 ))KB]"
+          # Truncate to ~500KB to stay within reasonable API limits
+          head -c 512000 "$LOG_FILE" > .scratch/full-log-truncated.txt
+          if [ "$FULL_SIZE" -gt 512000 ]; then
+            echo "" >> .scratch/full-log-truncated.txt
+            echo "... [truncated - full log was $(( FULL_SIZE / 1024 ))KB]" >> .scratch/full-log-truncated.txt
           fi
 
-          # Post the full log as an agent_full_log activity
+          # Use --rawfile to avoid bash quoting issues with arbitrary log content
           jq -n \
             --arg type "agent_full_log" \
-            --arg content "$LOG_CONTENT" \
+            --rawfile content .scratch/full-log-truncated.txt \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_url "$GITHUB_RUN_URL" \
             '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}' \
