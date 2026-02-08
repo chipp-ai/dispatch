@@ -145,9 +145,42 @@ jobs:
           PROMPT_BOUNDARY
           sed -i 's/^          //' .scratch/investigation-prompt.md
 
-          # Run Claude Code with the prompt file
+          # Create stream filter for human-readable output
+          cat > .scratch/stream-filter.py << 'PYEOF'
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  t = event.get("type", "")
+                  if t == "assistant":
+                      for c in event.get("message", {}).get("content", []):
+                          if c.get("type") == "text" and c.get("text"):
+                              print(c["text"], flush=True)
+                          elif c.get("type") == "tool_use":
+                              name = c.get("name", "unknown")
+                              inp = c.get("input", {})
+                              parts = [f"{k}={str(v)[:80]}" for k, v in list(inp.items())[:3]]
+                              print(f"[TOOL] {name}({', '.join(parts)})", flush=True)
+                  elif t == "tool_result":
+                      content = event.get("content", "")
+                      if isinstance(content, list):
+                          content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                      preview = str(content)[:200] + ("..." if len(str(content)) > 200 else "")
+                      print(f"[RESULT] {preview}", flush=True)
+                  elif t == "result":
+                      print(f"\n[COMPLETED] Cost: ${event.get('total_cost_usd', 0):.2f}, Turns: {event.get('num_turns', 0)}", flush=True)
+              except (json.JSONDecodeError, KeyError):
+                  print(line, flush=True)
+          PYEOF
+
+          # Run Claude Code with streaming output
           PROMPT=$(cat .scratch/investigation-prompt.md)
-          claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT" 2>&1 \
+            | tee .scratch/claude-raw.log \
+            | python3 .scratch/stream-filter.py \
+            | tee .scratch/claude-output.log
 
           # Ensure investigation report exists even if Claude didn't create one
           if [ ! -f .scratch/investigation-report.md ]; then

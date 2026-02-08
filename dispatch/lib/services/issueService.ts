@@ -672,7 +672,9 @@ export type AgentActivityType =
   | "file_write"
   | "search"
   | "complete"
-  | "error";
+  | "error"
+  | "agent_heartbeat"
+  | "agent_full_log";
 
 export interface AgentActivityMetadata {
   tool?: string;
