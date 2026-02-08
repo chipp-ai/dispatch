@@ -575,6 +575,24 @@ function AgentActivityItem({
               {activity.content}
             </pre>
           </details>
+        ) : activity.type === "investigation_complete" ||
+          activity.type === "implementation_complete" ||
+          activity.type === "blocker_reported" ? (
+          <div
+            className="mt-1 text-[12px] text-[#909090] leading-relaxed max-h-[400px] overflow-y-auto
+              prose prose-invert prose-sm max-w-none
+              prose-headings:text-[#c0c0c0] prose-headings:text-[13px] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+              prose-p:text-[#909090] prose-p:text-[12px] prose-p:my-1
+              prose-strong:text-[#c0c0c0]
+              prose-li:text-[#909090] prose-li:text-[12px] prose-li:my-0
+              prose-ul:my-1 prose-ol:my-1
+              prose-code:text-[#a78bfa] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+              prose-pre:bg-[#0a0a0a] prose-pre:border prose-pre:border-[#1f1f1f] prose-pre:rounded-md prose-pre:text-[11px]
+              prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+            "
+          >
+            <ReactMarkdown>{activity.content || ""}</ReactMarkdown>
+          </div>
         ) : (
           <p className="text-[12px] text-[#909090] leading-relaxed">
             {activity.content}
