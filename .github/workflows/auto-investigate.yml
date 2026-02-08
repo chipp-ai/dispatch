@@ -156,6 +156,14 @@ jobs:
           7. Do NOT attempt fixes you are not confident about
           8. Do NOT push any branches - just prepare the commit locally
 
+          ENVIRONMENT VARIABLES:
+          If you need an environment variable, FIRST read .env and .env.example to check what is
+          already configured. Only report a missing env var as a blocker AFTER checking both files.
+
+          PRE-EXISTING ISSUES:
+          If you encounter a pre-existing bug, wrong env var name, broken import, or misconfiguration
+          during your investigation, include it in your report AND fix it if you're committing a fix.
+
           MANDATORY - RUN RESULT DECLARATION:
           Before exiting, you MUST write .scratch/run-result.json with:
           {
