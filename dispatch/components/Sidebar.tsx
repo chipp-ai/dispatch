@@ -2,16 +2,33 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import FleetStatusPanel from "./FleetStatusPanel";
 
 interface SidebarProps {
   onCreateIssue: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-export default function Sidebar({ onCreateIssue }: SidebarProps) {
+export default function Sidebar({ onCreateIssue, isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
 
   return (
-    <div className="w-[220px] h-screen bg-[#101010] border-r border-[#252525] flex flex-col">
+    <>
+      {/* Mobile backdrop - always rendered, controlled via CSS to avoid React event timing issues */}
+      <div
+        className={`fixed inset-0 z-40 md:hidden transition-opacity duration-200 ${
+          isOpen ? "bg-black/60 pointer-events-auto" : "bg-transparent pointer-events-none"
+        }`}
+        onClick={onClose}
+      />
+
+      <div className={`
+        fixed inset-y-0 left-0 z-50 w-[260px] bg-[#101010] border-r border-[#252525] flex flex-col
+        transform transition-transform duration-200 ease-out
+        md:relative md:translate-x-0 md:w-[220px] md:z-auto
+        ${isOpen ? "translate-x-0" : "-translate-x-full"}
+      `}>
       {/* Workspace header */}
       <div className="p-3">
         <div className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#1a1a1a] cursor-pointer">
@@ -38,8 +55,8 @@ export default function Sidebar({ onCreateIssue }: SidebarProps) {
       {/* Create button */}
       <div className="px-3 mb-2">
         <button
-          onClick={onCreateIssue}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[#f5f5f5] bg-[#1a1a1a] hover:bg-[#222] border border-[#333] rounded-md transition-colors"
+          onClick={() => { onCreateIssue(); onClose?.(); }}
+          className="w-full flex items-center gap-2 px-3 py-2 md:py-1.5 text-[14px] md:text-[13px] text-[#f5f5f5] bg-[#1a1a1a] hover:bg-[#222] border border-[#333] rounded-md transition-colors"
         >
           <svg
             className="w-3.5 h-3.5"
@@ -91,12 +108,14 @@ export default function Sidebar({ onCreateIssue }: SidebarProps) {
           icon={<InboxIcon />}
           label="Inbox"
           active={pathname === "/board"}
+          onClick={onClose}
         />
         <NavItem
           href="/board"
           icon={<IssuesIcon />}
           label="My Issues"
           active={false}
+          onClick={onClose}
         />
 
         <div className="pt-4 pb-2">
@@ -111,26 +130,33 @@ export default function Sidebar({ onCreateIssue }: SidebarProps) {
           label="Issues"
           active={pathname === "/board"}
           count={0}
+          onClick={onClose}
         />
         <NavItem
           href="/customers"
           icon={<CustomersIcon />}
           label="Customers"
           active={pathname === "/customers"}
+          onClick={onClose}
         />
         <NavItem
           href="/board"
           icon={<ActiveIcon />}
           label="Active"
           active={false}
+          onClick={onClose}
         />
         <NavItem
           href="/board"
           icon={<BacklogIcon />}
           label="Backlog"
           active={false}
+          onClick={onClose}
         />
       </nav>
+
+      {/* Fleet status */}
+      <FleetStatusPanel />
 
       {/* Bottom section */}
       <div className="p-3 border-t border-[#252525]">
@@ -142,6 +168,7 @@ export default function Sidebar({ onCreateIssue }: SidebarProps) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -151,19 +178,20 @@ interface NavItemProps {
   label: string;
   active: boolean;
   count?: number;
+  onClick?: () => void;
 }
 
-function NavItem({ href, icon, label, active, count }: NavItemProps) {
+function NavItem({ href, icon, label, active, count, onClick }: NavItemProps) {
   return (
-    <Link href={href}>
+    <Link href={href} onClick={onClick}>
       <div
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
+        className={`flex items-center gap-2 px-3 py-2 md:py-1.5 rounded-md text-[14px] md:text-[13px] transition-colors ${
           active
             ? "bg-[#1f1f1f] text-[#f5f5f5]"
             : "text-[#888] hover:bg-[#1a1a1a] hover:text-[#ccc]"
         }`}
       >
-        <span className="w-4 h-4">{icon}</span>
+        <span className="w-5 h-5 md:w-4 md:h-4">{icon}</span>
         <span>{label}</span>
         {count !== undefined && count > 0 && (
           <span className="ml-auto text-[11px] text-[#666]">{count}</span>
