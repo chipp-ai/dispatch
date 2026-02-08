@@ -234,6 +234,12 @@ const activityTypeConfig: Record<
     label: "Complete",
   },
   error: { icon: "❌", color: "#f87171", bgColor: "#f8717115", label: "Error" },
+  agent_heartbeat: {
+    icon: "📡",
+    color: "#6b7280",
+    bgColor: "#6b728010",
+    label: "Progress",
+  },
 };
 
 // Agent status icon component
@@ -431,9 +437,15 @@ function AgentActivityItem({
             </span>
           )}
         </div>
-        <p className="text-[12px] text-[#909090] leading-relaxed">
-          {activity.content}
-        </p>
+        {activity.type === "agent_heartbeat" ? (
+          <pre className="text-[11px] text-[#808080] leading-relaxed font-mono bg-[#0a0a0a] rounded p-2 mt-1 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {activity.content}
+          </pre>
+        ) : (
+          <p className="text-[12px] text-[#909090] leading-relaxed">
+            {activity.content}
+          </p>
+        )}
         {activity.metadata?.file && (
           <code className="text-[10px] text-[#606060] bg-[#1a1a1a] px-1.5 py-0.5 rounded mt-1 inline-block font-mono">
             {activity.metadata.file}
