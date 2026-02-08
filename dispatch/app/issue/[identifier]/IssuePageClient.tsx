@@ -2322,7 +2322,9 @@ export default function IssuePageClient() {
                 ) : (
                   <AgentStatusIcon status="investigating" />
                 )}
-                Investigate
+                {issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)
+                  ? "Reinvestigate"
+                  : "Investigate"}
               </button>
             )}
 
