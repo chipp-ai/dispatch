@@ -105,6 +105,16 @@ interface Issue {
   agent_tokens_used: number | null;
   agent_started_at: string | null;
   agent_completed_at: string | null;
+  // PRD workflow fields
+  workflow_type?: string;
+  plan_status?: string | null;
+  plan_content?: string | null;
+  plan_feedback?: string | null;
+  plan_approved_at?: string | null;
+  plan_approved_by?: string | null;
+  blocked_reason?: string | null;
+  spawn_type?: string | null;
+  spawn_attempt_count?: number | null;
 }
 
 // Generate consistent color from string
@@ -500,6 +510,13 @@ export default function IssuePageClient() {
   const [showActivityFeed, setShowActivityFeed] = useState(true);
   const activityFeedRef = useRef<HTMLDivElement>(null);
 
+  // Plan review
+  const [planRejectFeedback, setPlanRejectFeedback] = useState("");
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [planActionLoading, setPlanActionLoading] = useState(false);
+  const [spawnLoading, setSpawnLoading] = useState(false);
+  const [spawnError, setSpawnError] = useState<string | null>(null);
+
   // Dropdown states
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
@@ -794,6 +811,73 @@ export default function IssuePageClient() {
     }
   }
 
+  async function handlePlanApprove() {
+    if (!issue) return;
+    setPlanActionLoading(true);
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve" }),
+      });
+      if (res.ok) {
+        await fetchIssue();
+      }
+    } catch (err) {
+      console.error("Failed to approve plan:", err);
+    } finally {
+      setPlanActionLoading(false);
+    }
+  }
+
+  async function handlePlanReject() {
+    if (!issue || !planRejectFeedback.trim()) return;
+    setPlanActionLoading(true);
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reject",
+          feedback: planRejectFeedback.trim(),
+        }),
+      });
+      if (res.ok) {
+        setPlanRejectFeedback("");
+        setShowRejectForm(false);
+        await fetchIssue();
+      }
+    } catch (err) {
+      console.error("Failed to reject plan:", err);
+    } finally {
+      setPlanActionLoading(false);
+    }
+  }
+
+  async function handleSpawn(type: "investigate" | "implement") {
+    if (!issue) return;
+    setSpawnLoading(true);
+    setSpawnError(null);
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      if (res.ok) {
+        await fetchIssue();
+      } else {
+        const data = await res.json();
+        const msg = data.reason || data.error || "Spawn failed";
+        setSpawnError(msg);
+      }
+    } catch (err) {
+      setSpawnError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setSpawnLoading(false);
+    }
+  }
+
   function toggleLabel(labelId: string) {
     if (!issue) return;
     const isSelected = issue.labels.some((l) => l.label.id === labelId);
@@ -1025,6 +1109,308 @@ export default function IssuePageClient() {
               </div>
             )}
           </div>
+
+          {/* Blocked Indicator */}
+          {issue.agent_status === "blocked" && issue.blocked_reason && (
+            <div className="mb-8 p-4 bg-red-500/5 border border-red-500/20 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <svg
+                  className="w-4 h-4 text-red-400"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                >
+                  <path
+                    d="M8 1.5l6.5 11.25H1.5L8 1.5z"
+                    stroke="currentColor"
+                    strokeWidth="1.25"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M8 6v3"
+                    stroke="currentColor"
+                    strokeWidth="1.25"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="8" cy="11" r="0.75" fill="currentColor" />
+                </svg>
+                <h3 className="text-[14px] font-semibold text-red-400">
+                  Agent Blocked
+                </h3>
+              </div>
+              <p className="text-[13px] text-red-300/80 leading-relaxed mb-3">
+                {issue.blocked_reason}
+              </p>
+              <button
+                onClick={() => handleSpawn("implement")}
+                disabled={spawnLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
+              >
+                {spawnLoading ? (
+                  <div className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                ) : (
+                  <svg
+                    className="w-3.5 h-3.5"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                  >
+                    <path
+                      d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M14 2v4h-4M2 14v-4h4"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+                Unblock & Re-run
+              </button>
+              {spawnError && (
+                <p className="text-[12px] text-red-400/80 mt-2">{spawnError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Spawn error for non-blocked contexts */}
+          {spawnError && issue.agent_status !== "blocked" && (
+            <div className="mb-4 p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
+              <p className="text-[12px] text-red-400">{spawnError}</p>
+            </div>
+          )}
+
+          {/* Plan Review Section */}
+          {issue.plan_content &&
+            (issue.plan_status === "awaiting_review" ||
+              issue.plan_status === "approved" ||
+              issue.plan_status === "needs_revision") && (
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <svg
+                      className="w-4 h-4 text-[#5e6ad2]"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                    >
+                      <rect
+                        x="2"
+                        y="2"
+                        width="12"
+                        height="12"
+                        rx="2"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                      />
+                      <path
+                        d="M5 6h6M5 8h6M5 10h4"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    <h3 className="text-[14px] font-semibold text-[#e0e0e0]">
+                      Implementation Plan
+                    </h3>
+                    {issue.plan_status === "awaiting_review" && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#facc15]/15 text-[#facc15] uppercase tracking-wide">
+                        Awaiting Review
+                      </span>
+                    )}
+                    {issue.plan_status === "approved" && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#4ade80]/15 text-[#4ade80] uppercase tracking-wide">
+                        Approved
+                      </span>
+                    )}
+                    {issue.plan_status === "needs_revision" && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#fb923c]/15 text-[#fb923c] uppercase tracking-wide">
+                        Needs Revision
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Plan content rendered as markdown */}
+                <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-5 mb-4 max-h-[600px] overflow-y-auto">
+                  <div
+                    className="prose prose-invert prose-sm max-w-none
+                    prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
+                    prose-h2:text-[15px] prose-h3:text-[13px]
+                    prose-p:text-[#a0a0a0] prose-p:text-[13px] prose-p:leading-relaxed prose-p:my-2
+                    prose-strong:text-[#d0d0d0]
+                    prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
+                    prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg
+                    prose-ul:text-[#a0a0a0] prose-ul:my-2 prose-li:my-0.5 prose-li:text-[13px]
+                    prose-ol:text-[#a0a0a0] prose-ol:my-2
+                    prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+                  "
+                  >
+                    <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
+                  </div>
+                </div>
+
+                {/* Previous feedback if needs revision */}
+                {issue.plan_status === "needs_revision" &&
+                  issue.plan_feedback && (
+                    <div className="mb-4 p-3 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded-lg">
+                      <div className="text-[11px] font-medium text-[#fb923c] mb-1">
+                        Revision Feedback
+                      </div>
+                      <p className="text-[13px] text-[#fb923c]/80 leading-relaxed">
+                        {issue.plan_feedback}
+                      </p>
+                    </div>
+                  )}
+
+                {/* Approval / rejection controls */}
+                {issue.plan_status === "awaiting_review" && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handlePlanApprove}
+                      disabled={planActionLoading}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[13px] font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {planActionLoading ? (
+                        <div className="w-3.5 h-3.5 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
+                      ) : (
+                        <svg
+                          className="w-4 h-4"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                        >
+                          <path
+                            d="M3 8l3.5 3.5L13 5"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                      Approve Plan
+                    </button>
+                    <button
+                      onClick={() => setShowRejectForm(!showRejectForm)}
+                      disabled={planActionLoading}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[13px] font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path
+                          d="M12 4l-8 8M4 4l8 8"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      Request Changes
+                    </button>
+                  </div>
+                )}
+
+                {/* Reject feedback form */}
+                {showRejectForm && issue.plan_status === "awaiting_review" && (
+                  <div className="mt-3 p-3 bg-[#141414] border border-[#252525] rounded-lg">
+                    <textarea
+                      value={planRejectFeedback}
+                      onChange={(e) => setPlanRejectFeedback(e.target.value)}
+                      placeholder="Describe what changes are needed..."
+                      rows={3}
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#252525] rounded-md text-[13px] text-[#e0e0e0] placeholder-[#505050] outline-none focus:border-[#404040] resize-none transition-colors mb-2"
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handlePlanReject}
+                        disabled={
+                          planActionLoading || !planRejectFeedback.trim()
+                        }
+                        className="px-3 py-1.5 bg-[#fb923c]/10 hover:bg-[#fb923c]/20 border border-[#fb923c]/30 text-[#fb923c] text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
+                      >
+                        Submit Feedback
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowRejectForm(false);
+                          setPlanRejectFeedback("");
+                        }}
+                        className="px-3 py-1.5 text-[12px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Re-investigate button for needs_revision */}
+                {issue.plan_status === "needs_revision" && (
+                  <button
+                    onClick={() => handleSpawn("investigate")}
+                    disabled={spawnLoading}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
+                  >
+                    {spawnLoading ? (
+                      <div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path
+                          d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M14 2v4h-4M2 14v-4h4"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                    Re-investigate with Feedback
+                  </button>
+                )}
+
+                {/* Spawn implementation for approved plans */}
+                {issue.plan_status === "approved" &&
+                  issue.agent_status !== "implementing" && (
+                    <button
+                      onClick={() => handleSpawn("implement")}
+                      disabled={spawnLoading}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#22d3d3] to-[#5e6ad2] hover:from-[#2dd4bf] hover:to-[#6b74db] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#22d3d3]/20 disabled:opacity-50"
+                    >
+                      {spawnLoading ? (
+                        <div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <svg
+                          className="w-4 h-4"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                        >
+                          <path
+                            d="M8 3v10M3 8h10"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      )}
+                      Start Implementation
+                    </button>
+                  )}
+              </div>
+            )}
 
           {/* Similar Issues Section */}
           {(similarIssues.length > 0 || loadingSimilar) && (
@@ -1606,15 +1992,25 @@ export default function IssuePageClient() {
               })()}
             </div>
 
-            {/* Assign to Agent Button */}
+            {/* Spawn Investigation Button */}
             {issue.agent_status === "idle" && (
               <button
-                onClick={() => updateIssue({ agent_status: "investigating" })}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20"
+                onClick={() => handleSpawn("investigate")}
+                disabled={spawnLoading}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
               >
-                <AgentStatusIcon status="investigating" />
-                Assign to Agent
+                {spawnLoading ? (
+                  <div className="w-4 h-4 border border-white/40 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <AgentStatusIcon status="investigating" />
+                )}
+                Investigate
               </button>
+            )}
+
+            {/* Spawn error in sidebar */}
+            {spawnError && (
+              <p className="text-[11px] text-red-400 mt-1 px-1">{spawnError}</p>
             )}
 
             {/* Stop Agent Button */}
@@ -1779,3 +2175,4 @@ function formatRelativeTime(dateStr: string): string {
   if (diffWeeks < 4) return `${diffWeeks}w ago`;
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
+

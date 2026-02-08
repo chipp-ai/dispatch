@@ -1,0 +1,319 @@
+name: Auto-Investigate Error
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Chipp Issues issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. CHIPP-456)"
+        required: true
+        type: string
+      title:
+        description: "Issue title"
+        required: true
+        type: string
+      description:
+        description: "Full error context (markdown)"
+        required: true
+        type: string
+      source:
+        description: "Error source module"
+        required: true
+        type: string
+      feature:
+        description: "Error feature area"
+        required: true
+        type: string
+      error_fingerprint:
+        description: "Error fingerprint for dedup reference"
+        required: false
+        type: string
+
+# Only one investigation per issue at a time
+concurrency:
+  group: auto-investigate-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    name: Investigate ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    # All user-provided inputs go through env vars to prevent command injection.
+    # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CHIPP_ISSUES_API_URL: ${{ secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_SOURCE: ${{ inputs.source }}
+      INPUT_FEATURE: ${{ inputs.feature }}
+      INPUT_ERROR_FINGERPRINT: ${{ inputs.error_fingerprint }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Sanitize branch name
+        id: branch
+        run: |
+          # Lowercase, replace non-alphanumeric (except hyphens) with hyphens, collapse runs
+          SAFE_ID=$(echo "$INPUT_ISSUE_IDENTIFIER" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          echo "name=auto-fix/${SAFE_ID}" >> "$GITHUB_OUTPUT"
+          echo "Branch name: auto-fix/${SAFE_ID}"
+
+      - name: Notify Chipp Issues - In Progress
+        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Build JSON payload safely with jq
+          PAYLOAD=$(jq -n \
+            --arg status "in_progress" \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            '{status: $status, spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+
+      - name: Run Investigation
+        id: investigate
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+        run: |
+          mkdir -p .scratch
+
+          # Build the prompt. Leading spaces from YAML indentation are stripped by sed.
+          cat > .scratch/investigation-prompt.md <<PROMPT_BOUNDARY
+          You are autonomously investigating a production error for the chipp-deno project.
+
+          Issue: ${INPUT_ISSUE_IDENTIFIER} - ${INPUT_TITLE}
+
+          Error Context:
+          ${INPUT_DESCRIPTION}
+
+          Source: ${INPUT_SOURCE}
+          Feature: ${INPUT_FEATURE}
+          Error Fingerprint: ${INPUT_ERROR_FINGERPRINT}
+
+          Instructions:
+          1. Read CLAUDE.md first to understand the codebase
+          2. Run a thorough autonomous investigation following the /autonomous-investigation methodology
+          3. Identify the root cause with specific file paths and line numbers
+          4. Write your investigation report to .scratch/investigation-report.md
+          5. If you can identify a fix with HIGH confidence:
+             a. Create a new branch from staging using: git checkout -b ${BRANCH_NAME}
+             b. Implement the fix
+             c. Run 'deno check main.ts' to verify type safety
+             d. Commit the fix with message referencing: fix(${INPUT_SOURCE}): [${INPUT_ISSUE_IDENTIFIER}]
+          6. If you cannot identify a confident fix, that is fine - just write the investigation report
+          7. Do NOT attempt fixes you are not confident about
+          8. Do NOT push any branches - just prepare the commit locally
+          PROMPT_BOUNDARY
+          sed -i 's/^          //' .scratch/investigation-prompt.md
+
+          # Run Claude Code with the prompt file
+          PROMPT=$(cat .scratch/investigation-prompt.md)
+          claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+          # Ensure investigation report exists even if Claude didn't create one
+          if [ ! -f .scratch/investigation-report.md ]; then
+            {
+              echo "# Investigation Report"
+              echo ""
+              echo "Claude Code did not produce a structured report. Raw output saved to claude-output.log."
+              echo ""
+              echo '```'
+              tail -100 .scratch/claude-output.log
+              echo '```'
+            } > .scratch/investigation-report.md
+          fi
+
+      - name: Check for fix
+        id: check-fix
+        run: |
+          # Check if Claude created a new branch with commits ahead of staging
+          CURRENT_BRANCH=$(git branch --show-current)
+          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Fix was committed on branch: $CURRENT_BRANCH"
+          elif git diff --quiet && git diff --cached --quiet; then
+            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            echo "No fix attempted - investigation report only"
+          else
+            # Uncommitted changes exist but no commit was made
+            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            echo "Warning: uncommitted changes found but no commit was made"
+            git diff --stat
+          fi
+
+      - name: Push branch and create PR
+        id: create-pr
+        if: steps.check-fix.outputs.fix_attempted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH_NAME=$(git branch --show-current)
+          git push origin "HEAD:${BRANCH_NAME}"
+
+          # Build PR body file (avoids shell escaping issues with large report content)
+          {
+            echo "## Auto-Investigation Report"
+            echo ""
+            cat .scratch/investigation-report.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "Autonomously generated by Claude Code for ${INPUT_ISSUE_IDENTIFIER}"
+            echo ""
+            echo "- **Run**: [${GITHUB_RUN_ID}](${GITHUB_RUN_URL})"
+            echo "- **Source**: \`${INPUT_SOURCE}\`"
+            echo "- **Feature**: \`${INPUT_FEATURE}\`"
+            echo "- **Fingerprint**: \`${INPUT_ERROR_FINGERPRINT}\`"
+          } > .scratch/pr-body.md
+
+          PR_URL=$(gh pr create \
+            --title "fix(${INPUT_SOURCE}): ${INPUT_TITLE} [${INPUT_ISSUE_IDENTIFIER}]" \
+            --body-file .scratch/pr-body.md \
+            --base staging \
+            --head "${BRANCH_NAME}")
+
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+          echo "Created PR: ${PR_URL}"
+
+      - name: Post results to Chipp Issues
+        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        env:
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+          FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          # Determine spawn status based on job outcome
+          if [ "$JOB_STATUS" = "success" ]; then
+            SPAWN_STATUS="completed"
+          else
+            SPAWN_STATUS="failed"
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Ensure report file exists for jq --rawfile
+          if [ ! -f .scratch/investigation-report.md ]; then
+            echo "No investigation report was generated." > .scratch/investigation-report.md
+          fi
+
+          # Build activity JSON safely with jq (--rawfile handles large reports)
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "investigation_complete" \
+            --rawfile content .scratch/investigation-report.md \
+            --arg pr_url "$PR_URL" \
+            --arg fix_attempted "${FIX_ATTEMPTED:-false}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg source "$INPUT_SOURCE" \
+            --arg feature "$INPUT_FEATURE" \
+            --arg fingerprint "$INPUT_ERROR_FINGERPRINT" \
+            '{
+              type: $type,
+              content: $content,
+              metadata: {
+                pr_url: $pr_url,
+                fix_attempted: $fix_attempted,
+                run_id: $run_id,
+                run_url: $run_url,
+                source: $source,
+                feature: $feature,
+                fingerprint: $fingerprint
+              }
+            }')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity to Chipp Issues (non-fatal)"
+
+          # Update spawn status
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Report failure to Chipp Issues
+        if: failure() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Build failure activity JSON safely with jq
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "investigation_failed" \
+            --arg content "Workflow failed. Run: ${GITHUB_RUN_URL}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{
+              type: $type,
+              content: $content,
+              metadata: {
+                run_id: $run_id,
+                run_url: $run_url,
+                error_tail: $error_tail
+              }
+            }')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || echo "Warning: Failed to report failure to Chipp Issues (non-fatal)"
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
