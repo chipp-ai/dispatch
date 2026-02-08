@@ -389,8 +389,37 @@ jobs:
           BRANCH_NAME: ${{ steps.branch.outputs.name }}
         run: |
           mkdir -p .scratch/screenshots
+
+          # Background heartbeat: tail the log and post progress every 60s
+          # Completely separate from Claude's process -- just reads the tee'd file
+          if [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+            (
+              PREV_HASH=""
+              while true; do
+                sleep 60
+                [ -f .scratch/claude-output.log ] || continue
+                LAST_LINES=$(tail -20 .scratch/claude-output.log 2>/dev/null)
+                [ -z "$LAST_LINES" ] && continue
+                # Only post if content changed since last heartbeat
+                CURR_HASH=$(echo "$LAST_LINES" | md5sum | cut -d' ' -f1)
+                [ "$CURR_HASH" = "$PREV_HASH" ] && continue
+                PREV_HASH="$CURR_HASH"
+                curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+                  -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  -H "Content-Type: application/json" \
+                  -d "$(jq -n --arg type "agent_heartbeat" --arg content "$LAST_LINES" \
+                    '{type: $type, content: $content, metadata: {workflow_type: "prd_implement"}}')" || true
+              done
+            ) &
+            HEARTBEAT_PID=$!
+            echo "Heartbeat process started (PID: $HEARTBEAT_PID)"
+          fi
+
           PROMPT=$(cat .scratch/implementation-prompt.md)
           claude --print --dangerously-skip-permissions --mcp-config .mcp.json "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+          # Stop heartbeat when Claude finishes
+          [ -n "${HEARTBEAT_PID:-}" ] && kill $HEARTBEAT_PID 2>/dev/null || true
 
       - name: Verify PR checks pass
         id: verify
