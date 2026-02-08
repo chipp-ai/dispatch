@@ -161,6 +161,17 @@ function broadcastToViewers(
 }
 
 /**
+ * Broadcast a terminal message to all viewers of an issue from an external source
+ * (e.g., the HTTP terminal POST endpoint forwarding CI output).
+ */
+export function broadcastTerminalToViewers(
+  issueIdentifier: string,
+  message: TerminalMessage
+): void {
+  broadcastToViewers(issueIdentifier, message);
+}
+
+/**
  * Send a command to the agent working on an issue
  */
 export function sendToAgent(
