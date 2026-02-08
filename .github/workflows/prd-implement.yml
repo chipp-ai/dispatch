@@ -99,34 +99,21 @@ jobs:
           deno cache tools/mcp-database/index.ts
           echo "Deno MCP server dependencies cached"
 
-      - name: Configure CI MCP servers
+      - name: Register MCP servers
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
         run: |
-          # Override .mcp.json with CI-appropriate servers (browser + database only)
-          cat > .mcp.json << 'MCPEOF'
-          {
-            "mcpServers": {
-              "browser-devtools": {
-                "type": "stdio",
-                "command": "node",
-                "args": ["tools/mcp-browser-devtools/index.js"],
-                "env": {
-                  "CDP_HOST": "localhost",
-                  "CDP_PORT": "9222"
-                }
-              },
-              "chipp-database": {
-                "type": "stdio",
-                "command": "deno",
-                "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
-                "env": {
-                  "DATABASE_URL": "postgresql://postgres:postgres@localhost:5436/chipp_deno"
-                }
-              }
-            }
-          }
-          MCPEOF
+          # Register MCP servers at user scope to avoid project-scope approval prompts.
+          # Project-scoped servers (.mcp.json) require interactive approval which blocks CI.
+          # User-scoped servers are pre-approved.
+          claude mcp add-json browser-devtools '{"type":"stdio","command":"node","args":["tools/mcp-browser-devtools/index.js"],"env":{"CDP_HOST":"localhost","CDP_PORT":"9222"}}'
+          claude mcp add-json chipp-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-database/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:postgres@localhost:5436/chipp_deno"}}'
+
+          # Remove project .mcp.json to avoid duplicate server registration
+          rm -f .mcp.json
+
+          # Verify servers are registered
+          claude mcp list
 
       - name: Sanitize branch name
         id: branch
@@ -427,86 +414,20 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          # =============================================================
-          # DIAGNOSTIC: Isolate MCP issue
-          # =============================================================
-
-          echo "=== Claude Code version ==="
-          claude --version 2>&1 || echo "version check failed"
-
-          # Test A: Raw JSON-RPC handshake with DB server (bypasses Claude Code entirely)
-          echo ""
-          echo "=== TEST A: Raw JSON-RPC to DB MCP server ==="
-          INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
-          echo "$INIT_MSG" | timeout 15 deno run --allow-net --allow-env --allow-read tools/mcp-database/index.ts 2>.scratch/db-mcp-stderr.log | head -5 && echo "DB raw JSON-RPC: PASS" || echo "DB raw JSON-RPC: FAIL (exit: $?)"
-          echo "DB MCP stderr:"
-          cat .scratch/db-mcp-stderr.log
-
-          # Test B: Raw JSON-RPC handshake with browser server
-          echo ""
-          echo "=== TEST B: Raw JSON-RPC to Browser MCP server ==="
-          echo "$INIT_MSG" | timeout 15 node tools/mcp-browser-devtools/index.js 2>.scratch/br-mcp-stderr.log | head -5 && echo "Browser raw JSON-RPC: PASS" || echo "Browser raw JSON-RPC: FAIL (exit: $?)"
-          echo "Browser MCP stderr:"
-          cat .scratch/br-mcp-stderr.log
-
-          # Test C: Claude with verbose MCP (captures stderr to see where it hangs)
-          echo ""
-          echo "=== TEST C: Claude + MCP verbose (30s timeout) ==="
-          cat > .scratch/mcp-db-only.json << 'DBEOF'
-          {
-            "mcpServers": {
-              "chipp-database": {
-                "type": "stdio",
-                "command": "deno",
-                "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
-                "env": { "DATABASE_URL": "postgresql://postgres:postgres@localhost:5436/chipp_deno" }
-              }
-            }
-          }
-          DBEOF
-          timeout 30 claude --print --verbose --dangerously-skip-permissions \
-            --mcp-config .scratch/mcp-db-only.json \
-            "Respond with exactly: DB_MCP_OK" > .scratch/claude-mcp-stdout.log 2>.scratch/claude-mcp-stderr.log
-          MCP_EXIT=$?
-          echo "Exit: $MCP_EXIT"
-          echo "--- stdout (first 20 lines) ---"
-          head -20 .scratch/claude-mcp-stdout.log
-          echo "--- stderr (first 30 lines) ---"
-          head -30 .scratch/claude-mcp-stderr.log
-
-          # Test D: No MCP baseline
-          echo ""
-          echo "=== TEST D: No MCP baseline ==="
-          timeout 30 claude --print --dangerously-skip-permissions \
-            "Respond with exactly: NO_MCP_OK" 2>&1 && echo "No MCP: PASS" || echo "No MCP: FAIL (exit: $?)"
-
-          # Test E: Claude auto-discover .mcp.json (no --mcp-config flag)
-          echo ""
-          echo "=== TEST E: Claude auto-discover .mcp.json ==="
-          timeout 30 claude --print --verbose --dangerously-skip-permissions \
-            "Respond with exactly: AUTO_MCP_OK" > .scratch/claude-auto-stdout.log 2>.scratch/claude-auto-stderr.log
-          AUTO_EXIT=$?
-          echo "Exit: $AUTO_EXIT"
-          echo "--- stdout ---"
-          head -10 .scratch/claude-auto-stdout.log
-          echo "--- stderr (first 20 lines) ---"
-          head -20 .scratch/claude-auto-stderr.log
+          # Quick MCP readiness check (servers registered at user scope - no approval needed)
+          echo "=== MCP readiness check ==="
+          timeout 60 claude --print --dangerously-skip-permissions \
+            "List your available MCP tools. Respond with the count of MCP tools you have access to." 2>&1 \
+            && echo "MCP check: PASS" || echo "MCP check: FAIL (exit: $?)"
 
           echo ""
-          echo "=== DIAGNOSTICS DONE ==="
+          echo "=== Starting Implementation ==="
+          PROMPT=$(cat .scratch/implementation-prompt.md)
 
-          # If both MCP tests failed, run without MCP so we at least get work done
-          if [ "$MCP_EXIT" -ne 0 ]; then
-            echo "MCP not working - running WITHOUT MCP tools"
-            PROMPT=$(cat .scratch/implementation-prompt.md)
-            claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-              "$PROMPT" > .scratch/claude-raw.log 2>&1 &
-          else
-            echo "MCP working - running WITH MCP tools"
-            PROMPT=$(cat .scratch/implementation-prompt.md)
-            claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-              --mcp-config .mcp.json "$PROMPT" > .scratch/claude-raw.log 2>&1 &
-          fi
+          # Servers are registered at user scope (via `claude mcp add-json` above).
+          # No --mcp-config flag needed - Claude auto-discovers user-scoped servers.
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            "$PROMPT" > .scratch/claude-raw.log 2>&1 &
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
 
@@ -598,16 +519,9 @@ jobs:
           printf '%s' "$FIX_PROMPT" > .scratch/fix-prompt.md
           PREV_FIX_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
 
-          # Use script PTY wrapper (same as main implementation step)
-          cat > .scratch/run-fix.sh << 'FIXEOF'
-          #!/bin/bash
-          PROMPT=$(cat .scratch/fix-prompt.md)
-          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT"
-          FIXEOF
-          chmod +x .scratch/run-fix.sh
-
-          script -qef .scratch/claude-fix-raw.log -c "bash .scratch/run-fix.sh" > /dev/null 2>&1 &
+          # Run fix attempt (MCP servers auto-discovered from user config)
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            "$(cat .scratch/fix-prompt.md)" > .scratch/claude-fix-raw.log 2>&1 &
           FIX_PID=$!
 
           PREV_FIX_LINES=0
