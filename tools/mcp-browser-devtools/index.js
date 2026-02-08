@@ -1831,11 +1831,29 @@ async function handleTool(name, args) {
 
       recordAction("screenshot", { url: urlPath, hasError: context.hasError });
 
+      // Auto-save to .scratch/screenshots/ when directory exists (CI and local dev)
+      let savedPath = null;
+      const screenshotDir = ".scratch/screenshots";
+      try {
+        if (!existsSync(screenshotDir)) {
+          mkdirSync(screenshotDir, { recursive: true });
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const slug = urlPath.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").slice(0, 60);
+        const ext = params.format === "jpeg" ? "jpg" : "png";
+        const filename = `${timestamp}_${slug}.${ext}`;
+        savedPath = `${screenshotDir}/${filename}`;
+        writeFileSync(savedPath, Buffer.from(data, "base64"));
+      } catch (e) {
+        // Non-fatal: screenshot is still returned as base64
+      }
+
       return {
-        summary,
+        summary: savedPath ? `${summary}. Saved to ${savedPath}` : summary,
         format: params.format,
         url: pageState.url,
         title: pageState.title,
+        savedPath,
         pageContext: {
           headings: context.headings,
           buttons: context.buttons,
