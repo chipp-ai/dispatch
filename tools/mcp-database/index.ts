@@ -900,7 +900,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   console.error("[mcp-chipp-database] Starting server...");
 
-  // Auto-connect to database on startup
+  // Connect MCP transport FIRST so Claude Code can complete the handshake.
+  // Database auto-connect happens after, so it doesn't block initialization.
+  const transport = new StdioServerTransport();
+
+  server.onerror = (error) => {
+    console.error(`[mcp-chipp-database] Error: ${error}`);
+  };
+
+  await server.connect(transport);
+
+  console.error("[mcp-chipp-database] Server running on stdio");
+
+  // Auto-connect to database after MCP transport is ready
   try {
     const result = await reconnect();
     if (result.success) {
@@ -912,16 +924,6 @@ async function main() {
   } catch (error) {
     console.error(`[mcp-chipp-database] Warning: Auto-connect failed: ${error}`);
   }
-
-  const transport = new StdioServerTransport();
-
-  server.onerror = (error) => {
-    console.error(`[mcp-chipp-database] Error: ${error}`);
-  };
-
-  await server.connect(transport);
-
-  console.error("[mcp-chipp-database] Server running on stdio");
 }
 
 main().catch((error) => {
