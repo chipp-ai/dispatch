@@ -15,8 +15,9 @@
 4. [Streaming Architecture Analysis](#streaming-architecture-analysis)
 5. [Hardware Specifications](#hardware-specifications)
 6. [Network Architecture](#network-architecture)
-7. [Migration Plan](#migration-plan)
-8. [Operational Considerations](#operational-considerations)
+7. [Zero-Downtime Deployment Pipeline](#zero-downtime-deployment-pipeline)
+8. [Migration Plan](#migration-plan)
+9. [Operational Considerations](#operational-considerations)
 
 ---
 
@@ -821,6 +822,169 @@ AT&T Fiber Router (415/425 Mbps)
 - Router firewall: Block all inbound, allow all outbound (default)
 - macOS firewall: Enabled on all machines
 - SSH: Key-based auth only, accessible only on local network
+
+---
+
+## Zero-Downtime Deployment Pipeline
+
+### Overview
+
+k3s supports the same rolling deployment mechanics as GKE. Existing Helm charts, Deployments, Services, and Ingress resources work unchanged -- the only config change is pointing the CI deploy target from GKE to the local k3s kubeconfig.
+
+### Pipeline Flow
+
+```
+Developer pushes to staging
+         │
+         ▼
+GitHub Actions (self-hosted runner on M4 #3)
+         │
+         ├─ 1. Build Docker image
+         ├─ 2. Push to GHCR (GitHub Container Registry)
+         ├─ 3. Run DB migration Job (charts/migration-job.yaml)
+         ├─ 4. helm upgrade --install
+         │        │
+         │        ▼
+         │   k3s rolling update
+         │     ├─ New pod created (maxSurge: 1)
+         │     ├─ Readiness probe passes
+         │     ├─ Traefik shifts traffic to new pod
+         │     ├─ Old pod gets SIGTERM
+         │     ├─ Old pod drains in-flight requests (grace period)
+         │     └─ Old pod terminated
+         │
+         └─ 5. Verify health
+```
+
+The SPA frontend is deployed separately to Cloudflare R2 via the Worker -- atomic, instant global propagation, no interaction with the k3s cluster.
+
+### Rolling Update Strategy
+
+The Helm chart's Deployment spec controls zero-downtime behavior:
+
+```yaml
+spec:
+  replicas: 2            # minimum for zero-downtime rolling updates
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0  # never kill a pod before its replacement is ready
+      maxSurge: 1        # create 1 new pod first, then drain the old one
+```
+
+With `maxUnavailable: 0`, Kubernetes guarantees the old pod keeps serving traffic until the new pod passes its readiness probe. At no point are there zero healthy pods.
+
+At 309 MB per replica, 2 replicas is 618 MB -- trivial on a 64 GB machine.
+
+### Readiness & Liveness Probes
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 3
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+```
+
+- **Readiness** controls traffic routing -- Traefik won't send requests to a pod until it passes
+- **Liveness** controls restarts -- k3s kills and replaces a pod that fails this
+
+### Graceful Shutdown
+
+When k3s sends SIGTERM to the old pod during a rolling update, two things happen simultaneously:
+
+1. Traefik removes the pod from the load balancer (no new requests)
+2. Existing connections stay open until they complete or the grace period expires
+
+The Deno server handles SIGTERM by stopping new connections and draining in-flight requests:
+
+```typescript
+Deno.addSignalListener("SIGTERM", () => {
+  server.close();
+  // In-flight requests continue until they complete
+  // Deno exits when all connections drain
+});
+```
+
+Configure the grace period in the Deployment spec:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 120
+```
+
+A `preStop` hook adds a buffer so Traefik has time to deregister the pod before it starts shutting down:
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 10"]
+```
+
+The 10-second sleep keeps the pod alive after Traefik removes it from routing, giving in-flight streams time to complete while no new requests arrive.
+
+### SSE Streams During Deploys
+
+LLM chat streams are the longest-lived connections (typically 5-30 seconds). With `terminationGracePeriodSeconds: 120`, the vast majority of active streams complete naturally within the grace period.
+
+If a stream is interrupted (e.g., a particularly long agent loop), the Svelte client already handles stream interruption gracefully -- the user sees an error and can resend the message. The new pod picks up the conversation from the database since session history is reloaded on every API call.
+
+### Database Migrations
+
+The existing expand/contract migration pattern is already zero-downtime compatible:
+
+```
+Migration Job runs BEFORE rolling update (charts/migration-job.yaml)
+         │
+         ▼
+Schema change is backward-compatible (expand/contract pattern)
+         │
+         ▼
+Old pods keep serving against new schema (migrations are additive)
+         │
+         ▼
+New pods roll out, start using new columns/tables
+```
+
+If the migration Job fails, the deploy is blocked and old pods keep serving. This is identical to the current GKE flow.
+
+### Self-Hosted Runner Advantage
+
+Because the GitHub Actions runner lives on the cluster (M4 #3), deployment is significantly faster:
+
+| Aspect | GKE (Current) | Self-Hosted |
+|--------|--------------|-------------|
+| Image push | GHCR (same) | GHCR (same) |
+| kubectl access | Over internet to GKE API | Over pod network to local k3s API |
+| Network overhead | ~30-60s round-trip | ~0s (same machine) |
+| Docker layer cache | Rebuilt each run | Persistent on runner, near-instant rebuilds |
+| k8s API auth | GKE Workload Identity (IAM) | kubeconfig on local filesystem |
+| Security | k8s API exposed to internet (IP-restricted) | k8s API never exposed externally |
+
+The runner has direct `kubectl` access via the k3s kubeconfig -- no API server exposed to the internet, no VPN needed, no Cloudflare Tunnel for the k8s API.
+
+### Deployment Summary
+
+| Concern | How It's Handled |
+|---------|-----------------|
+| No downtime during deploy | `maxUnavailable: 0` -- old pod serves until new pod is ready |
+| Traffic routing | Traefik readiness-gated, same as GKE Ingress |
+| In-flight requests | SIGTERM + grace period (120s) |
+| SSE streams mid-deploy | Grace period covers most; client handles interruption |
+| DB schema changes | Expand/contract migrations run before deploy (unchanged) |
+| SPA frontend | Deployed to Cloudflare R2, not affected |
+| Deploy speed | Faster -- runner is on the cluster, no internet round-trip |
+| Rollback | `helm rollback` or `kubectl rollout undo` (same as GKE) |
 
 ---
 
