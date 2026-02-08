@@ -369,6 +369,37 @@ export interface TextChunkTable {
 }
 
 // ========================================
+// Processing Job Queue
+// ========================================
+
+export type ProcessingJobType = "file" | "url" | "crawl_page";
+export type ProcessingJobStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ProcessingJobTable {
+  id: Generated<string>;
+  applicationId: string;
+  knowledgeSourceId: string;
+  type: ProcessingJobType;
+  status: ProcessingJobStatus;
+  priority: Generated<number>;
+  payload: unknown; // JSONB
+  attempts: Generated<number>;
+  maxAttempts: Generated<number>;
+  lastError: string | null;
+  embeddingConfig: unknown | null; // JSONB
+  userId: string | null;
+  createdAt: Generated<Date>;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  heartbeatAt: Date | null;
+}
+
+// ========================================
 // Billing Schema Tables
 // ========================================
 
@@ -973,6 +1004,9 @@ export interface Database {
   // Email integration schema
   "app.email_configs": EmailConfigTable;
   "app.email_threads": EmailThreadTable;
+
+  // Processing job queue
+  "rag.processing_jobs": ProcessingJobTable;
 }
 
 // ========================================
@@ -1036,3 +1070,6 @@ export type WhatsAppConfig = Selectable<WhatsAppConfigTable>;
 // Email integration types
 export type EmailConfig = Selectable<EmailConfigTable>;
 export type EmailThread = Selectable<EmailThreadTable>;
+
+// Processing job queue types
+export type ProcessingJob = Selectable<ProcessingJobTable>;

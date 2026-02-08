@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { knowledgeSourceService } from "../../../services/knowledge-source.service.ts";
+import { getJobProgress } from "../../../services/job-processor.service.ts";
 import {
   createKnowledgeSourceSchema,
   updateKnowledgeSourceSchema,
@@ -40,6 +41,20 @@ knowledgeSourceRoutes.get(
     return c.json({ data: sources });
   }
 );
+
+/**
+ * GET /knowledge-sources/progress
+ * Get aggregate processing job progress for an application (last 24 hours)
+ */
+knowledgeSourceRoutes.get("/progress", async (c) => {
+  const applicationId = c.req.query("applicationId");
+  if (!applicationId) {
+    return c.json({ error: "applicationId query parameter required" }, 400);
+  }
+
+  const progress = await getJobProgress(applicationId);
+  return c.json({ data: progress });
+});
 
 /**
  * GET /knowledge-sources/:id

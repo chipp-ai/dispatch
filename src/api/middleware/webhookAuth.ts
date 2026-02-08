@@ -184,6 +184,94 @@ export const stripeWebhookMiddleware = createMiddleware<WebhookContext>(
 );
 
 // ========================================
+// Firecrawl Webhook Middleware
+// ========================================
+
+function getFirecrawlWebhookSecret(): string | undefined {
+  return Deno.env.get("FIRECRAWL_WEBHOOK_SECRET");
+}
+
+/**
+ * Firecrawl webhook verification middleware
+ *
+ * Verifies the X-Firecrawl-Signature header: sha256=<hmac_hex>
+ * HMAC-SHA256 of the raw body using FIRECRAWL_WEBHOOK_SECRET.
+ */
+export const firecrawlWebhookMiddleware = createMiddleware<WebhookContext>(
+  async (c, next) => {
+    const rawBody = await c.req.text();
+    c.set("rawBody", rawBody);
+
+    const secret = getFirecrawlWebhookSecret();
+
+    // In dev mode without a secret, skip verification
+    if (!secret) {
+      const env = Deno.env.get("ENVIRONMENT") || "development";
+      if (env === "development") {
+        log.warn("Firecrawl webhook secret not configured, skipping verification in dev", {
+          source: "webhook-auth",
+          feature: "firecrawl",
+        });
+        return next();
+      }
+      log.error("Firecrawl webhook secret not configured", {
+        source: "webhook-auth",
+        feature: "firecrawl",
+        endpoint: c.req.path,
+      });
+      throw new HTTPException(500, {
+        message: "Webhook secret not configured",
+      });
+    }
+
+    const signatureHeader = c.req.header("X-Firecrawl-Signature");
+    if (!signatureHeader) {
+      throw new HTTPException(401, {
+        message: "Missing X-Firecrawl-Signature header",
+      });
+    }
+
+    // Parse "sha256=<hex>"
+    const match = signatureHeader.match(/^sha256=([a-f0-9]+)$/i);
+    if (!match) {
+      throw new HTTPException(401, {
+        message: "Invalid signature format",
+      });
+    }
+    const receivedSig = match[1];
+
+    // Compute expected HMAC-SHA256
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+    const expectedSig = Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    // Timing-safe comparison
+    const expectedBytes = encoder.encode(expectedSig);
+    const receivedBytes = encoder.encode(receivedSig);
+
+    if (
+      expectedBytes.length !== receivedBytes.length ||
+      !timingSafeEqual(expectedBytes, receivedBytes)
+    ) {
+      throw new HTTPException(401, {
+        message: "Invalid Firecrawl webhook signature",
+      });
+    }
+
+    await next();
+  }
+);
+
+// ========================================
 // Twilio Webhook Middleware
 // ========================================
 

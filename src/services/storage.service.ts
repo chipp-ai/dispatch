@@ -13,9 +13,9 @@ let storageClient: Storage | null = null;
 
 function getStorageClient(): Storage {
   if (!storageClient) {
-    const bucketName = Deno.env.get("GCS_BUCKET_NAME");
+    const bucketName = Deno.env.get("GCS_FILE_BUCKET");
     if (!bucketName) {
-      throw new Error("GCS_BUCKET_NAME environment variable not set");
+      throw new Error("GCS_FILE_BUCKET environment variable not set");
     }
 
     // Get service account credentials from base64-encoded env var
@@ -57,7 +57,7 @@ export async function uploadFile(
   contentType?: string
 ): Promise<string> {
   const storage = getStorageClient();
-  const bucketName = Deno.env.get("GCS_BUCKET_NAME")!;
+  const bucketName = Deno.env.get("GCS_FILE_BUCKET")!;
   const bucket = storage.bucket(bucketName);
 
   const file = bucket.file(destinationPath);
@@ -100,7 +100,7 @@ export async function uploadFileFromBuffer(
   contentType?: string
 ): Promise<string> {
   const storage = getStorageClient();
-  const bucketName = Deno.env.get("GCS_BUCKET_NAME")!;
+  const bucketName = Deno.env.get("GCS_FILE_BUCKET")!;
   const bucket = storage.bucket(bucketName);
 
   const file = bucket.file(destinationPath);
@@ -172,7 +172,7 @@ export async function uploadImageToPublicBucket(
  */
 export async function deleteFile(filePath: string): Promise<void> {
   const storage = getStorageClient();
-  const bucketName = Deno.env.get("GCS_BUCKET_NAME")!;
+  const bucketName = Deno.env.get("GCS_FILE_BUCKET")!;
   const bucket = storage.bucket(bucketName);
 
   const file = bucket.file(filePath);
@@ -187,7 +187,7 @@ export async function getSignedUrl(
   expiresInSeconds = 3600
 ): Promise<string> {
   const storage = getStorageClient();
-  const bucketName = Deno.env.get("GCS_BUCKET_NAME")!;
+  const bucketName = Deno.env.get("GCS_FILE_BUCKET")!;
   const bucket = storage.bucket(bucketName);
 
   const file = bucket.file(filePath);
