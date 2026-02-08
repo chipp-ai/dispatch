@@ -388,7 +388,7 @@ function AgentActivityItem({
 
   return (
     <div
-      className={`flex gap-3 p-2.5 rounded-lg transition-all duration-300 ${isLatest ? "animate-slide-in bg-[#141414]" : ""}`}
+      className={`flex gap-3 p-2.5 rounded-lg transition-all duration-300 relative ${isLatest ? "animate-slide-in" : ""}`}
       style={{ backgroundColor: isLatest ? config.bgColor : "transparent" }}
     >
       {/* Icon with pulse effect for latest */}
