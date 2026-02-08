@@ -288,11 +288,27 @@ jobs:
             echo "- **Run**: [${GITHUB_RUN_ID}](${GITHUB_RUN_URL})"
           } > .scratch/pr-body.md
 
-          PR_URL=$(gh pr create \
-            --title "feat: ${INPUT_TITLE} [${INPUT_ISSUE_IDENTIFIER}]" \
-            --body-file .scratch/pr-body.md \
-            --base staging \
-            --head "${BRANCH_NAME}")
+          PR_BODY=$(cat .scratch/pr-body.md)
+
+          # Use REST API directly with PAT to bypass enterprise GraphQL restrictions
+          PR_RESPONSE=$(curl -sf -X POST \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls" \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "$(jq -n \
+              --arg title "feat: ${INPUT_TITLE} [${INPUT_ISSUE_IDENTIFIER}]" \
+              --arg body "$PR_BODY" \
+              --arg head "$BRANCH_NAME" \
+              --arg base "staging" \
+              '{title: $title, body: $body, head: $head, base: $base}')")
+
+          PR_URL=$(echo "$PR_RESPONSE" | jq -r '.html_url')
+
+          if [ "$PR_URL" = "null" ] || [ -z "$PR_URL" ]; then
+            echo "Failed to create PR:"
+            echo "$PR_RESPONSE" | jq .
+            exit 1
+          fi
 
           echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
           echo "Created PR: ${PR_URL}"
