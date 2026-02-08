@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/utils/auth";
 import { db } from "@/lib/db";
 import { broadcastActivity } from "@/lib/services/activityBroadcast";
+import { broadcastTerminalToViewers } from "@/lib/terminal/websocket-server";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -32,9 +33,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Resolve issue ID (accept both UUID and identifier like CHIPP-123)
-    const issue = await db.queryOne<{ id: string }>(
-      `SELECT id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    // Resolve issue ID and identifier (accept both UUID and identifier like CHIPP-123)
+    const issue = await db.queryOne<{ id: string; identifier: string }>(
+      `SELECT id, identifier FROM chipp_issue WHERE id = $1 OR identifier = $1`,
       [id]
     );
 
@@ -42,13 +43,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Issue not found" }, { status: 404 });
     }
 
-    // Broadcast to all SSE subscribers - no DB persistence
+    const timestamp = new Date().toISOString();
+
+    // Broadcast to SSE subscribers (IssuePageClient picks this up as sseLines)
     broadcastActivity(issue.id, {
       type: "terminal_output",
       data: {
         content,
-        timestamp: new Date().toISOString(),
+        timestamp,
       },
+    });
+
+    // Also broadcast to WebSocket viewers (TerminalViewer's direct WS connection)
+    broadcastTerminalToViewers(issue.identifier, {
+      type: "output",
+      issueIdentifier: issue.identifier,
+      timestamp,
+      data: content,
     });
 
     return NextResponse.json({ ok: true });

@@ -244,6 +244,13 @@ export async function dispatchWorkflow(
     inputs.additional_context = issue.additional_context.slice(0, 2000);
   }
 
+  // Pass tunnel URL for local dev so GH Actions streams back to localhost
+  const callbackUrl = process.env.CHIPP_ISSUES_CALLBACK_URL;
+  if (callbackUrl) {
+    inputs.callback_url = callbackUrl;
+    console.log(`[Spawn] Using callback URL: ${callbackUrl}`);
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -381,3 +388,4 @@ export async function checkSpawnGate(fp: string): Promise<{
 
   return { allowed: true };
 }
+
