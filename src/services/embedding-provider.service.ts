@@ -9,6 +9,7 @@
  */
 
 import OpenAI from "openai";
+import { log } from "@/lib/logger.ts";
 
 // ============================================================
 // Types
@@ -89,9 +90,11 @@ async function initLocalProvider(): Promise<void> {
     PROVIDERS.local.defaultModel,
     {}
   );
-  console.log(
-    `[embedding-provider] Local model loaded: ${PROVIDERS.local.defaultModel}`
-  );
+  log.info("Local model loaded", {
+    source: "embedding-provider",
+    feature: "init",
+    model: PROVIDERS.local.defaultModel,
+  });
 }
 
 function createLocalProvider(): EmbeddingProvider {
@@ -416,7 +419,10 @@ export async function initDefaultProvider(): Promise<void> {
   const provider = getDefaultProvider();
   // Warm up the provider by generating a test embedding
   await provider.generate("warmup");
-  console.log(
-    `[embedding-provider] Default provider ready: ${provider.provider}/${provider.model}`
-  );
+  log.info("Default provider ready", {
+    source: "embedding-provider",
+    feature: "init",
+    provider: provider.provider,
+    model: provider.model,
+  });
 }

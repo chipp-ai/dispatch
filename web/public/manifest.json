@@ -1,16 +1,52 @@
 {
   "name": "Chipp",
   "short_name": "Chipp",
-  "description": "Build AI apps without code",
+  "description": "Chipp - AI App Builder",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "background_color": "#0A0A0A",
+  "theme_color": "#F9DB00",
+  "orientation": "any",
   "icons": [
     {
-      "src": "/assets/icons/chipp-icon.svg",
+      "src": "/assets/chippylogo.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/icon/192",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/icon/512",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/icon/192?maskable=true",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/api/pwa/icon/512?maskable=true",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "My Apps",
+      "short_name": "Apps",
+      "description": "View your apps",
+      "url": "/#/apps"
+    }
+  ],
+  "categories": ["productivity", "developer-tools"],
+  "prefer_related_applications": false
 }

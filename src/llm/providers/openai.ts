@@ -15,7 +15,7 @@ import type {
   StreamOptions,
   ToolCall,
 } from "../types.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai";
@@ -113,11 +113,7 @@ export class OpenAIProvider implements LLMProvider {
               };
             } catch (parseError) {
               // Invalid JSON, skip this tool call
-              console.error("Failed to parse tool call arguments");
-              Sentry.captureException(parseError, {
-                tags: { source: "openai-provider", feature: "tool-call-parse" },
-                extra: { model },
-              });
+              log.error("Failed to parse tool call arguments", { source: "llm", feature: "openai", model }, parseError);
             }
           }
 
@@ -156,14 +152,7 @@ export class OpenAIProvider implements LLMProvider {
               },
             };
           } catch (parseError) {
-            console.error("Failed to parse final tool call arguments");
-            Sentry.captureException(parseError, {
-              tags: {
-                source: "openai-provider",
-                feature: "final-tool-call-parse",
-              },
-              extra: { model },
-            });
+            log.error("Failed to parse final tool call arguments", { source: "llm", feature: "openai", model }, parseError);
           }
         }
 

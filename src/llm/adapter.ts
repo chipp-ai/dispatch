@@ -7,6 +7,7 @@
  * All SDKs work natively with Deno.
  */
 
+import { log } from "@/lib/logger.ts";
 import type { LLMProvider, BillingContext } from "./types.ts";
 import { OpenAIProvider } from "./providers/openai.ts";
 import { AnthropicProvider } from "./providers/anthropic.ts";
@@ -116,7 +117,9 @@ export function createAdapterWithBilling(
     );
   }
 
-  console.log("[llm-adapter] Using Stripe Token Billing", {
+  log.info("Using Stripe Token Billing", {
+    source: "llm-adapter",
+    feature: "billing-routing",
     model,
     customerId: billingContext.stripeCustomerId,
     organizationId: billingContext.organizationId,

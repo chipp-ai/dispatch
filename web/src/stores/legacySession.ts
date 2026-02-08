@@ -6,6 +6,7 @@
  */
 
 import { writable, derived } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 interface LegacySessionState {
   isLoggedIn: boolean;
@@ -97,14 +98,14 @@ export async function checkWelcomeScreenSeen(email: string): Promise<boolean> {
     });
 
     if (!res.ok) {
-      console.error("Failed to check welcome screen status");
+      captureException(new Error("Failed to check welcome screen status"), { tags: { source: "legacy-session" }, extra: { status: res.status } });
       return false;
     }
 
     const data = await res.json();
     return data.data?.hasSeen ?? false;
   } catch (e) {
-    console.error("Error checking welcome screen status:", e);
+    captureException(e, { tags: { source: "legacy-session" }, extra: { action: "checkWelcomeScreenSeen" } });
     return false;
   }
 }
@@ -120,6 +121,6 @@ export async function markWelcomeScreenSeen(email: string): Promise<void> {
       body: JSON.stringify({ email }),
     });
   } catch (e) {
-    console.error("Error marking welcome screen as seen:", e);
+    captureException(e, { tags: { source: "legacy-session" }, extra: { action: "markWelcomeScreenSeen" } });
   }
 }

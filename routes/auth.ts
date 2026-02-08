@@ -17,12 +17,12 @@ import { SignJWT } from "jose";
 import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { sql } from "kysely";
 import { db } from "../src/db/client.ts";
+import { log } from "@/lib/logger.ts";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv, AuthUser, Session } from "../types.ts";
 import { userProvisioningService } from "../src/services/user-provisioning.service.ts";
-import { billingService } from "../src/services/billing.service.ts";
-import * as Sentry from "@sentry/deno";
+import { sendOtpEmail, sendPasswordResetEmail } from "../src/services/transactional-email.service.ts";
 
 // JWT secret for WebSocket tokens - uses same secret as session auth
 const JWT_SECRET = new TextEncoder().encode(
@@ -47,7 +47,10 @@ const COOKIE_DOMAIN =
   Deno.env.get("ENVIRONMENT") === "production" ? ".chipp.ai" : undefined;
 
 // Internal API key for server-to-server authentication
-const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY");
+// Read at request time (not module load time) so tests can set it after import
+function getInternalApiKey(): string | undefined {
+  return Deno.env.get("INTERNAL_API_KEY");
+}
 
 // ============================================================
 // Embedded Context Detection (for iframe auth)
@@ -113,7 +116,10 @@ const hasDbConfig =
 
 // In dev mode without database, provide mock auth endpoints
 if (Deno.env.get("ENVIRONMENT") !== "production" && !hasDbConfig) {
-  console.log("[auth] Database not configured - using mock auth mode");
+  log.info("Database not configured - using mock auth mode", {
+    source: "auth",
+    feature: "init",
+  });
 
   auth.get("/me", (c) => {
     return c.json(MOCK_USER);
@@ -357,89 +363,17 @@ async function findOrCreateUser(
     return { id: user.id, isNew: false };
   }
 
-  // Create new user, organization, workspace, and membership
-  const orgId = crypto.randomUUID();
-  const userId = crypto.randomUUID();
-  const workspaceId = crypto.randomUUID();
+  // Create new user via provisioning service (handles org, workspace, Stripe setup)
+  const result = await userProvisioningService.provisionNewUser({
+    email: userInfo.email,
+    name: userInfo.name,
+    picture: userInfo.picture,
+    oauthProvider: provider,
+    oauthId: userInfo.id,
+    emailVerified: true,
+  });
 
-  // Create organization first
-  await db
-    .insertInto("app.organizations")
-    .values({
-      id: orgId,
-      name: `${userInfo.name ?? userInfo.email}'s Organization`,
-      subscriptionTier: "FREE",
-      usageBasedBillingEnabled: false,
-      creditsBalance: 0,
-    })
-    .execute();
-
-  // Create user
-  await db
-    .insertInto("app.users")
-    .values({
-      id: userId,
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-      role: "owner",
-      organizationId: orgId,
-      oauthProvider: provider,
-      oauthId: userInfo.id,
-      emailVerified: true,
-    })
-    .execute();
-
-  // Create default workspace
-  await db
-    .insertInto("app.workspaces")
-    .values({
-      id: workspaceId,
-      name: "My Workspace",
-      organizationId: orgId,
-    })
-    .execute();
-
-  // Add user as workspace owner
-  await db
-    .insertInto("app.workspace_members")
-    .values({
-      id: crypto.randomUUID(),
-      workspaceId: workspaceId,
-      userId: userId,
-      role: "OWNER",
-      joinedAt: new Date(),
-      joinedViaPublicInvite: false,
-    })
-    .execute();
-
-  // Provision Stripe customer and FREE subscription (async, don't block signup)
-  billingService
-    .ensureFreeSubscriptionForOrganization({
-      organizationId: orgId,
-      email: userInfo.email,
-      name: userInfo.name,
-    })
-    .catch((err) => {
-      console.error(
-        "[auth] Failed to provision Stripe customer for new org:",
-        err
-      );
-      Sentry.captureException(err, {
-        tags: {
-          source: "auth-oauth-signup",
-          feature: "stripe-customer-provisioning",
-        },
-        extra: {
-          organizationId: orgId,
-          userId,
-          email: userInfo.email,
-          provider,
-        },
-      });
-    });
-
-  return { id: userId, isNew: true };
+  return { id: result.userId, isNew: true };
 }
 
 // ============================================================
@@ -562,7 +496,11 @@ auth.get("/callback/:provider", async (c) => {
     // All users go to / which handles routing decision (may route to import for legacy data)
     return c.redirect(`${webAppUrl}/#/`);
   } catch (error) {
-    console.error("OAuth callback error:", error);
+    log.error("OAuth callback error", {
+      source: "auth",
+      feature: "oauth-callback",
+      provider,
+    }, error);
     return c.redirect(`${webAppUrl}/#/login?error=auth_failed`);
   }
 });
@@ -650,7 +588,10 @@ auth.post("/login/credentials", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[auth] Credentials login error:", error);
+    log.error("Credentials login error", {
+      source: "auth",
+      feature: "credentials-login",
+    }, error);
     return c.json({ error: "Login failed" }, 500);
   }
 });
@@ -766,7 +707,7 @@ if (Deno.env.get("ENVIRONMENT") !== "production") {
         .execute();
 
       user = { id: userId, email, name };
-      console.log(`[dev-login] Created dev user: ${email}`);
+      log.info("Created dev user", { source: "auth", feature: "dev-login", email });
     } else {
       // Existing user - ensure they have a workspace membership
       const membership = await db
@@ -821,9 +762,11 @@ if (Deno.env.get("ENVIRONMENT") !== "production") {
             })
             .execute();
 
-          console.log(
-            `[dev-login] Created workspace membership for existing user: ${email}`
-          );
+          log.info("Created workspace membership for existing user", {
+            source: "auth",
+            feature: "dev-login",
+            email,
+          });
         }
       }
     }
@@ -936,7 +879,10 @@ auth.post("/check-email", async (c) => {
 
     return c.json({ exists: false });
   } catch (error) {
-    console.error("[auth] Check email error:", error);
+    log.error("Check email error", {
+      source: "auth",
+      feature: "check-email",
+    }, error);
     return c.json({ error: "Failed to check email" }, 500);
   }
 });
@@ -976,63 +922,27 @@ auth.post("/send-otp", async (c) => {
       })
       .execute();
 
-    // Send email with OTP
-    const sendGridApiKey = Deno.env.get("SENDGRID_API_KEY");
-    if (sendGridApiKey) {
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${sendGridApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          personalizations: [{ to: [{ email: normalizedEmail }] }],
-          from: {
-            email: Deno.env.get("SENDGRID_FROM_EMAIL") || "noreply@chipp.ai",
-            name: "Chipp",
-          },
-          subject: `Your Chipp verification code: ${otp}`,
-          content: [
-            {
-              type: "text/plain",
-              value: `Your Chipp verification code is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this code, please ignore this email.`,
-            },
-            {
-              type: "text/html",
-              value: `
-                <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                  <h2 style="color: #1a1a1a; margin-bottom: 24px;">Verify your email</h2>
-                  <p style="color: #666; font-size: 16px; margin-bottom: 24px;">
-                    Your verification code is:
-                  </p>
-                  <div style="background: #f5f5f5; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 24px;">
-                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1a1a1a;">${otp}</span>
-                  </div>
-                  <p style="color: #666; font-size: 14px;">
-                    This code will expire in 10 minutes.
-                  </p>
-                  <p style="color: #999; font-size: 12px; margin-top: 24px;">
-                    If you didn't request this code, please ignore this email.
-                  </p>
-                </div>
-              `,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        console.error("[auth] SendGrid error:", await response.text());
-        return c.json({ error: "Failed to send verification email" }, 500);
-      }
-    } else {
-      // Dev mode - log OTP to console
-      console.log(`[auth] OTP for ${normalizedEmail}: ${otp}`);
+    // Send email with OTP via SMTP2GO (falls back to console.log when SMTP not configured)
+    const sent = await sendOtpEmail({
+      to: normalizedEmail,
+      otpCode: otp,
+      context: {
+        appName: "Chipp",
+        appId: "platform",
+        organizationId: "platform",
+        brandColor: "#000000",
+      },
+    });
+    if (!sent) {
+      return c.json({ error: "Failed to send verification email" }, 500);
     }
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Send OTP error:", error);
+    log.error("Send OTP error", {
+      source: "auth",
+      feature: "send-otp",
+    }, error);
     return c.json({ error: "Failed to send verification code" }, 500);
   }
 });
@@ -1108,84 +1018,15 @@ auth.post("/signup", async (c) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password);
 
-    // Create organization, user, and workspace
-    const orgId = crypto.randomUUID();
-    const userId = crypto.randomUUID();
-    const workspaceId = crypto.randomUUID();
+    // Create user via provisioning service (handles org, workspace, Stripe setup)
     const name = normalizedEmail.split("@")[0];
-
-    // Create organization
-    await db
-      .insertInto("app.organizations")
-      .values({
-        id: orgId,
-        name: `${name}'s Organization`,
-        subscriptionTier: "FREE",
-        usageBasedBillingEnabled: false,
-        creditsBalance: 0,
-      })
-      .execute();
-
-    // Create user
-    await db
-      .insertInto("app.users")
-      .values({
-        id: userId,
-        email: normalizedEmail,
-        name,
-        role: "owner",
-        organizationId: orgId,
-        passwordHash: passwordHash,
-        emailVerified: true,
-      })
-      .execute();
-
-    // Create default workspace
-    await db
-      .insertInto("app.workspaces")
-      .values({
-        id: workspaceId,
-        name: "My Workspace",
-        organizationId: orgId,
-      })
-      .execute();
-
-    // Add user as workspace owner
-    await db
-      .insertInto("app.workspace_members")
-      .values({
-        workspaceId: workspaceId,
-        userId: userId,
-        role: "OWNER",
-        joinedAt: new Date(),
-        joinedViaPublicInvite: false,
-      })
-      .execute();
-
-    // Provision Stripe customer and FREE subscription (async, don't block signup)
-    billingService
-      .ensureFreeSubscriptionForOrganization({
-        organizationId: orgId,
-        email: normalizedEmail,
-        name,
-      })
-      .catch((err) => {
-        console.error(
-          "[auth] Failed to provision Stripe customer for new org:",
-          err
-        );
-        Sentry.captureException(err, {
-          tags: {
-            source: "auth-email-signup",
-            feature: "stripe-customer-provisioning",
-          },
-          extra: {
-            organizationId: orgId,
-            userId,
-            email: normalizedEmail,
-          },
-        });
-      });
+    const result = await userProvisioningService.provisionNewUser({
+      email: normalizedEmail,
+      name,
+      passwordHash,
+      emailVerified: true,
+    });
+    const userId = result.userId;
 
     // Create session
     const session = await createSession(userId, {
@@ -1216,11 +1057,14 @@ auth.post("/signup", async (c) => {
         email: normalizedEmail,
         name,
         role: "owner",
-        organizationId: orgId,
+        organizationId: result.organizationId,
       },
     });
   } catch (error) {
-    console.error("[auth] Signup error:", error);
+    log.error("Signup error", {
+      source: "auth",
+      feature: "signup",
+    }, error);
     return c.json({ error: "Signup failed" }, 500);
   }
 });
@@ -1276,74 +1120,27 @@ auth.post("/forgot-password", async (c) => {
       .where("id", "=", user.id)
       .execute();
 
-    // Send reset email
-    const appUrl = Deno.env.get("APP_URL") ?? "http://localhost:8000";
+    // Send reset email via SMTP2GO (falls back to console.log when SMTP not configured)
     const webAppUrl = Deno.env.get("WEB_APP_URL") || "http://localhost:5174";
     const resetUrl = `${webAppUrl}/#/reset-password?token=${resetToken}`;
 
-    const sendGridApiKey = Deno.env.get("SENDGRID_API_KEY");
-    if (sendGridApiKey) {
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${sendGridApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          personalizations: [{ to: [{ email: normalizedEmail }] }],
-          from: {
-            email: Deno.env.get("SENDGRID_FROM_EMAIL") || "noreply@chipp.ai",
-            name: "Chipp",
-          },
-          subject: "Reset your Chipp password",
-          content: [
-            {
-              type: "text/plain",
-              value: `Hi ${user.name || "there"},\n\nWe received a request to reset your password. Click the link below to set a new password:\n\n${resetUrl}\n\nThis link will expire in 1 hour.\n\nIf you didn't request this, you can safely ignore this email.\n\n- The Chipp Team`,
-            },
-            {
-              type: "text/html",
-              value: `
-                <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                  <h2 style="color: #1a1a1a; margin-bottom: 24px;">Reset your password</h2>
-                  <p style="color: #666; font-size: 16px; margin-bottom: 24px;">
-                    Hi ${user.name || "there"},
-                  </p>
-                  <p style="color: #666; font-size: 16px; margin-bottom: 24px;">
-                    We received a request to reset your password. Click the button below to set a new password:
-                  </p>
-                  <div style="text-align: center; margin: 32px 0;">
-                    <a href="${resetUrl}"
-                       style="background: #000; color: #fff; padding: 12px 32px; text-decoration: none; border-radius: 8px; font-weight: 500; display: inline-block;">
-                      Reset Password
-                    </a>
-                  </div>
-                  <p style="color: #666; font-size: 14px; margin-bottom: 16px;">
-                    This link will expire in 1 hour.
-                  </p>
-                  <p style="color: #999; font-size: 12px; margin-top: 24px;">
-                    If you didn't request this, you can safely ignore this email.
-                  </p>
-                </div>
-              `,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        console.error("[auth] SendGrid error:", await response.text());
-      }
-    } else {
-      // Dev mode - log reset URL
-      console.log(
-        `[auth] Password reset URL for ${normalizedEmail}: ${resetUrl}`
-      );
-    }
+    await sendPasswordResetEmail({
+      to: normalizedEmail,
+      resetUrl,
+      context: {
+        appName: "Chipp",
+        appId: "platform",
+        organizationId: "platform",
+        brandColor: "#000000",
+      },
+    });
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Forgot password error:", error);
+    log.error("Forgot password error", {
+      source: "auth",
+      feature: "forgot-password",
+    }, error);
     return c.json({ error: "Failed to process request" }, 500);
   }
 });
@@ -1411,7 +1208,10 @@ auth.post("/reset-password", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[auth] Reset password error:", error);
+    log.error("Reset password error", {
+      source: "auth",
+      feature: "reset-password",
+    }, error);
     return c.json({ error: "Failed to reset password" }, 500);
   }
 });
@@ -1434,7 +1234,8 @@ auth.post("/provision", async (c) => {
   try {
     // Verify internal API key for server-to-server authentication
     const internalAuth = c.req.header("X-Internal-Auth");
-    if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+    const apiKey = getInternalApiKey();
+    if (!apiKey || internalAuth !== apiKey) {
       throw new HTTPException(401, {
         message: "Internal authentication required",
       });
@@ -1473,7 +1274,10 @@ auth.post("/provision", async (c) => {
     if (error instanceof HTTPException) {
       throw error;
     }
-    console.error("[auth] Provision error:", error);
+    log.error("Provision error", {
+      source: "auth",
+      feature: "provision",
+    }, error);
     return c.json({ error: "Failed to provision user" }, 500);
   }
 });
@@ -1489,7 +1293,8 @@ auth.post("/session-create", async (c) => {
   try {
     // Verify internal API key for server-to-server authentication
     const internalAuth = c.req.header("X-Internal-Auth");
-    if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+    const apiKey = getInternalApiKey();
+    if (!apiKey || internalAuth !== apiKey) {
       throw new HTTPException(401, {
         message: "Internal authentication required",
       });
@@ -1539,7 +1344,10 @@ auth.post("/session-create", async (c) => {
     if (error instanceof HTTPException) {
       throw error;
     }
-    console.error("[auth] Session create error:", error);
+    log.error("Session create error", {
+      source: "auth",
+      feature: "session-create",
+    }, error);
     return c.json({ error: "Failed to create session" }, 500);
   }
 });

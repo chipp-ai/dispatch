@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, Input, Label, Spinner, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { user } from "../../../stores/auth";
   import {
     organization,
@@ -168,7 +169,10 @@
       previewUrl = result.url;
       toasts.success("Success", "Image uploaded successfully");
     } catch (e) {
-      console.error("Failed to upload image:", e);
+      captureException(e, {
+        tags: { feature: "settings-organization" },
+        extra: { action: "handleFileChange" },
+      });
       toasts.error("Error", "Failed to upload image");
     } finally {
       isUploading = false;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import {
     ChevronLeft,
     Check,
@@ -69,7 +70,7 @@
         throw new Error("No payment URL returned");
       }
     } catch (error) {
-      console.error("[UnlockContent] Error:", error);
+      captureException(error, { tags: { feature: "onboarding-unlock" }, extra: { action: "select-plan", planId } });
       isLoading = false;
       selectedPlan = null;
     }

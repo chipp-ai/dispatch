@@ -16,6 +16,8 @@
     Moon,
     Coins,
     RefreshCw,
+    TrendingUp,
+    Bell,
   } from "lucide-svelte";
   import { currentOrganization } from "../../../../stores/organization";
   import { theme, toggleTheme } from "../../../../stores/theme";
@@ -31,6 +33,7 @@
       title: "PERSONAL",
       items: [
         { name: "Account", href: "#/settings/account", icon: User },
+        { name: "Notifications", href: "#/settings/notifications", icon: Bell },
       ],
     },
     {
@@ -40,6 +43,8 @@
         { name: "Credits", href: "#/settings/billing/credits", icon: Coins },
         { name: "Payment", href: "#/settings/billing/payment", icon: CreditCard },
         { name: "Auto Top-up", href: "#/settings/billing/auto-topup", icon: RefreshCw },
+        { name: "Usage", href: "#/settings/billing/usage", icon: TrendingUp },
+        { name: "Notifications", href: "#/settings/billing/notifications", icon: Bell },
       ],
     },
     {

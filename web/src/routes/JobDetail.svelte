@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import Button from "../lib/design-system/components/Button.svelte";
 
   export let params: { appId?: string; workflowId?: string } = {};
@@ -123,7 +124,7 @@
         }
       }
     } catch (err) {
-      console.error("Error loading job:", err);
+      captureException(err, { tags: { page: "job-detail", feature: "load-job" } });
       error = err instanceof Error ? err.message : "Failed to load job";
     } finally {
       isLoading = false;

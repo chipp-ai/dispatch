@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { mcpIntegrationService } from "../../../services/mcp-integration.service.ts";
 import { testMcpConnection } from "../../../services/mcp-client.service.ts";
@@ -173,7 +174,7 @@ integrationRoutes.post(
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save integration";
-      console.error("[mcp] Save error:", err);
+      log.error("Failed to save MCP integration", { source: "integrations-api", feature: "mcp-save", applicationId: body.applicationId, integrationId: body.integrationId }, err);
       return c.json({ ok: false, error: message }, 500);
     }
   }

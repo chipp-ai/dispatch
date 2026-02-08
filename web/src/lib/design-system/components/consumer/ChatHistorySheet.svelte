@@ -12,6 +12,7 @@
    * anonymous users (localStorage history managed by parent component).
    */
   import { createEventDispatcher } from 'svelte';
+  import { captureException } from '$lib/sentry';
   import { fade, fly } from 'svelte/transition';
   import Button from '../Button.svelte';
   import Input from '../Input.svelte';
@@ -107,7 +108,10 @@
       sessions = sessions.filter(s => s.id !== sessionId);
       dispatch('deleteSession', { sessionId });
     } catch (e) {
-      console.error('Failed to delete session:', e);
+      captureException(e, {
+        tags: { feature: "chat-history" },
+        extra: { action: "delete-session", sessionId, appNameId },
+      });
     }
   }
 
@@ -139,7 +143,10 @@
         }
       }
     } catch (e) {
-      console.error('Failed to update title:', e);
+      captureException(e, {
+        tags: { feature: "chat-history" },
+        extra: { action: "update-title", sessionId: editingSessionId, appNameId },
+      });
     } finally {
       editingSessionId = null;
     }

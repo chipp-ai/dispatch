@@ -10,6 +10,7 @@
  * - Images use URL references (OpenAI supports direct URLs)
  */
 
+import { log } from "@/lib/logger.ts";
 import type OpenAI from "openai";
 import type {
   UnifiedMessage,
@@ -85,7 +86,7 @@ export class OpenAIEncoder
       case "tool":
         return this.encodeToolMessage(msg);
       default:
-        console.warn(`[openai-encoder] Unknown role: ${msg.role}`);
+        log.warn("Unknown role", { source: "llm", feature: "openai-encoder", role: msg.role });
         return null;
     }
   }

@@ -8,6 +8,7 @@
    * - Navigate to original message
    */
   import { createEventDispatcher } from 'svelte';
+  import { captureException } from '$lib/sentry';
   import { fade, fly } from 'svelte/transition';
   import Button from '../Button.svelte';
   import Input from '../Input.svelte';
@@ -111,7 +112,10 @@
         }
       }
     } catch (e) {
-      console.error('Failed to update note:', e);
+      captureException(e, {
+        tags: { feature: "bookmarks" },
+        extra: { action: "update-note", bookmarkId: editingId, appNameId },
+      });
     } finally {
       editingId = null;
     }
@@ -140,7 +144,10 @@
         dispatch('deleteBookmark', { bookmarkId });
       }
     } catch (e) {
-      console.error('Failed to delete bookmark:', e);
+      captureException(e, {
+        tags: { feature: "bookmarks" },
+        extra: { action: "delete-bookmark", bookmarkId, appNameId },
+      });
     }
   }
 

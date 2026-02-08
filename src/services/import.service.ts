@@ -8,7 +8,7 @@
 
 import { db } from "../db/client.ts";
 import type { ImportStatus, ImportProgressStatus } from "../db/schema.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
 
 // ========================================
@@ -194,11 +194,11 @@ class ImportService {
         appsCount,
       };
     } catch (error) {
-      console.error("[import] Error checking existing user:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "check-existing-user" },
-        extra: { email },
-      });
+      log.error("Error checking existing user", {
+        source: "import-service",
+        feature: "check-existing-user",
+        email,
+      }, error);
       // If we can't connect, treat as no existing data
       return { hasExistingData: false };
     }
@@ -213,11 +213,11 @@ class ImportService {
     try {
       conns = await getSourceConnections();
     } catch (error) {
-      console.error("[import] Source DB not configured:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "source-db-connection" },
-        extra: { developerId },
-      });
+      log.error("Source DB not configured", {
+        source: "import-service",
+        feature: "source-db-connection",
+        developerId,
+      }, error);
       return null;
     }
 
@@ -542,11 +542,14 @@ class ImportService {
 
     // Start the import in the background
     this.executeImport(importSessionId, appIds).catch((error) => {
-      console.error("[import] Import failed:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "execute-import" },
-        extra: { importSessionId, userId, sourceDeveloperId, appIds },
-      });
+      log.error("Import failed", {
+        source: "import-service",
+        feature: "execute-import",
+        importSessionId,
+        userId,
+        sourceDeveloperId,
+        appIds,
+      }, error);
     });
 
     return importSessionId;
@@ -599,11 +602,11 @@ class ImportService {
       };
     } catch (error) {
       // Invalid UUID format or other DB error - treat as not found
-      console.error("[import] Error getting import status:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "get-import-status" },
-        extra: { importSessionId },
-      });
+      log.error("Error getting import status", {
+        source: "import-service",
+        feature: "get-import-status",
+        importSessionId,
+      }, error);
       return null;
     }
   }
@@ -634,11 +637,11 @@ class ImportService {
 
       return session as ImportSessionData | null;
     } catch (error) {
-      console.error("[import] Error getting active import:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "get-active-import" },
-        extra: { userId },
-      });
+      log.error("Error getting active import", {
+        source: "import-service",
+        feature: "get-active-import",
+        userId,
+      }, error);
       return null;
     }
   }
@@ -676,14 +679,11 @@ class ImportService {
 
       return true;
     } catch (error) {
-      console.error("[import] Error checking if should show prompt:", error);
-      Sentry.captureException(error, {
-        tags: {
-          source: "import-service",
-          feature: "should-show-import-prompt",
-        },
-        extra: { userId },
-      });
+      log.error("Error checking if should show prompt", {
+        source: "import-service",
+        feature: "should-show-import-prompt",
+        userId,
+      }, error);
       // On error, don't show prompt to avoid blocking users
       return false;
     }
@@ -738,11 +738,12 @@ class ImportService {
       // Completely new user - show onboarding v2
       return { route: "onboarding-v2", hasApps: false, hasLegacyData: false };
     } catch (error) {
-      console.error("[import] Error getting routing decision:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "routing-decision" },
-        extra: { userId, email },
-      });
+      log.error("Error getting routing decision", {
+        source: "import-service",
+        feature: "routing-decision",
+        userId,
+        email,
+      }, error);
       // On error, default to onboarding-v2 for new users
       return { route: "onboarding-v2", hasApps: false, hasLegacyData: false };
     }
@@ -767,11 +768,11 @@ class ImportService {
         })
         .execute();
     } catch (error) {
-      console.error("[import] Error marking import skipped:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "mark-import-skipped" },
-        extra: { userId },
-      });
+      log.error("Error marking import skipped", {
+        source: "import-service",
+        feature: "mark-import-skipped",
+        userId,
+      }, error);
       // Don't throw - this shouldn't block the user
     }
   }
@@ -900,11 +901,12 @@ class ImportService {
         .where("id", "=", importSessionId)
         .execute();
     } catch (error) {
-      console.error("[import] Import failed:", error);
-      Sentry.captureException(error, {
-        tags: { source: "import-service", feature: "execute-import-main" },
-        extra: { importSessionId, appIds },
-      });
+      log.error("Import failed", {
+        source: "import-service",
+        feature: "execute-import-main",
+        importSessionId,
+        appIds,
+      }, error);
 
       await db
         .updateTable("app.import_sessions")
@@ -1125,9 +1127,11 @@ class ImportService {
 
       // Skip if no organization available (v2 requires organizationId)
       if (!newOrgId) {
-        console.warn(
-          `[import] Skipping workspace ${workspace.id} - no organization available`
-        );
+        log.warn("Skipping workspace - no organization available", {
+          source: "import-service",
+          feature: "import-workspaces",
+          workspaceId: workspace.id,
+        });
         completed++;
         await this.updateProgressCompleted(
           importSessionId,
@@ -1763,6 +1767,7 @@ class ImportService {
           source: session.source,
           mode: "ai", // Default mode, v1 doesn't have this field
           isBookmarked: false, // Default, v1 uses isShared not isBookmarked
+          isMultiplayer: false, // Imported sessions are single-user
           startedAt: session.createdAt,
           endedAt: null, // v1 doesn't track this
         })
@@ -1963,7 +1968,7 @@ class ImportService {
    * Deletes in reverse dependency order to respect foreign keys
    */
   private async clearExistingData(): Promise<void> {
-    console.log("[import] Clearing existing V2 data before import...");
+    log.info("Clearing existing V2 data before import", { source: "import-service", feature: "clear-data" });
 
     // Delete in reverse dependency order
     await db.deleteFrom("chat.messages").execute();
@@ -1976,7 +1981,7 @@ class ImportService {
     // Clear previous import mappings for clean state
     await db.deleteFrom("app.import_id_mappings").execute();
 
-    console.log("[import] Cleared existing data");
+    log.info("Cleared existing data", { source: "import-service", feature: "clear-data" });
   }
 
   private async storeIdMapping(

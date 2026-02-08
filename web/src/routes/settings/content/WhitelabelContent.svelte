@@ -23,7 +23,106 @@
     Shield,
     Sparkles,
     Building2,
+    Globe,
+    Copy,
+    Check,
+    Trash2,
+    RefreshCw,
   } from "lucide-svelte";
+
+  // Sender domain types
+  interface SenderDomain {
+    id: string;
+    domain: string;
+    status: "pending" | "verified" | "failed";
+    dkimRecordName: string | null;
+    dkimRecordValue: string | null;
+    returnPathRecordName: string | null;
+    returnPathRecordValue: string | null;
+    trackingRecordName: string | null;
+    trackingRecordValue: string | null;
+    dmarcRecordValue: string | null;
+  }
+
+  // Sender domain state
+  let senderDomains: SenderDomain[] = [];
+  let newDomain = "";
+  let isAddingDomain = false;
+  let addDomainError: string | null = null;
+  let expandedDomainId: string | null = null;
+  let verifyingDomainId: string | null = null;
+  let copiedField: string | null = null;
+
+  async function loadSenderDomains() {
+    try {
+      const res = await fetch("/api/organization/sender-domains", { credentials: "include" });
+      if (res.ok) {
+        const json = await res.json();
+        senderDomains = json.data;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function handleAddDomain() {
+    if (!newDomain.trim() || isAddingDomain) return;
+    isAddingDomain = true;
+    addDomainError = null;
+
+    try {
+      const res = await fetch("/api/organization/sender-domains", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ domain: newDomain.trim() }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || "Failed to add domain");
+      }
+
+      newDomain = "";
+      await loadSenderDomains();
+    } catch (error) {
+      addDomainError = error instanceof Error ? error.message : "Failed to add domain";
+    } finally {
+      isAddingDomain = false;
+    }
+  }
+
+  async function handleVerifyDomain(domainId: string) {
+    verifyingDomainId = domainId;
+    try {
+      const res = await fetch(`/api/organization/sender-domains/${domainId}/verify`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        await loadSenderDomains();
+      }
+    } catch { /* ignore */ }
+    verifyingDomainId = null;
+  }
+
+  async function handleRemoveDomain(domainId: string) {
+    try {
+      await fetch(`/api/organization/sender-domains/${domainId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      senderDomains = senderDomains.filter((d) => d.id !== domainId);
+    } catch { /* ignore */ }
+  }
+
+  function toggleDomainExpand(domainId: string) {
+    expandedDomainId = expandedDomainId === domainId ? null : domainId;
+  }
+
+  function copyToClipboard(text: string, fieldId: string) {
+    navigator.clipboard.writeText(text);
+    copiedField = fieldId;
+    setTimeout(() => { copiedField = null; }, 2000);
+  }
 
   // Form state
   let name = "";
@@ -106,6 +205,7 @@
 
   onMount(async () => {
     await Promise.all([fetchWhitelabelSettings(), fetchOrganizationMembers()]);
+    loadSenderDomains();
   });
 
   async function handleSave() {
@@ -431,6 +531,160 @@
           />
         </div>
       </div>
+    </Card>
+  </section>
+
+  <!-- Sender Domain Verification -->
+  <section class="settings-section">
+    <h2>Sender Domain Verification</h2>
+    <Card>
+      <p class="section-description">
+        Verify a custom domain for sending emails. This enables DKIM signing and improves deliverability.
+      </p>
+
+      <!-- Add domain form -->
+      <div class="domain-add-row">
+        <Input
+          bind:value={newDomain}
+          placeholder="example.com"
+          disabled={!canEdit || isAddingDomain}
+        />
+        <Button on:click={handleAddDomain} disabled={!canEdit || isAddingDomain || !newDomain.trim()}>
+          {#if isAddingDomain}
+            <Spinner size="sm" />
+          {:else}
+            <Globe size={16} />
+          {/if}
+          Add Domain
+        </Button>
+      </div>
+
+      {#if addDomainError}
+        <p class="domain-error">{addDomainError}</p>
+      {/if}
+
+      <!-- Domain list -->
+      {#if senderDomains.length > 0}
+        <div class="domain-list">
+          {#each senderDomains as domain}
+            <div class="domain-item">
+              <div class="domain-header">
+                <div class="domain-info">
+                  <span class="domain-name">{domain.domain}</span>
+                  <span class="domain-status" class:verified={domain.status === "verified"} class:failed={domain.status === "failed"}>
+                    {domain.status}
+                  </span>
+                </div>
+                <div class="domain-actions">
+                  {#if domain.status !== "verified"}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      on:click={() => handleVerifyDomain(domain.id)}
+                      disabled={verifyingDomainId === domain.id}
+                    >
+                      {#if verifyingDomainId === domain.id}
+                        <Spinner size="sm" />
+                      {:else}
+                        <RefreshCw size={14} />
+                      {/if}
+                      Verify
+                    </Button>
+                  {/if}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    on:click={() => toggleDomainExpand(domain.id)}
+                  >
+                    DNS Records
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    on:click={() => handleRemoveDomain(domain.id)}
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </div>
+
+              {#if expandedDomainId === domain.id}
+                <div class="dns-records">
+                  <p class="dns-instructions">Add these DNS records to your domain to verify ownership:</p>
+
+                  {#if domain.dkimRecordName}
+                    <div class="dns-record">
+                      <div class="dns-record-header">
+                        <span class="dns-type">CNAME (DKIM)</span>
+                        <button class="copy-btn" on:click={() => copyToClipboard(domain.dkimRecordValue || "", `dkim-${domain.id}`)}>
+                          {#if copiedField === `dkim-${domain.id}`}
+                            <Check size={12} />
+                          {:else}
+                            <Copy size={12} />
+                          {/if}
+                        </button>
+                      </div>
+                      <code class="dns-name">{domain.dkimRecordName}</code>
+                      <code class="dns-value">{domain.dkimRecordValue}</code>
+                    </div>
+                  {/if}
+
+                  {#if domain.returnPathRecordName}
+                    <div class="dns-record">
+                      <div class="dns-record-header">
+                        <span class="dns-type">CNAME (Return-Path)</span>
+                        <button class="copy-btn" on:click={() => copyToClipboard(domain.returnPathRecordValue || "", `rp-${domain.id}`)}>
+                          {#if copiedField === `rp-${domain.id}`}
+                            <Check size={12} />
+                          {:else}
+                            <Copy size={12} />
+                          {/if}
+                        </button>
+                      </div>
+                      <code class="dns-name">{domain.returnPathRecordName}</code>
+                      <code class="dns-value">{domain.returnPathRecordValue}</code>
+                    </div>
+                  {/if}
+
+                  {#if domain.trackingRecordName}
+                    <div class="dns-record">
+                      <div class="dns-record-header">
+                        <span class="dns-type">CNAME (Tracking)</span>
+                        <button class="copy-btn" on:click={() => copyToClipboard(domain.trackingRecordValue || "", `track-${domain.id}`)}>
+                          {#if copiedField === `track-${domain.id}`}
+                            <Check size={12} />
+                          {:else}
+                            <Copy size={12} />
+                          {/if}
+                        </button>
+                      </div>
+                      <code class="dns-name">{domain.trackingRecordName}</code>
+                      <code class="dns-value">{domain.trackingRecordValue}</code>
+                    </div>
+                  {/if}
+
+                  {#if domain.dmarcRecordValue}
+                    <div class="dns-record">
+                      <div class="dns-record-header">
+                        <span class="dns-type">TXT (DMARC)</span>
+                        <button class="copy-btn" on:click={() => copyToClipboard(domain.dmarcRecordValue || "", `dmarc-${domain.id}`)}>
+                          {#if copiedField === `dmarc-${domain.id}`}
+                            <Check size={12} />
+                          {:else}
+                            <Copy size={12} />
+                          {/if}
+                        </button>
+                      </div>
+                      <code class="dns-name">_dmarc.{domain.domain}</code>
+                      <code class="dns-value">{domain.dmarcRecordValue}</code>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </Card>
   </section>
 
@@ -764,6 +1018,139 @@
     gap: var(--space-2);
   }
 
+  /* Sender domain styles */
+  .domain-add-row {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+  }
+
+  .domain-error {
+    font-size: var(--text-sm);
+    color: hsl(var(--destructive));
+    margin: var(--space-2) 0;
+  }
+
+  .domain-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+  }
+
+  .domain-item {
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .domain-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .domain-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .domain-name {
+    font-weight: var(--font-medium);
+    color: hsl(var(--foreground));
+  }
+
+  .domain-status {
+    font-size: var(--text-xs);
+    padding: var(--space-0-5) var(--space-2);
+    border-radius: var(--radius);
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    text-transform: capitalize;
+  }
+
+  .domain-status.verified {
+    background: hsl(142 76% 36% / 0.1);
+    color: hsl(142 76% 36%);
+  }
+
+  .domain-status.failed {
+    background: hsl(var(--destructive) / 0.1);
+    color: hsl(var(--destructive));
+  }
+
+  .domain-actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .dns-records {
+    padding: var(--space-4);
+    background: hsl(var(--muted) / 0.3);
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  .dns-instructions {
+    font-size: var(--text-sm);
+    color: hsl(var(--muted-foreground));
+    margin: 0 0 var(--space-4) 0;
+  }
+
+  .dns-record {
+    margin-bottom: var(--space-3);
+    padding: var(--space-3);
+    background: hsl(var(--background));
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+  }
+
+  .dns-record-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-2);
+  }
+
+  .dns-type {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+  }
+
+  .copy-btn {
+    display: flex;
+    align-items: center;
+    padding: var(--space-1);
+    border: none;
+    border-radius: var(--radius);
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+  }
+
+  .copy-btn:hover {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .dns-name,
+  .dns-value {
+    display: block;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    color: hsl(var(--muted-foreground));
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  .dns-name {
+    color: hsl(var(--foreground));
+    margin-bottom: var(--space-1);
+  }
+
   @media (max-width: 768px) {
     .settings-header {
       flex-direction: column;
@@ -772,6 +1159,16 @@
 
     .form-row {
       grid-template-columns: 1fr;
+    }
+
+    .domain-add-row {
+      flex-direction: column;
+    }
+
+    .domain-header {
+      flex-direction: column;
+      gap: var(--space-2);
+      align-items: flex-start;
     }
 
     .save-actions {

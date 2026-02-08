@@ -2,9 +2,10 @@
   import { link } from "svelte-spa-router";
   import { Button } from "$lib/design-system";
   import { fade, scale } from "svelte/transition";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
 
   export let appName: string = "App Name";
+  export let appId: string = "";
   export let appLogoUrl: string = "";
   export let currentPage: string = "Build";
   export let onShare: () => void = () => {};
@@ -16,6 +17,49 @@
   export let lastSaved: Date | null = null;
   export let hasUnsavedChanges: boolean = false;
   export let hidePublish: boolean = false;
+
+  // Mobile tab definitions
+  const mobileTabs = [
+    { label: "Build", slug: "build" },
+    { label: "Share", slug: "share" },
+    { label: "Access", slug: "access" },
+    { label: "Metrics", slug: "metrics" },
+    { label: "Chats", slug: "chats" },
+    { label: "Tags", slug: "tags" },
+    { label: "Settings", slug: "settings" },
+  ];
+
+  // Scroll fade state
+  let mobileNavEl: HTMLElement;
+  let showLeftFade = false;
+  let showRightFade = false;
+
+  function updateScrollFades() {
+    if (!mobileNavEl) return;
+    const { scrollLeft, scrollWidth, clientWidth } = mobileNavEl;
+    showLeftFade = scrollLeft > 4;
+    showRightFade = scrollLeft + clientWidth < scrollWidth - 4;
+  }
+
+  async function scrollActiveTabIntoView() {
+    await tick();
+    if (!mobileNavEl) return;
+    const activeEl = mobileNavEl.querySelector(".mobile-nav-item.active");
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    }
+    updateScrollFades();
+  }
+
+  $: if (currentPage && mobileNavEl) {
+    scrollActiveTabIntoView();
+  }
+
+  onMount(() => {
+    if (mobileNavEl) {
+      updateScrollFades();
+    }
+  });
   $: void lastSaved; // Mark as used to avoid Svelte warning
   $: void hasUnsavedChanges; // Mark as used to avoid Svelte warning
   $: void onSave; // Mark as used to avoid Svelte warning
@@ -168,13 +212,26 @@
       </svg>
     </a>
     <div class="divider"></div>
-    <nav class="mobile-nav">
-      {#each ["Build", "Share", "Access", "Metrics", "Chats", "Tags", "Settings"] as page}
-        <span class="mobile-nav-item" class:active={currentPage === page}>
-          {page}
-        </span>
-      {/each}
-    </nav>
+    <div class="mobile-nav-wrapper">
+      {#if showLeftFade}
+        <div class="scroll-fade scroll-fade-left"></div>
+      {/if}
+      <nav class="mobile-nav" bind:this={mobileNavEl} on:scroll={updateScrollFades}>
+        {#each mobileTabs as tab}
+          <a
+            href="/apps/{appId}/{tab.slug}"
+            use:link
+            class="mobile-nav-item"
+            class:active={currentPage === tab.label}
+          >
+            {tab.label}
+          </a>
+        {/each}
+      </nav>
+      {#if showRightFade}
+        <div class="scroll-fade scroll-fade-right"></div>
+      {/if}
+    </div>
   </div>
 </header>
 
@@ -307,12 +364,40 @@
     user-select: none;
   }
 
+  .mobile-nav-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .scroll-fade {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .scroll-fade-left {
+    left: 0;
+    background: linear-gradient(to right, var(--bg-primary), transparent);
+  }
+
+  .scroll-fade-right {
+    right: 0;
+    background: linear-gradient(to left, var(--bg-primary), transparent);
+  }
+
   .mobile-nav {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-1);
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    padding: 2px 4px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .mobile-nav::-webkit-scrollbar {
@@ -320,12 +405,15 @@
   }
 
   .mobile-nav-item {
-    padding: var(--space-2);
+    padding: 6px 12px;
     border-radius: var(--radius-xl);
     font-size: var(--text-xs);
     white-space: nowrap;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    color: var(--text-secondary);
+    -webkit-tap-highlight-color: transparent;
   }
 
   .mobile-nav-item.active {
@@ -338,6 +426,10 @@
       0px 8px 20.8px -3.5px rgba(0, 0, 0, 0.05),
       inset 0px -2px 9px 0px rgba(255, 255, 255, 0.49),
       0px 0px 0px 2px rgba(0, 0, 0, 0.2);
+  }
+
+  .mobile-nav-item:hover {
+    text-decoration: none;
   }
 
   .publish-icon {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { push } from "svelte-spa-router";
   import ParticleAudioPage from "$lib/components/ParticleAudioPage.svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -46,7 +47,7 @@
       const data = await response.json();
       app = data.data;
     } catch (error) {
-      console.error("Error loading app:", error);
+      captureException(error, { tags: { page: "app-voice", feature: "load-app" }, extra: { appId: params.appId } });
       push("/apps");
     } finally {
       isLoading = false;

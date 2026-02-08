@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { ToolRegistry } from "../registry.ts";
 import { uploadFileFromBuffer } from "../../services/storage.service.ts";
 import OpenAI from "openai";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 /**
  * Get the OpenAI client instance
@@ -148,11 +148,7 @@ Only return the generated file - no extra text or explanations.`,
       fileName: normalizedFileName,
     };
   } catch (error) {
-    console.error("Error generating file:", error);
-    Sentry.captureException(error, {
-      tags: { source: "agent-file-tool", feature: "generate-file" },
-      extra: { fileType, fileName },
-    });
+    log.error("Error generating file", { source: "agent", feature: "file-tool", fileType, fileName }, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : String(error),

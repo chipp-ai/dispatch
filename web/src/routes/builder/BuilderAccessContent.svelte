@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Switch, Input, Button, toasts } from "$lib/design-system";
   import { DollarSign, Users, TrendingUp, Package } from "lucide-svelte";
 
@@ -79,7 +80,7 @@
         }
       }
     } catch (e) {
-      console.error("Failed to load stats:", e);
+      captureException(e, { tags: { feature: "builder-access" }, extra: { action: "load-stats", appId } });
     }
   }
 
@@ -104,7 +105,7 @@
       }
       toasts.success("Saved", "Setting updated");
     } catch (e) {
-      console.error("Failed to update capability:", e);
+      captureException(e, { tags: { feature: "builder-access" }, extra: { action: "update-capability", name, enabled, appId } });
       toasts.error("Error", "Failed to update setting");
     } finally {
       isSaving = false;
@@ -122,7 +123,7 @@
       });
       toasts.success("Saved", "Settings updated");
     } catch (e) {
-      console.error("Failed to update settings:", e);
+      captureException(e, { tags: { feature: "builder-access" }, extra: { action: "update-settings", fields, appId } });
       toasts.error("Error", "Failed to update settings");
     } finally {
       isSaving = false;

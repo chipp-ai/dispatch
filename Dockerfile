@@ -40,6 +40,10 @@ FROM denoland/deno:latest
 
 WORKDIR /app
 
+# Bake git SHA for structured logging version tracking
+ARG GIT_SHA=development
+ENV GIT_SHA=${GIT_SHA}
+
 # Create non-root user for security
 RUN groupadd -g 1001 app && \
     useradd -u 1001 -g app -m app

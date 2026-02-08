@@ -10,7 +10,7 @@
 import { whatsappService } from "./whatsapp.service.ts";
 import { uploadImageToPublicBucket } from "./storage.service.ts";
 import OpenAI from "npm:openai@4.52.0";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -103,7 +103,7 @@ async function transcribeAudio(
     const filename = `audio${extension}`;
 
     // Create a File/Blob for the OpenAI SDK
-    const file = new File([buffer], filename, { type: mimeType });
+    const file = new File([buffer as BlobPart], filename, { type: mimeType });
 
     const transcription = await openai.audio.transcriptions.create({
       file,
@@ -111,17 +111,22 @@ async function transcribeAudio(
       response_format: "text",
     });
 
-    console.log("[WhatsAppMedia] Audio transcribed successfully", {
+    const transcriptionText = typeof transcription === "string" ? transcription : (transcription as { text: string }).text;
+
+    log.info("Audio transcribed successfully", {
+      source: "whatsapp-media",
+      feature: "audio-transcription",
       correlationId,
-      transcriptionLength: transcription.length,
+      transcriptionLength: transcriptionText.length,
     });
 
-    return transcription;
+    return transcriptionText;
   } catch (error) {
-    console.error("[WhatsAppMedia] Audio transcription failed", {
+    log.error("Audio transcription failed", {
+      source: "whatsapp-media",
+      feature: "audio-transcription",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    }, error);
     throw error;
   }
 }
@@ -167,7 +172,9 @@ async function processImageMessage(
     const caption = media.caption ? `${media.caption}\n\n` : "";
     const messageContent = `${caption}![](${imageUrl})`;
 
-    console.log("[WhatsAppMedia] Image processed successfully", {
+    log.info("Image processed successfully", {
+      source: "whatsapp-media",
+      feature: "image-processing",
       correlationId,
       imageUrl,
     });
@@ -180,14 +187,12 @@ async function processImageMessage(
       imageUrl,
     };
   } catch (error) {
-    console.error("[WhatsAppMedia] Image processing failed", {
+    log.error("Image processing failed", {
+      source: "whatsapp-media",
+      feature: "image-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "whatsapp-media", feature: "image-processing" },
-      extra: { correlationId, mediaId: media.id },
-    });
+      mediaId: media.id,
+    }, error);
     return {
       success: false,
       messageContent: "[Unable to process image]",
@@ -236,14 +241,12 @@ async function processAudioMessage(
       mimeType: downloaded.mimeType,
     };
   } catch (error) {
-    console.error("[WhatsAppMedia] Audio processing failed", {
+    log.error("Audio processing failed", {
+      source: "whatsapp-media",
+      feature: "audio-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "whatsapp-media", feature: "audio-processing" },
-      extra: { correlationId, mediaId: media.id },
-    });
+      mediaId: media.id,
+    }, error);
     return {
       success: false,
       messageContent:
@@ -281,7 +284,9 @@ async function processVideoMessage(
   const caption = media.caption ? media.caption : "";
   const messageContent = `[User sent a video${caption ? `: "${caption}"` : ""}. Video content cannot be fully analyzed at this time.]`;
 
-  console.log("[WhatsAppMedia] Video acknowledged", {
+  log.info("Video acknowledged", {
+    source: "whatsapp-media",
+    feature: "video-processing",
     correlationId,
     hasCaption: !!caption,
   });
@@ -320,7 +325,9 @@ async function processDocumentMessage(
     const filename = media.filename || "document.txt";
     const messageContent = `[Document: ${filename}]\n\n${textContent}`;
 
-    console.log("[WhatsAppMedia] Text document processed", {
+    log.info("Text document processed", {
+      source: "whatsapp-media",
+      feature: "document-processing",
       correlationId,
       filename,
       contentLength: textContent.length,
@@ -339,7 +346,9 @@ async function processDocumentMessage(
   const caption = media.caption ? ` - ${media.caption}` : "";
   const messageContent = `[User sent a document: "${filename}"${caption}. Document analysis is not yet fully supported for this file type.]`;
 
-  console.log("[WhatsAppMedia] Document acknowledged", {
+  log.info("Document acknowledged", {
+    source: "whatsapp-media",
+    feature: "document-processing",
     correlationId,
     filename,
     mimeType: downloaded.mimeType,
@@ -388,7 +397,9 @@ async function processStickerMessage(
     // Format message for vision processing
     const messageContent = `[User sent a sticker]\n\n![](${imageUrl})`;
 
-    console.log("[WhatsAppMedia] Sticker processed successfully", {
+    log.info("Sticker processed successfully", {
+      source: "whatsapp-media",
+      feature: "sticker-processing",
       correlationId,
       imageUrl,
     });
@@ -401,14 +412,12 @@ async function processStickerMessage(
       imageUrl,
     };
   } catch (error) {
-    console.error("[WhatsAppMedia] Sticker processing failed", {
+    log.error("Sticker processing failed", {
+      source: "whatsapp-media",
+      feature: "sticker-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    Sentry.captureException(error, {
-      tags: { source: "whatsapp-media", feature: "sticker-processing" },
-      extra: { correlationId, mediaId: media.id },
-    });
+      mediaId: media.id,
+    }, error);
     return {
       success: false,
       messageContent: "[Unable to process sticker]",
@@ -476,7 +485,9 @@ export async function processMediaMessage(
     return null;
   }
 
-  console.log("[WhatsAppMedia] Processing media message", {
+  log.info("Processing media message", {
+    source: "whatsapp-media",
+    feature: "media-processing",
     correlationId,
     mediaType: type,
     mediaId: media.id,

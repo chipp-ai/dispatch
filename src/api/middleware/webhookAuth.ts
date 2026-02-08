@@ -8,6 +8,7 @@
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { timingSafeEqual } from "node:crypto";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -28,8 +29,13 @@ export interface WebhookContext {
 // Stripe Webhook Middleware
 // ========================================
 
-const STRIPE_WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET_LIVE");
-const STRIPE_WEBHOOK_SECRET_TEST = Deno.env.get("STRIPE_WEBHOOK_SECRET_TEST");
+// Read webhook secrets at request time (not module load time) so tests can set them after import
+function getStripeWebhookSecret(): string | undefined {
+  return Deno.env.get("STRIPE_WEBHOOK_SECRET_LIVE");
+}
+function getStripeWebhookSecretTest(): string | undefined {
+  return Deno.env.get("STRIPE_WEBHOOK_SECRET_TEST");
+}
 
 /**
  * Compute HMAC-SHA256 signature for Stripe webhook verification
@@ -108,13 +114,16 @@ export const stripeWebhookMiddleware = createMiddleware<WebhookContext>(
     // Determine if this is a test mode webhook
     const isTestMode = c.req.query("testMode") === "true";
     const webhookSecret = isTestMode
-      ? STRIPE_WEBHOOK_SECRET_TEST
-      : STRIPE_WEBHOOK_SECRET;
+      ? getStripeWebhookSecretTest()
+      : getStripeWebhookSecret();
 
     if (!webhookSecret) {
-      console.error(
-        `Stripe webhook secret not configured for ${isTestMode ? "test" : "live"} mode`
-      );
+      log.error("Stripe webhook secret not configured", {
+        source: "webhook-auth",
+        feature: "stripe",
+        isTestMode,
+        endpoint: c.req.path,
+      });
       throw new HTTPException(500, {
         message: "Webhook secret not configured",
       });
@@ -178,7 +187,10 @@ export const stripeWebhookMiddleware = createMiddleware<WebhookContext>(
 // Twilio Webhook Middleware
 // ========================================
 
-const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
+// Read at request time for testability
+function getTwilioAuthToken(): string | undefined {
+  return Deno.env.get("TWILIO_AUTH_TOKEN");
+}
 
 /**
  * Compute HMAC-SHA1 signature for Twilio webhook verification
@@ -358,8 +370,13 @@ export const twilioWebhookMiddleware = createMiddleware<WebhookContext>(
       });
     }
 
-    if (!TWILIO_AUTH_TOKEN) {
-      console.error("Twilio auth token not configured");
+    const twilioAuthToken = getTwilioAuthToken();
+    if (!twilioAuthToken) {
+      log.error("Twilio auth token not configured", {
+        source: "webhook-auth",
+        feature: "twilio",
+        endpoint: c.req.path,
+      });
       throw new HTTPException(500, {
         message: "Twilio auth token not configured",
       });
@@ -383,7 +400,7 @@ export const twilioWebhookMiddleware = createMiddleware<WebhookContext>(
     const expectedSignature = await computeTwilioSignature(
       url,
       params,
-      TWILIO_AUTH_TOKEN
+      twilioAuthToken
     );
 
     // Compare signatures (timing-safe)

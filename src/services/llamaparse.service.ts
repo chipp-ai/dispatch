@@ -8,6 +8,8 @@
  * Uses REST API directly instead of llamaindex SDK to avoid heavy Node.js dependencies.
  */
 
+import { log } from "@/lib/logger.ts";
+
 const LLAMA_CLOUD_API_KEY = Deno.env.get("LLAMA_CLOUD_API_KEY");
 const LLAMA_PARSE_API_URL = "https://api.cloud.llamaindex.ai/api/parsing";
 
@@ -45,7 +47,7 @@ export async function extractWithLlamaParse(
     throw new Error("LLAMA_CLOUD_API_KEY not configured");
   }
 
-  console.log("[llamaparse] Starting extraction", { fileUrl, mimeType });
+  log.info("Starting extraction", { source: "llamaparse", feature: "extract", fileUrl, mimeType });
 
   // Download file content
   const response = await fetch(fileUrl);
@@ -72,7 +74,7 @@ export async function extractWithLlamaParse(
   formData.append("auto_mode_trigger_on_table_in_page", "true");
 
   // Submit parsing job
-  console.log("[llamaparse] Submitting job");
+  log.debug("Submitting job", { source: "llamaparse", feature: "extract" });
   const uploadResponse = await fetch(`${LLAMA_PARSE_API_URL}/upload`, {
     method: "POST",
     headers: {
@@ -89,7 +91,7 @@ export async function extractWithLlamaParse(
   }
 
   const job: ParseJobResponse = await uploadResponse.json();
-  console.log("[llamaparse] Job created", { jobId: job.id });
+  log.debug("Job created", { source: "llamaparse", feature: "extract", jobId: job.id });
 
   // Poll for completion
   const result = await pollForResult(job.id);
@@ -110,7 +112,9 @@ export async function extractWithLlamaParse(
     pageCount = 1;
   }
 
-  console.log("[llamaparse] Extraction complete", {
+  log.info("Extraction complete", {
+    source: "llamaparse",
+    feature: "extract",
     pageCount,
     chunkCount: chunks.length,
     totalChars: chunks.reduce((sum, c) => sum + c.length, 0),
@@ -204,7 +208,9 @@ export async function extractFromBuffer(
     throw new Error("LLAMA_CLOUD_API_KEY not configured");
   }
 
-  console.log("[llamaparse] Starting extraction from buffer", {
+  log.info("Starting extraction from buffer", {
+    source: "llamaparse",
+    feature: "extract-buffer",
     fileName,
     mimeType,
   });

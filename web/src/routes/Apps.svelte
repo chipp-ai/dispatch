@@ -4,6 +4,7 @@
   import ApplicationCard from "$lib/design-system/components/ApplicationCard.svelte";
   import { link } from "svelte-spa-router";
   import { onMount, onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { get } from "svelte/store";
   import { currentWorkspace, type Workspace } from "../stores/workspace";
 
@@ -151,7 +152,7 @@
         window.location.hash = `#/apps/${result.data.id}`;
       }
     } catch (e) {
-      console.error("[Apps] Error creating app:", e);
+      captureException(e, { tags: { page: "apps", feature: "create-app" } });
       const message = e instanceof Error ? e.message : "Failed to create app";
       toasts.error("Failed to create app", message);
     } finally {
@@ -745,7 +746,8 @@
     }
 
     .toolbar-actions {
-      justify-content: flex-end;
+      justify-content: flex-start;
+      flex-wrap: wrap;
     }
 
     .generate-btn span {

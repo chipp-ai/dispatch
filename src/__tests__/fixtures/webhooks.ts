@@ -55,6 +55,7 @@ export interface SlackWebhookEvent {
     ts: string;
     channel: string;
     event_ts: string;
+    thread_ts?: string;
   };
   type: string;
   event_id: string;
@@ -248,7 +249,17 @@ export function createStripeSubscriptionDeletedEvent(
  */
 export function createStripeInvoicePaidEvent(
   customerId: string,
-  amountCents: number = 2900
+  amountCents: number = 2900,
+  options?: {
+    subscriptionId?: string;
+    billingReason?: string;
+    metadata?: Record<string, string>;
+    lines?: Array<{
+      price?: { id: string; metadata?: Record<string, string>; product?: string };
+      quantity?: number;
+      description?: string;
+    }>;
+  }
 ): StripeWebhookEvent {
   return {
     id: `evt_${generateRandomId(24)}`,
@@ -261,9 +272,15 @@ export function createStripeInvoicePaidEvent(
         id: `in_${generateRandomId(24)}`,
         object: "invoice",
         customer: customerId,
+        subscription: options?.subscriptionId || null,
         amount_paid: amountCents,
         currency: "usd",
         status: "paid",
+        billing_reason: options?.billingReason || "subscription_cycle",
+        metadata: options?.metadata || {},
+        lines: options?.lines
+          ? { data: options.lines }
+          : { data: [] },
         created: Math.floor(Date.now() / 1000),
       },
     },
@@ -280,7 +297,13 @@ export function createStripeInvoicePaidEvent(
  * Create a Stripe invoice.payment_failed event.
  */
 export function createStripeInvoicePaymentFailedEvent(
-  customerId: string
+  customerId: string,
+  options?: {
+    subscriptionId?: string;
+    attemptCount?: number;
+    amountDue?: number;
+    lastFinalizationError?: string;
+  }
 ): StripeWebhookEvent {
   return {
     id: `evt_${generateRandomId(24)}`,
@@ -293,11 +316,16 @@ export function createStripeInvoicePaymentFailedEvent(
         id: `in_${generateRandomId(24)}`,
         object: "invoice",
         customer: customerId,
-        amount_due: 2900,
+        subscription: options?.subscriptionId || null,
+        amount_due: options?.amountDue || 2900,
         currency: "usd",
         status: "open",
-        attempt_count: 1,
+        attempt_count: options?.attemptCount || 1,
         next_payment_attempt: Math.floor(Date.now() / 1000) + 86400,
+        metadata: {},
+        last_finalization_error: options?.lastFinalizationError
+          ? { message: options.lastFinalizationError }
+          : null,
         created: Math.floor(Date.now() / 1000),
       },
     },

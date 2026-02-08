@@ -6,7 +6,7 @@
 
 // Set up database URL before importing anything that uses the database
 if (!Deno.env.get("DENO_DATABASE_URL") && !Deno.env.get("PG_DATABASE_URL")) {
-  Deno.env.set("DENO_DATABASE_URL", Deno.env.get("TEST_DATABASE_URL") || "postgres://postgres:test@localhost:5432/chipp_test");
+  Deno.env.set("DENO_DATABASE_URL", Deno.env.get("TEST_DATABASE_URL") || Deno.env.get("DATABASE_URL") || "postgresql://postgres:postgres@localhost:5436/chipp_deno");
 }
 
 import { assertEquals, assertRejects, assertExists } from "@std/assert";

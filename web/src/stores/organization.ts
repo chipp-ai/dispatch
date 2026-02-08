@@ -6,11 +6,13 @@
  */
 
 import { writable, derived } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 export interface Organization {
   id: string;
   name: string;
   subscriptionTier: "FREE" | "PRO" | "TEAM" | "BUSINESS" | "ENTERPRISE";
+  subscriptionTrialEndsAt?: string | null;
   createdAt: string;
   updatedAt: string;
   pictureUrl?: string | null;
@@ -182,7 +184,7 @@ export async function fetchOrganizationMembers(): Promise<void> {
       members,
     }));
   } catch (error) {
-    console.error("Failed to fetch organization members:", error);
+    captureException(error, { tags: { source: "organization-store" }, extra: { action: "fetchMembers" } });
   }
 }
 
@@ -221,7 +223,7 @@ export async function updateOrganization(params: {
 
     return org;
   } catch (error) {
-    console.error("Failed to update organization:", error);
+    captureException(error, { tags: { source: "organization-store" }, extra: { action: "updateOrganization" } });
     throw error;
   }
 }
@@ -262,7 +264,7 @@ export async function createOrganization(
 
     return org;
   } catch (error) {
-    console.error("Failed to create organization:", error);
+    captureException(error, { tags: { source: "organization-store" }, extra: { action: "createOrganization" } });
     throw error;
   }
 }

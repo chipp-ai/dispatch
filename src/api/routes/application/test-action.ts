@@ -5,6 +5,7 @@
  * Acts as a proxy to make the actual HTTP request and return the response.
  */
 
+import { log } from "@/lib/logger.ts";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -152,9 +153,12 @@ async function validateUrlForSSRF(
         }
 
         // For other DNS errors, log and allow (network issues shouldn't block)
-        console.warn(
-          `[SSRF] DNS resolution warning for ${hostname}: ${errorMessage}`
-        );
+        log.warn("DNS resolution warning during SSRF check", {
+          source: "test-action",
+          feature: "ssrf-validation",
+          hostname,
+          errorMessage,
+        });
       }
     }
 

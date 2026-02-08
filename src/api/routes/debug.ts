@@ -3,11 +3,17 @@
  *
  * Development-only routes for debugging.
  * Captures browser console logs and writes to file.
+ *
+ * Log location: .scratch/logs/browser-console.log
+ * (Same directory as server logs for easy access)
  */
 
 import { Hono } from "hono";
+import { join } from "jsr:@std/path";
 
-const LOG_FILE = "/tmp/browser-console.log";
+// Store browser logs alongside server logs in .scratch/logs/
+const LOGS_DIR = ".scratch/logs";
+const LOG_FILE = join(LOGS_DIR, "browser.log");
 
 export const debugRoutes = new Hono();
 
@@ -25,6 +31,13 @@ interface LogEntry {
 debugRoutes.post("/log", async (c) => {
   try {
     const entry: LogEntry = await c.req.json();
+
+    // Ensure logs directory exists
+    try {
+      await Deno.mkdir(LOGS_DIR, { recursive: true });
+    } catch {
+      // Directory may already exist
+    }
 
     // Format the log line
     const levelIcon =

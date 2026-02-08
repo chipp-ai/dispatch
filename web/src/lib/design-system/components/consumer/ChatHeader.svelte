@@ -12,6 +12,7 @@
   import { createEventDispatcher } from "svelte";
   import CreditMeter from "./CreditMeter.svelte";
   import ConsumerChatMenuTrigger from "./ConsumerChatMenuTrigger.svelte";
+  import ParticipantAvatarStack from "./ParticipantAvatarStack.svelte";
 
   export let appName: string = "Chat";
   export let logoUrl: string | null = null;
@@ -22,11 +23,24 @@
   export let maxCredits: number = 100;
   export let subscriptionActive: boolean = false;
   export let menuOpen: boolean = false;
+  /** Multiplayer participants for avatar stack */
+  export let participants: Array<{
+    id: string;
+    displayName: string;
+    avatarColor: string;
+    isActive: boolean;
+  }> = [];
+  /** Whether this is a multiplayer session */
+  export let isMultiplayer: boolean = false;
 
-  const dispatch = createEventDispatcher<{ toggleMenu: void }>();
+  const dispatch = createEventDispatcher<{ toggleMenu: void; openParticipants: void }>();
 
   function handleMenuToggle() {
     dispatch('toggleMenu');
+  }
+
+  function handleParticipantsClick() {
+    dispatch('openParticipants');
   }
 </script>
 
@@ -56,8 +70,16 @@
       </div>
     </div>
 
-    <!-- Right: Credit meter and menu -->
+    <!-- Right: Participants, credit meter and menu -->
     <div class="header-right">
+      {#if isMultiplayer && participants.length > 0}
+        <ParticipantAvatarStack
+          {participants}
+          {forceDarkMode}
+          on:click={handleParticipantsClick}
+        />
+      {/if}
+
       {#if showCreditMeter}
         <div class="credit-meter-wrapper" title="Credits remaining">
           <CreditMeter

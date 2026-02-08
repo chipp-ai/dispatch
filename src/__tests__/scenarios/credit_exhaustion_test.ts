@@ -94,7 +94,7 @@ interface UsageSummary {
     outputTokens: number;
   }>;
   byApplication: Array<{
-    applicationId: number;
+    applicationId: string;
     applicationName: string;
     tokens: number;
   }>;
@@ -111,7 +111,7 @@ interface UsageSummary {
  * Note: usage_based_billing_enabled has been removed - billing is always enabled
  */
 async function setOrgBillingState(
-  organizationId: number,
+  organizationId: string,
   state: {
     stripeCustomerId?: string;
     stripeSubscriptionId?: string;
@@ -169,7 +169,7 @@ async function getSubscription(user: TestUser): Promise<Response> {
  * Returns true if the column exists and update succeeded, false if column doesn't exist.
  */
 async function setCreditsExhausted(
-  organizationId: number,
+  organizationId: string,
   exhausted: boolean
 ): Promise<boolean> {
   try {
@@ -189,8 +189,8 @@ async function setCreditsExhausted(
  * Record token usage in database
  */
 async function recordTokenUsage(
-  organizationId: number,
-  applicationId: number,
+  organizationId: string,
+  applicationId: string,
   usage: {
     totalTokens: number;
     inputTokens: number;
@@ -229,7 +229,7 @@ async function recordTokenUsage(
  */
 async function sendChatMessage(
   user: TestUser,
-  applicationId: number,
+  applicationId: string,
   message: string
 ): Promise<Response> {
   return post(`/api/chat/${applicationId}`, user, { message });
@@ -238,7 +238,7 @@ async function sendChatMessage(
 /**
  * Clean up token usage records for an organization
  */
-async function cleanupTokenUsage(organizationId: number): Promise<void> {
+async function cleanupTokenUsage(organizationId: string): Promise<void> {
   try {
     await sql`DELETE FROM billing.token_usage WHERE organization_id = ${organizationId}`;
   } catch {
@@ -266,7 +266,7 @@ describe("Credit Exhaustion Scenarios", () => {
 
   describe("Credit Lifecycle", () => {
     let user: TestUser;
-    let testApp: { id: number; name: string };
+    let testApp: { id: string; name: string };
 
     afterEach(async () => {
       if (user?.organizationId) {
@@ -586,7 +586,7 @@ describe("Credit Exhaustion Scenarios", () => {
 
   describe("Credit Exhaustion", () => {
     let user: TestUser;
-    let testApp: { id: number; name: string };
+    let testApp: { id: string; name: string };
 
     afterEach(async () => {
       if (user?.organizationId) {
@@ -827,7 +827,7 @@ describe("Credit Exhaustion Scenarios", () => {
 
   describe("Recovery Flows", () => {
     let user: TestUser;
-    let testApp: { id: number; name: string };
+    let testApp: { id: string; name: string };
 
     afterEach(async () => {
       if (user?.organizationId) {
@@ -967,7 +967,7 @@ describe("Credit Exhaustion Scenarios", () => {
 
   describe("Edge Cases", () => {
     let user: TestUser;
-    let testApp: { id: number; name: string };
+    let testApp: { id: string; name: string };
 
     afterEach(async () => {
       if (user?.organizationId) {

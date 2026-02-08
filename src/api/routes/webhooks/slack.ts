@@ -8,6 +8,7 @@
  */
 
 import { Hono } from "hono";
+import { log } from "@/lib/logger.ts";
 import type { WebhookContext } from "../../middleware/webhookAuth.ts";
 import {
   slackWebhookMiddleware,
@@ -86,7 +87,9 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    console.log("[SlackWebhook] Received event", {
+    log.info("Received event", {
+      source: "slack-webhook",
+      feature: "routing",
       type: payload.type,
       eventType: payload.event?.type,
       teamId: payload.team_id,
@@ -110,7 +113,7 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
         payload.api_app_id || payload.authorizations?.[0]?.app_id;
 
       if (!teamId || !slackAppId) {
-        console.log("[SlackWebhook] Missing team_id or app_id");
+        log.info("Missing team_id or app_id", { source: "slack-webhook", feature: "routing" });
         return c.json({ ok: true }); // Ack but don't process
       }
 
@@ -121,10 +124,7 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
       );
 
       if (!installation) {
-        console.log("[SlackWebhook] No installation found", {
-          teamId,
-          slackAppId,
-        });
+        log.info("No installation found", { source: "slack-webhook", feature: "routing", teamId, slackAppId });
         return c.json({ ok: true }); // Ack but don't process
       }
 
@@ -148,7 +148,7 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
         );
 
         if (!isValid) {
-          console.log("[SlackWebhook] Invalid signature");
+          log.warn("Invalid signature", { source: "slack-webhook", feature: "verification", teamId, slackAppId });
           return c.json({ error: "Invalid signature" }, 401);
         }
       }
@@ -159,7 +159,7 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
         payload.api_app_id &&
         isDuplicateEvent(payload.event_id, payload.api_app_id)
       ) {
-        console.log("[SlackWebhook] Duplicate event, skipping");
+        log.debug("Duplicate event, skipping", { source: "slack-webhook", feature: "routing", eventId: payload.event_id, appId: payload.api_app_id });
         return c.json({ ok: true });
       }
 
@@ -168,7 +168,14 @@ export const slackWebhookRoutes = new Hono<WebhookContext>()
       if (event) {
         // Fire-and-forget async processing
         processEvent(installation, event, teamId, slackAppId).catch((err) => {
-          console.error("[SlackWebhook] Error processing event", err);
+          log.error("Error processing event", {
+            source: "slack-webhook",
+            feature: "event-processing",
+            teamId,
+            slackAppId,
+            eventType: event.type,
+            eventId: payload.event_id,
+          }, err);
         });
       }
     }
@@ -191,11 +198,15 @@ async function processEvent(
 ): Promise<void> {
   if (!installation) return;
 
-  console.log("[SlackWebhook] Processing event", {
+  log.info("Processing event", {
+    source: "slack-webhook",
+    feature: "event-processing",
     type: event.type,
     subtype: event.subtype,
     channel: event.channel,
     user: event.user,
+    teamId,
+    slackAppId,
   });
 
   // Normalize message_replied events (Slack Connect channels)
@@ -217,13 +228,13 @@ async function processEvent(
     !isAppMention &&
     (event.subtype === "bot_message" || event.bot_id || !event.user)
   ) {
-    console.log("[SlackWebhook] Ignoring bot/self message");
+    log.debug("Ignoring bot/self message", { source: "slack-webhook", feature: "event-processing", teamId, slackAppId, channel: event.channel });
     return;
   }
 
   // Only respond to explicit mentions or DMs
   if (!isAppMention && !isDirectMessage) {
-    console.log("[SlackWebhook] Ignoring non-mention/non-DM message");
+    log.debug("Ignoring non-mention/non-DM message", { source: "slack-webhook", feature: "event-processing", teamId, slackAppId, channel: event.channel });
     return;
   }
 

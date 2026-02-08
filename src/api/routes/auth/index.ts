@@ -19,7 +19,10 @@ const JWT_SECRET = new TextEncoder().encode(
 );
 
 // Internal API key for server-to-server authentication
-const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY");
+// Read at request time (not module load time) so tests can set it after import
+function getInternalApiKey(): string | undefined {
+  return Deno.env.get("INTERNAL_API_KEY");
+}
 
 // Context type (no auth required for these routes)
 interface AuthRouteContext {
@@ -44,7 +47,8 @@ export const authRoutes = new Hono<AuthRouteContext>();
 authRoutes.post("/provision", async (c) => {
   // Verify internal API key for server-to-server authentication
   const internalAuth = c.req.header("X-Internal-Auth");
-  if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+  const apiKey = getInternalApiKey();
+  if (!apiKey || internalAuth !== apiKey) {
     throw new HTTPException(401, {
       message: "Internal authentication required",
     });
@@ -148,7 +152,8 @@ authRoutes.get("/me", async (c) => {
 authRoutes.post("/session", async (c) => {
   // Verify internal API key for server-to-server authentication
   const internalAuth = c.req.header("X-Internal-Auth");
-  if (!INTERNAL_API_KEY || internalAuth !== INTERNAL_API_KEY) {
+  const apiKey = getInternalApiKey();
+  if (!apiKey || internalAuth !== apiKey) {
     throw new HTTPException(401, {
       message: "Internal authentication required",
     });

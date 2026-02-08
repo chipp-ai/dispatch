@@ -4,6 +4,8 @@
   import { currentWorkspace } from "../../stores/workspace";
   import GlobalNavBar from "../../lib/design-system/components/GlobalNavBar.svelte";
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
+  import { toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { formatDistanceToNow } from "date-fns";
 
   interface Source {
@@ -102,7 +104,10 @@
       sources = data.data || [];
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to load sources";
-      console.error("Error loading sources:", err);
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { workspaceId: $currentWorkspace?.id, action: "loadSources" },
+      });
     } finally {
       isLoading = false;
     }
@@ -132,8 +137,11 @@
         s.id === sourceId ? { ...s, status: "pending" } : s
       );
     } catch (err) {
-      console.error("Error refreshing source:", err);
-      alert("Failed to refresh source");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { workspaceId: $currentWorkspace?.id, sourceId, action: "refreshSource" },
+      });
+      toasts.error("Error", "Failed to refresh source");
     } finally {
       refreshingIds.delete(sourceId);
       refreshingIds = refreshingIds;
@@ -171,8 +179,11 @@
       deleteSourceId = null;
       deleteSourceName = null;
     } catch (err) {
-      console.error("Error deleting source:", err);
-      alert("Failed to delete source");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { workspaceId: $currentWorkspace?.id, sourceId: deleteSourceId, action: "deleteSource" },
+      });
+      toasts.error("Error", "Failed to delete source");
     } finally {
       isDeleting = false;
     }
@@ -199,8 +210,11 @@
       selectAll = false;
       showBulkDeleteModal = false;
     } catch (err) {
-      console.error("Error deleting sources:", err);
-      alert("Failed to delete some sources");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { workspaceId: $currentWorkspace?.id, selectedCount: selectedIds.size, action: "bulkDeleteSources" },
+      });
+      toasts.error("Error", "Failed to delete some sources");
     } finally {
       isBulkDeleting = false;
     }

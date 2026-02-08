@@ -8,6 +8,7 @@
     Loader2,
     RotateCcw,
   } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
   import { ONBOARDING_TEMPLATES } from "$lib/onboarding-v2/flow";
   import {
     onboardingV2Store,
@@ -102,7 +103,7 @@
       });
 
       if (!response.ok) {
-        console.error("[OnboardingChatPreview] Failed to create chat session");
+        captureException(new Error("Failed to create chat session"), { tags: { feature: "onboarding-chat-preview" }, extra: { action: "create-session", appIdentifier } });
         return null;
       }
 
@@ -120,7 +121,7 @@
       }
       return null;
     } catch (error) {
-      console.error("[OnboardingChatPreview] Error creating session:", error);
+      captureException(error, { tags: { feature: "onboarding-chat-preview" }, extra: { action: "create-session", appIdentifier } });
       return null;
     }
   }
@@ -217,7 +218,7 @@
         }
       }
     } catch (error) {
-      console.error("[OnboardingChatPreview] Error:", error);
+      captureException(error, { tags: { feature: "onboarding-chat-preview" }, extra: { action: "send-message", appIdentifier, sessionId: chatSessionId } });
       // Add error message
       messages = [
         ...messages,

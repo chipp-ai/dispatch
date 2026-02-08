@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
 
   onMount(async () => {
     // Get routing decision for the current user
@@ -18,7 +19,7 @@
         return;
       }
     } catch (err) {
-      console.error("[home] Error getting routing decision:", err);
+      captureException(err, { tags: { page: "home", feature: "routing-decision" } });
     }
 
     // Default: go to onboarding-v2 for new users

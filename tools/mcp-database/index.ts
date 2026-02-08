@@ -42,27 +42,47 @@ interface ColumnInfo {
 
 // Database connection (lazy initialized)
 let sql: ReturnType<typeof postgres> | null = null;
+let currentConnectionUrl: string | null = null;
 
-function getConnectionConfig() {
+// Default development database URL for chipp-deno
+// Docker exposes postgres on port 5433 to avoid conflicts with local postgres
+const DEFAULT_DEV_DATABASE_URL = "postgresql://postgres:supersecret@localhost:5433/chipp";
+
+function getConnectionConfig(): string {
+  // Priority order:
+  // 1. DATABASE_URL env var (from .mcp.json or shell)
+  // 2. Individual PG_* env vars
+  // 3. Default development URL (port 5433 for Docker)
+
   const databaseUrl = Deno.env.get("DATABASE_URL");
-
   if (databaseUrl) {
+    console.error(`[mcp-chipp-database] Using DATABASE_URL from environment`);
     return databaseUrl;
   }
 
-  // Fallback to individual env vars
-  const host = Deno.env.get("PG_HOST") || "localhost";
-  const port = Deno.env.get("PG_PORT") || "5432";
-  const user = Deno.env.get("PG_USER") || "postgres";
-  const password = Deno.env.get("PG_PASSWORD") || "";
-  const database = Deno.env.get("PG_DATABASE") || "chipp";
+  // Check for individual env vars
+  const host = Deno.env.get("PG_HOST");
+  const port = Deno.env.get("PG_PORT");
+  if (host || port) {
+    const finalHost = host || "localhost";
+    const finalPort = port || "5432";
+    const user = Deno.env.get("PG_USER") || "postgres";
+    const password = Deno.env.get("PG_PASSWORD") || "";
+    const database = Deno.env.get("PG_DATABASE") || "chipp";
+    const url = `postgresql://${user}:${password}@${finalHost}:${finalPort}/${database}`;
+    console.error(`[mcp-chipp-database] Using individual PG_* env vars: ${finalHost}:${finalPort}`);
+    return url;
+  }
 
-  return `postgresql://${user}:${password}@${host}:${port}/${database}`;
+  // Default to development URL
+  console.error(`[mcp-chipp-database] No DATABASE_URL found, using default dev URL (port 5433)`);
+  return DEFAULT_DEV_DATABASE_URL;
 }
 
-function getConnection() {
+function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
     const connectionString = getConnectionConfig();
+    currentConnectionUrl = connectionString;
     sql = postgres(connectionString, {
       max: 3,
       idle_timeout: 60,
@@ -72,10 +92,42 @@ function getConnection() {
   return sql;
 }
 
-async function disconnect() {
+async function disconnect(): Promise<void> {
   if (sql) {
     await sql.end();
     sql = null;
+    currentConnectionUrl = null;
+  }
+}
+
+async function reconnect(newUrl?: string): Promise<{ success: boolean; message: string; url?: string }> {
+  await disconnect();
+
+  if (newUrl) {
+    // Override the connection with a specific URL
+    currentConnectionUrl = newUrl;
+    sql = postgres(newUrl, {
+      max: 3,
+      idle_timeout: 60,
+      connect_timeout: 10,
+    });
+  }
+
+  const db = getConnection();
+  try {
+    await db`SELECT 1`;
+    // Mask password in URL for logging
+    const maskedUrl = currentConnectionUrl?.replace(/:([^@]+)@/, ':****@') || 'unknown';
+    return {
+      success: true,
+      message: `Connected to database`,
+      url: maskedUrl,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -155,6 +207,21 @@ const tools = [
     },
   },
   {
+    name: "db_execute",
+    description:
+      "Execute a write SQL statement (INSERT, UPDATE, DELETE). Returns affected row count and any RETURNING data. Use with caution - changes are immediate and permanent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sql: {
+          type: "string",
+          description: "SQL statement to execute (INSERT, UPDATE, DELETE, or other DDL)",
+        },
+      },
+      required: ["sql"],
+    },
+  },
+  {
     name: "db_find_table",
     description: "Find tables matching a pattern.",
     inputSchema: {
@@ -210,6 +277,32 @@ const tools = [
           type: "string",
           enum: ["schemas", "tables", "queries", "relationships"],
           description: "Help topic",
+        },
+      },
+    },
+  },
+  {
+    name: "db_migrate",
+    description: "Run pending database migrations. Shows status if dryRun is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dryRun: {
+          type: "boolean",
+          description: "If true, only show pending migrations without applying them. Default: false",
+        },
+      },
+    },
+  },
+  {
+    name: "db_reconnect",
+    description: "Reconnect to the database with a fresh connection. Use after schema changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        connectionUrl: {
+          type: "string",
+          description: "Optional PostgreSQL connection URL. Uses current or default URL if not provided.",
         },
       },
     },
@@ -292,6 +385,38 @@ async function describeTable(fullTableName: string): Promise<ColumnInfo[]> {
   return columns as ColumnInfo[];
 }
 
+async function executeWrite(
+  sql: string
+): Promise<{ success: boolean; rowCount: number; rows?: unknown[]; executionTimeMs: number }> {
+  const db = getConnection();
+
+  // Security: Block obviously dangerous operations
+  const normalizedSql = sql.trim().toLowerCase();
+  const dangerousPatterns = [
+    /^drop\s+database/i,
+    /^drop\s+schema/i,
+    /^truncate\s+/i,
+    /;\s*drop\s+/i,  // SQL injection attempt
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(normalizedSql)) {
+      throw new Error(`Dangerous operation blocked: ${sql.substring(0, 50)}...`);
+    }
+  }
+
+  const start = Date.now();
+  const result = await db.unsafe(sql);
+  const executionTimeMs = Date.now() - start;
+
+  return {
+    success: true,
+    rowCount: result.count ?? result.length ?? 0,
+    rows: result.length > 0 ? (result as unknown[]) : undefined,
+    executionTimeMs,
+  };
+}
+
 async function executeQuery(
   query: string,
   limit: number = 100
@@ -304,7 +429,7 @@ async function executeQuery(
     !normalizedQuery.startsWith("select") &&
     !normalizedQuery.startsWith("with")
   ) {
-    throw new Error("Only SELECT queries are allowed. Use db_query for reads only.");
+    throw new Error("Only SELECT queries are allowed. Use db_execute for writes.");
   }
 
   // Ensure limit
@@ -383,6 +508,103 @@ async function sampleRows(
   );
 
   return rows as unknown[];
+}
+
+async function runMigrations(dryRun: boolean): Promise<{
+  success: boolean;
+  message: string;
+  applied?: string[];
+  pending?: string[];
+  error?: string;
+}> {
+  const db = getConnection();
+
+  // Get migrations directory - relative to the chipp-deno project root
+  const projectRoot = Deno.cwd();
+  const migrationsDir = `${projectRoot}/db/migrations`;
+
+  try {
+    // Ensure _migrations table exists
+    await db.unsafe(`
+      CREATE TABLE IF NOT EXISTS public._migrations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        applied_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Get applied migrations
+    const applied = await db.unsafe(`
+      SELECT name FROM public._migrations ORDER BY id
+    `);
+    const appliedNames = new Set(applied.map((r: { name: string }) => r.name));
+
+    // Get migration files
+    const files: string[] = [];
+    for await (const entry of Deno.readDir(migrationsDir)) {
+      if (entry.isFile && entry.name.endsWith('.sql')) {
+        files.push(entry.name);
+      }
+    }
+    files.sort();
+
+    // Find pending migrations
+    const pending = files.filter(f => !appliedNames.has(f));
+
+    if (pending.length === 0) {
+      return {
+        success: true,
+        message: "No pending migrations",
+        applied: Array.from(appliedNames) as string[],
+        pending: [],
+      };
+    }
+
+    if (dryRun) {
+      return {
+        success: true,
+        message: `${pending.length} pending migration(s) found`,
+        applied: Array.from(appliedNames) as string[],
+        pending,
+      };
+    }
+
+    // Apply pending migrations
+    const newlyApplied: string[] = [];
+    for (const migration of pending) {
+      const filePath = `${migrationsDir}/${migration}`;
+      const content = await Deno.readTextFile(filePath);
+
+      try {
+        await db.unsafe(content);
+        await db.unsafe(`
+          INSERT INTO public._migrations (name) VALUES ('${migration}')
+        `);
+        newlyApplied.push(migration);
+      } catch (error) {
+        return {
+          success: false,
+          message: `Failed to apply migration: ${migration}`,
+          applied: newlyApplied,
+          pending: pending.filter(p => !newlyApplied.includes(p)),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    return {
+      success: true,
+      message: `Applied ${newlyApplied.length} migration(s)`,
+      applied: newlyApplied,
+      pending: [],
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: "Migration failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function getHelp(topic?: string): string {
@@ -570,6 +792,11 @@ async function handleTool(
       return result;
     }
 
+    case "db_execute": {
+      const result = await executeWrite(args.sql as string);
+      return result;
+    }
+
     case "db_find_table": {
       const tables = await findTable(args.pattern as string);
       return {
@@ -604,6 +831,15 @@ async function handleTool(
       return {
         content: getHelp(args.topic as string | undefined),
       };
+    }
+
+    case "db_migrate": {
+      const dryRun = args.dryRun as boolean | undefined;
+      return await runMigrations(dryRun ?? false);
+    }
+
+    case "db_reconnect": {
+      return await reconnect(args.connectionUrl as string | undefined);
     }
 
     default:
@@ -664,6 +900,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   console.error("[mcp-chipp-database] Starting server...");
 
+  // Auto-connect to database on startup
+  try {
+    const result = await reconnect();
+    if (result.success) {
+      console.error(`[mcp-chipp-database] ${result.message} (${result.url})`);
+    } else {
+      console.error(`[mcp-chipp-database] Warning: ${result.message}`);
+      console.error("[mcp-chipp-database] Use db_connect or db_reconnect to establish connection");
+    }
+  } catch (error) {
+    console.error(`[mcp-chipp-database] Warning: Auto-connect failed: ${error}`);
+  }
+
   const transport = new StdioServerTransport();
 
   server.onerror = (error) => {
@@ -673,7 +922,6 @@ async function main() {
   await server.connect(transport);
 
   console.error("[mcp-chipp-database] Server running on stdio");
-  console.error("[mcp-chipp-database] Use db_connect to establish connection");
 }
 
 main().catch((error) => {

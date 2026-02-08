@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, Skeleton, Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { Wallet, Receipt, TrendingUp, Info, CheckCircle, Sparkles, Shield, Zap, ArrowRight, Loader2, CreditCard, ExternalLink } from "lucide-svelte";
 
   // Payment method state
@@ -47,7 +48,10 @@
         customerId: data.customerId,
       };
     } catch (e: any) {
-      console.error("Failed to load payment method status:", e);
+      captureException(e, {
+        tags: { feature: "settings-billing-credits" },
+        extra: { action: "fetchPaymentMethodStatus" },
+      });
     } finally {
       isLoadingPaymentStatus = false;
     }

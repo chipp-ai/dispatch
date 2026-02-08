@@ -18,12 +18,15 @@ import {
   injectBrandingForVanity,
   type Env as BrandEnv,
 } from "./brand-inject";
+import { injectTenantBranding, type TenantConfig } from "./tenant-inject";
 
 export interface Env extends BrandEnv {
   ASSETS: R2Bucket;
   BRAND_ASSETS?: R2Bucket;
   API_ORIGIN: string;
   R2_PUBLIC_URL?: string;
+  TENANT_CONFIG?: KVNamespace;
+  WORKER_TRUST_TOKEN?: string;
 }
 
 /**
@@ -300,35 +303,276 @@ async function handleVanityRequest(
     return proxyToAPI(request, env, slug);
   }
 
-  // Try to serve static file (assets, fonts, etc.)
-  const staticResponse = await serveStaticFile(request, env, pathname);
-  if (staticResponse) {
-    return staticResponse;
+  // Static assets (files with extensions): serve directly from R2
+  if (pathname.includes(".")) {
+    const staticResponse = await serveStaticFile(request, env, pathname);
+    if (staticResponse) {
+      return staticResponse;
+    }
+    return new Response("Not Found", { status: 404 });
   }
 
-  // SPA fallback: serve index.html with brand injection
-  if (!pathname.includes(".")) {
-    const indexResponse = await serveStaticFile(request, env, "index.html");
-    if (indexResponse) {
-      // Inject branding for vanity subdomain
-      const html = await indexResponse.text();
-      const brandedHtml = await injectBrandingForVanity(html, slug, env);
+  // SPA route (no file extension): serve index.html with brand injection
+  const indexResponse = await serveStaticFile(request, env, "index.html");
+  if (indexResponse) {
+    const html = await indexResponse.text();
+    const brandedHtml = await injectBrandingForVanity(html, slug, env);
 
-      // Create new response with transformed HTML
-      const headers = new Headers(indexResponse.headers);
-      headers.set(
-        "Content-Length",
-        new TextEncoder().encode(brandedHtml).length.toString()
-      );
+    const headers = new Headers(indexResponse.headers);
+    headers.set(
+      "Content-Length",
+      new TextEncoder().encode(brandedHtml).length.toString()
+    );
 
-      return new Response(brandedHtml, {
-        status: indexResponse.status,
-        headers,
-      });
+    return new Response(brandedHtml, {
+      status: indexResponse.status,
+      headers,
+    });
+  }
+
+  return new Response("Not Found", { status: 404 });
+}
+
+// ========================================
+// Custom Domain Support
+// ========================================
+
+interface DomainMapping {
+  type: "chat" | "dashboard" | "api";
+  appId?: string;
+  appNameId?: string;
+  tenantId?: string;
+  tenantSlug?: string;
+  brandStyles?: {
+    primaryColor?: string;
+    secondaryColor?: string;
+    logoUrl?: string;
+    faviconUrl?: string;
+    companyName?: string;
+  };
+  features?: {
+    isGoogleAuthDisabled?: boolean;
+    isMicrosoftAuthDisabled?: boolean;
+    isBillingDisabled?: boolean;
+    isHelpCenterDisabled?: boolean;
+  };
+}
+
+// In-memory cache for domain lookups (per-isolate)
+const domainCache = new Map<
+  string,
+  { mapping: DomainMapping | null; expires: number }
+>();
+const DOMAIN_CACHE_TTL = 5 * 60_000; // 5 minutes
+
+/**
+ * Look up custom domain mapping.
+ * Checks KV first, falls back to API, caches result in KV.
+ */
+async function lookupCustomDomain(
+  hostname: string,
+  env: Env
+): Promise<DomainMapping | null> {
+  // Check in-memory cache first
+  const cached = domainCache.get(hostname);
+  if (cached && cached.expires > Date.now()) {
+    return cached.mapping;
+  }
+
+  // Check KV cache
+  if (env.TENANT_CONFIG) {
+    try {
+      const kvResult = await env.TENANT_CONFIG.get(hostname, "json");
+      if (kvResult) {
+        const mapping = kvResult as DomainMapping;
+        domainCache.set(hostname, {
+          mapping,
+          expires: Date.now() + DOMAIN_CACHE_TTL,
+        });
+        return mapping;
+      }
+    } catch (error) {
+      console.error("[CustomDomain] KV lookup failed:", error);
     }
   }
 
-  // 404 for missing files
+  // Fall back to API lookup
+  try {
+    const response = await fetch(`${env.API_ORIGIN}/api/internal/domain-lookup`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Request": "cloudflare-router",
+      },
+      body: JSON.stringify({ hostname }),
+    });
+
+    if (!response.ok) {
+      // Cache negative result briefly to avoid hammering API
+      domainCache.set(hostname, {
+        mapping: null,
+        expires: Date.now() + 60_000, // 1 minute for misses
+      });
+      return null;
+    }
+
+    const mapping = (await response.json()) as DomainMapping;
+
+    // Cache in memory
+    domainCache.set(hostname, {
+      mapping,
+      expires: Date.now() + DOMAIN_CACHE_TTL,
+    });
+
+    // Write back to KV for next time (fire-and-forget)
+    if (env.TENANT_CONFIG) {
+      try {
+        await env.TENANT_CONFIG.put(hostname, JSON.stringify(mapping), {
+          expirationTtl: 300, // 5 minutes TTL in KV
+        });
+      } catch {
+        // Non-critical
+      }
+    }
+
+    return mapping;
+  } catch (error) {
+    console.error("[CustomDomain] API lookup failed:", error);
+    return null;
+  }
+}
+
+/**
+ * Proxy API request with trust headers for custom domain context.
+ */
+async function proxyToAPIWithTrust(
+  request: Request,
+  env: Env,
+  mapping: DomainMapping
+): Promise<Response> {
+  const url = new URL(request.url);
+  const apiUrl = new URL(url.pathname + url.search, env.API_ORIGIN);
+
+  const headers = new Headers(request.headers);
+  headers.delete("cf-connecting-ip");
+  headers.delete("cf-ray");
+  headers.delete("cf-visitor");
+  headers.delete("cf-ipcountry");
+
+  // Add forwarded headers
+  headers.set("X-Forwarded-Host", url.host);
+  headers.set("X-Forwarded-Proto", "https");
+  headers.set(
+    "X-Real-IP",
+    request.headers.get("cf-connecting-ip") || "unknown"
+  );
+
+  // Add trust headers for custom domain context
+  headers.set("X-Cloudflare-Worker", "true");
+  if (env.WORKER_TRUST_TOKEN) {
+    headers.set("X-Worker-Auth", env.WORKER_TRUST_TOKEN);
+  }
+  if (mapping.tenantId) {
+    headers.set("X-Tenant-ID", mapping.tenantId);
+  }
+  headers.set("X-Original-Host", url.hostname);
+
+  // Handle WebSocket upgrade
+  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    return Response.redirect(apiUrl.toString(), 307);
+  }
+
+  const proxyRequest = new Request(apiUrl.toString(), {
+    method: request.method,
+    headers,
+    body: request.body,
+    redirect: "manual",
+  });
+
+  try {
+    const response = await fetch(proxyRequest);
+    const responseHeaders = new Headers(response.headers);
+
+    const cookies = response.headers.getAll("set-cookie");
+    if (cookies.length > 0) {
+      responseHeaders.delete("set-cookie");
+      cookies.forEach((cookie) => {
+        responseHeaders.append("set-cookie", cookie);
+      });
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    console.error("[CustomDomain] Proxy error:", error);
+    return new Response(
+      JSON.stringify({ error: "API proxy error", message: String(error) }),
+      {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+}
+
+/**
+ * Handle a request for a custom dashboard domain.
+ * Serves SPA from R2 with tenant branding injected.
+ */
+async function handleCustomDomainRequest(
+  request: Request,
+  env: Env,
+  mapping: DomainMapping
+): Promise<Response> {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+
+  // API routes: proxy to Deno with trust headers
+  if (shouldProxy(pathname)) {
+    return proxyToAPIWithTrust(request, env, mapping);
+  }
+
+  // Static assets (files with extensions): serve directly from R2
+  if (pathname.includes(".")) {
+    const staticResponse = await serveStaticFile(request, env, pathname);
+    if (staticResponse) {
+      return staticResponse;
+    }
+    return new Response("Not Found", { status: 404 });
+  }
+
+  // SPA route (no file extension): serve index.html with tenant branding
+  const indexResponse = await serveStaticFile(request, env, "index.html");
+  if (indexResponse) {
+    const html = await indexResponse.text();
+
+    const tenantConfig: TenantConfig = {
+      companyName: mapping.brandStyles?.companyName || "",
+      logoUrl: mapping.brandStyles?.logoUrl || null,
+      faviconUrl: mapping.brandStyles?.faviconUrl || null,
+      primaryColor: mapping.brandStyles?.primaryColor || null,
+      secondaryColor: mapping.brandStyles?.secondaryColor || null,
+      slug: mapping.tenantSlug || "",
+      features: mapping.features || {},
+    };
+
+    const brandedHtml = injectTenantBranding(html, tenantConfig);
+
+    const headers = new Headers(indexResponse.headers);
+    headers.set(
+      "Content-Length",
+      new TextEncoder().encode(brandedHtml).length.toString()
+    );
+
+    return new Response(brandedHtml, {
+      status: indexResponse.status,
+      headers,
+    });
+  }
+
   return new Response("Not Found", { status: 404 });
 }
 
@@ -349,14 +593,23 @@ export default {
     }
 
     // For build.chipp.ai: continue with existing behavior
-    // For other subdomains (reserved or legacy): pass through to origin (Caddy)
+    // For other subdomains (reserved or legacy): check custom domains, then pass through
     const hostWithoutPort = url.hostname.split(":")[0];
     if (
       hostWithoutPort !== "build.chipp.ai" &&
       hostWithoutPort !== "localhost"
     ) {
-      // Not build.chipp.ai and not a vanity URL - pass through to origin
-      // This allows Caddy to handle reserved subdomains and legacy patterns
+      // Check if this is a registered custom domain (e.g., dashboard.acme.com)
+      const domainMapping = await lookupCustomDomain(hostWithoutPort, env);
+      if (domainMapping) {
+        if (domainMapping.type === "dashboard") {
+          return handleCustomDomainRequest(request, env, domainMapping);
+        }
+        // Chat or API custom domains: proxy with trust headers
+        return proxyToAPIWithTrust(request, env, domainMapping);
+      }
+
+      // Not a custom domain - pass through to origin (Caddy)
       return fetch(request);
     }
 

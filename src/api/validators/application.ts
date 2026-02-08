@@ -17,6 +17,18 @@ export const createApplicationSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
   modelId: z.string().default(DEFAULT_MODEL_ID),
   isPublic: z.boolean().default(false),
+  brandStyles: z
+    .object({
+      primaryColor: z
+        .string()
+        .regex(/^#[0-9A-Fa-f]{6}$/)
+        .optional(),
+      logoUrl: z.string().url().optional().or(z.literal("")),
+    })
+    .optional(),
+  suggestedMessages: z.array(z.string()).optional(),
+  welcomeMessages: z.array(z.string()).optional(),
+  creationSource: z.string().max(100).optional(),
 });
 
 export const updateApplicationSchema = z.object({

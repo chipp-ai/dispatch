@@ -10,6 +10,7 @@
    * - Max 90vh/90vw dimensions
    */
   import { createEventDispatcher } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let src: string;
   export let alt: string = "";
@@ -58,7 +59,10 @@
 
       dispatch("download", { src });
     } catch (err) {
-      console.error("Failed to download image:", err);
+      captureException(err, {
+        tags: { feature: "image-preview" },
+        extra: { action: "download-image", src },
+      });
       // Fallback: open in new tab
       window.open(src, "_blank");
     }

@@ -15,6 +15,7 @@
   import ChatInput from "../chat/ChatInput.svelte";
   import SuggestionButton from "./SuggestionButton.svelte";
   import CTABadge from "./CTABadge.svelte";
+  import TypingIndicatorBar from "./TypingIndicatorBar.svelte";
 
   export let disabled: boolean = false;
   export let responseGenerating: boolean = false;
@@ -36,6 +37,10 @@
   export let disclaimerText: string | null = null;
   export let showChippBadge: boolean = false;
   export let hasMessages: boolean = false;
+  /** Multiplayer: names of participants currently typing */
+  export let typingNames: string[] = [];
+  /** Multiplayer: whether AI is responding (disables input for everyone) */
+  export let multiplayerAiResponding: boolean = false;
 
   let isMobile: boolean = false;
 
@@ -181,6 +186,9 @@
       </div>
     {/if}
 
+    <!-- Typing indicators (multiplayer) -->
+    <TypingIndicatorBar {typingNames} {forceDarkMode} />
+
     <!-- Input area with CTA badge -->
     <div class="input-area">
       {#if cta && cta.isActive}
@@ -194,8 +202,8 @@
 
       <ChatInput
         placeholder={inputPlaceholder}
-        {disabled}
-        {responseGenerating}
+        disabled={disabled || multiplayerAiResponding}
+        responseGenerating={responseGenerating || multiplayerAiResponding}
         {conversationFrozen}
         {primaryColor}
         {forceDarkMode}

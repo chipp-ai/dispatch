@@ -11,6 +11,7 @@
  * 4. Creates Stripe customer and subscribes to FREE plan ($5 credit)
  */
 
+import { log } from "@/lib/logger.ts";
 import { db } from "../db/index.ts";
 import type {
   SubscriptionTier,
@@ -25,6 +26,8 @@ export interface ProvisionUserInput {
   picture?: string | null;
   oauthProvider?: string | null;
   oauthId?: string | null;
+  passwordHash?: string | null;
+  emailVerified?: boolean;
 }
 
 export interface ProvisionedUser {
@@ -48,7 +51,7 @@ class UserProvisioningService {
    * 4. Add user as OWNER in workspace_members
    */
   async provisionNewUser(input: ProvisionUserInput): Promise<ProvisionedUser> {
-    const { email, name, picture, oauthProvider, oauthId } = input;
+    const { email, name, picture, oauthProvider, oauthId, passwordHash, emailVerified } = input;
 
     // Generate names based on user's name or email
     const displayName = name || email.split("@")[0];
@@ -99,7 +102,8 @@ class UserProvisioningService {
           activeWorkspaceId: workspace.id,
           oauthProvider: oauthProvider || null,
           oauthId: oauthId || null,
-          emailVerified: oauthProvider !== null, // OAuth users are considered verified
+          passwordHash: passwordHash || null,
+          emailVerified: emailVerified ?? (oauthProvider !== null), // Explicit flag or default: OAuth users verified
         })
         .returning(["id", "email", "name", "role"])
         .executeTakeFirstOrThrow();
@@ -135,10 +139,11 @@ class UserProvisioningService {
       });
     } catch (e) {
       // Non-blocking - log and continue
-      console.warn(
-        "[user-provisioning] Failed to set up FREE subscription:",
-        e
-      );
+      log.warn("Failed to set up FREE subscription", {
+        source: "user-provisioning",
+        feature: "billing-setup",
+        error: String(e),
+      });
     }
 
     return result;
@@ -255,10 +260,11 @@ class UserProvisioningService {
           name: user.name,
         });
       } catch (e) {
-        console.warn(
-          "[user-provisioning] Failed to set up FREE subscription:",
-          e
-        );
+        log.warn("Failed to set up FREE subscription", {
+          source: "user-provisioning",
+          feature: "billing-setup",
+          error: String(e),
+        });
       }
     }
 
