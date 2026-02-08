@@ -291,7 +291,7 @@ jobs:
           PR_BODY=$(cat .scratch/pr-body.md)
 
           # Use REST API directly with PAT to bypass enterprise GraphQL restrictions
-          PR_RESPONSE=$(curl -sf -X POST \
+          PR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls" \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -302,11 +302,20 @@ jobs:
               --arg base "staging" \
               '{title: $title, body: $body, head: $head, base: $base}')")
 
+          HTTP_CODE=$(echo "$PR_RESPONSE" | tail -1)
+          PR_RESPONSE=$(echo "$PR_RESPONSE" | sed '$d')
+
           PR_URL=$(echo "$PR_RESPONSE" | jq -r '.html_url')
 
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Failed to create PR (HTTP $HTTP_CODE):"
+            echo "$PR_RESPONSE" | jq . 2>/dev/null || echo "$PR_RESPONSE"
+            exit 1
+          fi
+
           if [ "$PR_URL" = "null" ] || [ -z "$PR_URL" ]; then
-            echo "Failed to create PR:"
-            echo "$PR_RESPONSE" | jq .
+            echo "PR response missing html_url:"
+            echo "$PR_RESPONSE" | jq . 2>/dev/null || echo "$PR_RESPONSE"
             exit 1
           fi
 
