@@ -20,6 +20,27 @@ Consumer app for Chipp AI chatbots. Deno + Hono API, Svelte 5 SPA, Cloudflare Wo
 - Use `.scratch/` for ephemeral files
 - **ALWAYS use `./scripts/dev.sh`** - logs go to `.scratch/logs/`
 
+### Fix Pre-Existing Issues (Non-Negotiable)
+
+When you encounter a pre-existing bug, misconfiguration, or broken code during your work -- **stop and fix it**. Do not work around it, do not leave a TODO, do not say "this will work in production." Examples:
+
+- Wrong env var names (e.g. `GCS_BUCKET_NAME` vs `GCS_FILE_BUCKET`)
+- Broken imports, dead code paths, incorrect types
+- Misconfigured services, missing migrations, stale references
+
+If the fix is outside your current scope or you're unsure of the correct fix, **ask the human** before continuing. Never gloss over issues with "it's pre-existing so we'll leave it."
+
+### Local End-to-End Testing (Non-Negotiable)
+
+Every feature implementation **must be validated locally through the browser** using the browser DevTools MCP tools before considering it done. This means:
+
+1. **Start the full dev stack** (`./scripts/dev.sh`) -- if it fails, fix it before proceeding
+2. **Navigate the actual UI flow** in the browser (browser_navigate, browser_click, browser_take_screenshot)
+3. **Verify the feature works end-to-end** -- not just the API, but the full user-facing flow
+4. **Check for errors** in both server logs (`dev_logs_errors`) and browser console (`browser_get_console_logs`)
+
+**Never skip local testing.** If you hit blockers (Docker not running, DB not migrated, missing env vars, GCS not configured), **stop and fix those issues first** or ask the human for help. Do not proceed with partial testing and assume it will work in staging/prod. The standard is: if it can be tested locally, it must be tested locally.
+
 ## Error Handling (Critical)
 
 **Never use bare `console.error` or direct `Sentry.captureException`.** Use the unified logger.
