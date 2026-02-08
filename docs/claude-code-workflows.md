@@ -107,15 +107,32 @@ Task(subagent_type="e2e-flow-tester"): "Test upgrade flow: FREE→PRO with Strip
 | `dev_simulate_webhook` | Fake Stripe webhooks |
 | `dev_inject_error` | Inject errors for testing |
 
-## Browser DevTools Workflow
+## Browser DevTools Workflow (Required for All Features)
 
+**Every feature must be tested end-to-end in the browser before it's considered done.** This is not optional. API-only testing or database-only verification is insufficient.
+
+### Setup
 ```
 1. browser_connection_status           → Check connection
 2. If not connected:
-   curl -X PUT "http://localhost:9222/json/new?http://localhost:5174"
+   browser_start_chrome with url http://localhost:5173
 3. browser_list_tabs → browser_switch_tab
-4. browser_get_page_info               → Verify on localhost:5174
+4. browser_get_page_info               → Verify on localhost:5173
 ```
+
+### Testing Checklist (Do All of These)
+1. **Navigate to the relevant UI** -- browser_navigate to the page that exercises your feature
+2. **Interact with UI elements** -- browser_click, browser_type to trigger the actual user flow
+3. **Take screenshots** -- browser_take_screenshot to visually verify state at key steps
+4. **Check for errors** -- dev_logs_errors (server) + browser_get_console_logs(type:"error") (client)
+5. **Verify data** -- Use db_query to confirm database state matches expectations
+
+### If Local Infra Is Broken, Fix It First
+- Docker/DB not running? Start it. Don't proceed without a working database.
+- Migrations not applied? Run `deno task db:migrate`. Don't skip.
+- Missing env vars? Add them to `.env`. Don't work around them.
+- GCS/external service not configured? Configure it locally or ask the human.
+- **Never say "this will work in production" as justification for skipping local testing.**
 
 **Dev Panel:** Click `.dev-panel-toggle` (left edge, purple gear) to change tiers, clear caches, override models.
 
