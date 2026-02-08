@@ -7,6 +7,7 @@ import KanbanBoard from "@/components/KanbanBoard";
 import CreateIssueModal from "@/components/CreateIssueModal";
 import SearchModal from "@/components/SearchModal";
 import ImportEmptyState from "@/components/ImportEmptyState";
+import GuideOverlay, { hasSeenGuide, markGuideComplete } from "@/components/GuideOverlay";
 
 interface Status {
   id: string;
@@ -70,6 +71,7 @@ export default function BoardPage() {
     issuesUpdated: number;
   } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -176,6 +178,14 @@ export default function BoardPage() {
         eventSourceRef.current.close();
       }
     };
+  }, []);
+
+  // First-visit guide auto-show
+  useEffect(() => {
+    if (!hasSeenGuide()) {
+      const timer = setTimeout(() => setShowGuide(true), 1500);
+      return () => clearTimeout(timer);
+    }
   }, []);
 
   // Keyboard shortcuts
@@ -340,6 +350,7 @@ export default function BoardPage() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         onCreateIssue={() => setShowCreateModal(true)}
+        onOpenGuide={() => setShowGuide(true)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -481,6 +492,14 @@ export default function BoardPage() {
       <SearchModal
         isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}
+      />
+
+      <GuideOverlay
+        isOpen={showGuide}
+        onClose={() => {
+          markGuideComplete();
+          setShowGuide(false);
+        }}
       />
     </div>
   );
