@@ -172,14 +172,12 @@ jobs:
 
           # Start Deno API server (with --watch so it picks up Claude's changes)
           deno task dev > .scratch/logs/api-server.log 2>&1 &
-          API_PID=$!
-          echo "API server started (PID: $API_PID)"
+          echo "API server started (PID: $!)"
 
-          # Start Vite dev server
-          cd web && npm run dev > ../.scratch/logs/vite-server.log 2>&1 &
-          VITE_PID=$!
-          echo "Vite server started (PID: $VITE_PID)"
-          cd ..
+          # Start Vite dev server (use absolute path for log since we cd)
+          LOGDIR="$(pwd)/.scratch/logs"
+          (cd web && npm run dev > "$LOGDIR/vite-server.log" 2>&1) &
+          echo "Vite server started (PID: $!)"
 
           # Health check API server (wait up to 30s)
           echo "Waiting for API server at localhost:8000..."
@@ -190,8 +188,7 @@ jobs:
             fi
             if [ $i -eq 30 ]; then
               echo "WARNING: API server not responding after 30s"
-              echo "Last 20 lines of API log:"
-              tail -20 .scratch/logs/api-server.log
+              cat .scratch/logs/api-server.log 2>/dev/null || echo "(no log file)"
             fi
             sleep 1
           done
@@ -205,8 +202,7 @@ jobs:
             fi
             if [ $i -eq 30 ]; then
               echo "WARNING: Vite server not responding after 30s"
-              echo "Last 20 lines of Vite log:"
-              tail -20 .scratch/logs/vite-server.log
+              cat .scratch/logs/vite-server.log 2>/dev/null || echo "(no log file)"
             fi
             sleep 1
           done
