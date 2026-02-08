@@ -420,50 +420,66 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          # Background heartbeat: tail the human-readable log and post progress every 60s
-          if [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
-            (
-              PREV_HASH=""
-              while true; do
-                sleep 60
-                [ -f .scratch/claude-output.log ] || continue
-                LAST_LINES=$(tail -30 .scratch/claude-output.log 2>/dev/null)
-                [ -z "$LAST_LINES" ] && continue
-                CURR_HASH=$(echo "$LAST_LINES" | md5sum | cut -d' ' -f1)
-                [ "$CURR_HASH" = "$PREV_HASH" ] && continue
-                PREV_HASH="$CURR_HASH"
+          PROMPT=$(cat .scratch/implementation-prompt.md)
+
+          # Run Claude in background, writing to file (avoids all pipe buffering)
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$PROMPT" > .scratch/claude-raw.log 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude started (PID: $CLAUDE_PID)"
+
+          # Foreground monitoring loop:
+          # - Every 15s: show new output in GitHub Actions log (only foreground stdout appears)
+          # - Every 60s: POST heartbeat to Chipp Issues
+          PREV_LINES=0
+          TICK=0
+          PREV_HEARTBEAT_HASH=""
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 15
+            TICK=$((TICK + 1))
+
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
+
+            # Show new lines (filtered to readable text) in Actions log
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+              PREV_LINES=$CURR_LINES
+            else
+              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines, $(du -h .scratch/claude-raw.log | cut -f1))"
+            fi
+
+            # Heartbeat to Chipp Issues every ~60s (every 4th tick)
+            if [ $((TICK % 4)) -eq 0 ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              LAST_READABLE=$(tail -50 .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py 2>/dev/null | tail -30)
+              [ -z "$LAST_READABLE" ] && continue
+              CURR_HASH=$(echo "$LAST_READABLE" | md5sum | cut -d' ' -f1)
+              if [ "$CURR_HASH" != "$PREV_HEARTBEAT_HASH" ]; then
+                PREV_HEARTBEAT_HASH="$CURR_HASH"
                 curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
                   -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
                   -H "Content-Type: application/json" \
-                  -d "$(jq -n --arg type "agent_heartbeat" --arg content "$LAST_LINES" \
+                  -d "$(jq -n --arg type "agent_heartbeat" --arg content "$LAST_READABLE" \
                     '{type: $type, content: $content, metadata: {workflow_type: "prd_implement"}}')" || true
-              done
-            ) &
-            HEARTBEAT_PID=$!
-            echo "Heartbeat process started (PID: $HEARTBEAT_PID)"
+              fi
+            fi
+          done
+
+          # Claude finished - get exit code
+          wait $CLAUDE_PID
+          CLAUDE_EXIT=$?
+          echo "=== Claude exited with code $CLAUDE_EXIT ==="
+
+          # Show any remaining output
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py
           fi
 
-          PROMPT=$(cat .scratch/implementation-prompt.md)
-
-          # Write claude output directly to file (avoids pipe buffering).
-          # Then tail -f streams it to stdout for real-time GitHub Actions visibility.
-          touch .scratch/claude-raw.log
-          tail -f .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py &
-          TAIL_PID=$!
-
-          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT" > .scratch/claude-raw.log 2>&1
-          CLAUDE_EXIT=$?
-
-          # Give tail a moment to catch up with the last writes, then stop it
-          sleep 3
-          kill $TAIL_PID 2>/dev/null || true
-
-          # Create human-readable log from raw JSON for heartbeat/full-log upload
+          # Create human-readable log for full-log upload
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
-
-          # Stop heartbeat when Claude finishes
-          [ -n "${HEARTBEAT_PID:-}" ] && kill $HEARTBEAT_PID 2>/dev/null || true
 
           exit $CLAUDE_EXIT
 
@@ -526,14 +542,29 @@ jobs:
           After fixing, commit with a message like 'fix: resolve PR check failures for ISSUE_ID'.
           Do NOT push."
 
-          tail -f .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py &
-          FIX_TAIL_PID=$!
+          PREV_FIX_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
 
           claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$FIX_PROMPT" >> .scratch/claude-raw.log 2>&1
+            --mcp-config .mcp.json "$FIX_PROMPT" >> .scratch/claude-raw.log 2>&1 &
+          FIX_PID=$!
 
-          sleep 3
-          kill $FIX_TAIL_PID 2>/dev/null || true
+          while kill -0 $FIX_PID 2>/dev/null; do
+            sleep 15
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR=$(wc -l < .scratch/claude-raw.log)
+            if [ "$CURR" -gt "$PREV_FIX_LINES" ]; then
+              sed -n "$((PREV_FIX_LINES + 1)),${CURR}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+              PREV_FIX_LINES=$CURR
+            fi
+          done
+          wait $FIX_PID || true
+
+          FINAL=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL" -gt "$PREV_FIX_LINES" ]; then
+            sed -n "$((PREV_FIX_LINES + 1)),${FINAL}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py
+          fi
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
 
       - name: Re-verify after fix
