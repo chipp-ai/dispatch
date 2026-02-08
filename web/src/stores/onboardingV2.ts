@@ -7,6 +7,7 @@
 import { writable, derived, get } from "svelte/store";
 import type { OnboardingStep, TrainSubStep } from "$lib/onboarding-v2/flow";
 import { ONBOARDING_TEMPLATES } from "$lib/onboarding-v2/flow";
+import { captureException } from "$lib/sentry";
 
 const PERSISTENCE_KEY = "onboarding-v2-storage-v1";
 
@@ -84,7 +85,7 @@ function createOnboardingV2Store() {
         return JSON.parse(stored);
       }
     } catch (error) {
-      console.error("Failed to load onboarding state from storage:", error);
+      captureException(error, { tags: { source: "onboarding-store" }, extra: { action: "loadFromStorage" } });
     }
     return {};
   }
@@ -113,7 +114,7 @@ function createOnboardingV2Store() {
       };
       localStorage.setItem(PERSISTENCE_KEY, JSON.stringify(persistedState));
     } catch (error) {
-      console.error("Failed to save onboarding state to storage:", error);
+      captureException(error, { tags: { source: "onboarding-store" }, extra: { action: "saveToStorage" } });
     }
   }
 

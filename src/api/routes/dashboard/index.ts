@@ -10,7 +10,7 @@ import { sql } from "kysely";
 import type { AppEnv } from "../../../../types.ts";
 import { db } from "../../../db/client.ts";
 import { subDays, subMonths, startOfMonth, endOfMonth } from "date-fns";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export const dashboardRoutes = new Hono<AppEnv>();
 
@@ -95,11 +95,7 @@ dashboardRoutes.get("/v2", async (c) => {
 
       totalChats = Number(chatResult?.count || 0);
     } catch (err) {
-      console.error("Error counting chats:", err);
-      Sentry.captureException(err, {
-        tags: { source: "dashboard-api", feature: "count-chats" },
-        extra: { workspaceId, dateRange, filteredAppIds },
-      });
+      log.error("Error counting chats", { source: "dashboard-api", feature: "count-chats", workspaceId, dateRange, filteredAppIds }, err);
     }
 
     // Leads and conversions not yet migrated to new schema
@@ -153,11 +149,7 @@ dashboardRoutes.get("/v2", async (c) => {
       appSpecificData,
     });
   } catch (error) {
-    console.error("Dashboard data error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "dashboard-api", feature: "dashboard-v2" },
-      extra: { workspaceId, dateRange, applicationId },
-    });
+    log.error("Failed to fetch dashboard data", { source: "dashboard-api", feature: "dashboard-v2", workspaceId, dateRange, applicationId: applicationId ?? "" }, error);
     return c.json({ error: "Failed to fetch dashboard data" }, 500);
   }
 });
@@ -273,11 +265,7 @@ dashboardRoutes.get("/search-chats", async (c) => {
       total: Number(totalResult?.count || 0),
     });
   } catch (error) {
-    console.error("Chat search error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "dashboard-api", feature: "search-chats" },
-      extra: { workspaceId, query, applicationId },
-    });
+    log.error("Failed to search chats", { source: "dashboard-api", feature: "search-chats", workspaceId, query: query ?? "", applicationId: applicationId ?? "" }, error);
     return c.json({ error: "Failed to search chats" }, 500);
   }
 });
@@ -304,11 +292,7 @@ dashboardRoutes.get("/workspace/applications", async (c) => {
 
     return c.json({ applications });
   } catch (error) {
-    console.error("Applications list error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "dashboard-api", feature: "workspace-applications" },
-      extra: { workspaceId },
-    });
+    log.error("Failed to list workspace applications", { source: "dashboard-api", feature: "workspace-applications", workspaceId: workspaceId ?? "" }, error);
     return c.json({ error: "Failed to fetch applications" }, 500);
   }
 });

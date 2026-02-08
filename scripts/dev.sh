@@ -73,25 +73,25 @@ cd "$DIR"
 # -----------------------------------------------------------------------------
 LOG_DIR="$DIR/.scratch/logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/chipp-deno-$(date +%Y%m%d-%H%M%S).log"
 
-# Create a symlink to latest log for easy access
-LATEST_LOG="$LOG_DIR/chipp-deno-latest.log"
-rm -f "$LATEST_LOG"
-ln -sf "$LOG_FILE" "$LATEST_LOG"
+# Single log file per type - always fresh for current session
+LOG_FILE="$LOG_DIR/server.log"
+BROWSER_LOG="$LOG_DIR/browser.log"
 
-echo "Logging to: $LOG_FILE"
-echo "Latest log: $LATEST_LOG"
+echo "Server logs: $LOG_FILE"
+echo "Browser logs: $BROWSER_LOG"
 
-# Write log header
+# Clear and write log header (fresh start each session)
 {
   echo "========================================"
   echo "Chipp Deno Development Server"
   echo "Started: $(date)"
-  echo "Log file: $LOG_FILE"
   echo "========================================"
   echo ""
 } > "$LOG_FILE"
+
+# Clear browser logs for fresh session
+> "$BROWSER_LOG"
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
@@ -100,28 +100,65 @@ START_WORKER=true
 START_WEB=true
 START_API=true
 
-for arg in "$@"; do
-  case $arg in
+# Default ports (can be overridden for worktree parallelization)
+API_PORT=8000
+VITE_PORT=5173
+WORKER_PORT=8788
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
     --no-worker)
       START_WORKER=false
+      shift
       ;;
     --api-only)
       START_WEB=false
       START_WORKER=false
+      shift
+      ;;
+    --port|--vite-port)
+      VITE_PORT="$2"
+      shift 2
+      ;;
+    --api-port)
+      API_PORT="$2"
+      shift 2
+      ;;
+    --worker-port)
+      WORKER_PORT="$2"
+      shift 2
       ;;
     --help|-h)
       echo "Usage: ./scripts/dev.sh [options]"
       echo ""
       echo "Options:"
-      echo "  --no-worker   Don't start Cloudflare Worker (no brand injection)"
-      echo "  --api-only    Only start the Deno API server"
-      echo "  --help        Show this help message"
+      echo "  --no-worker          Don't start Cloudflare Worker (no brand injection)"
+      echo "  --api-only           Only start the Deno API server"
+      echo "  --port <PORT>        Vite/SPA port (default: 5173)"
+      echo "  --api-port <PORT>    Deno API port (default: 8000)"
+      echo "  --worker-port <PORT> Cloudflare Worker port (default: 8788)"
+      echo "  --help               Show this help message"
       echo ""
-      echo "Ports:"
+      echo "Default Ports:"
       echo "  8000  Deno API server"
       echo "  5173  Vite dev server (Svelte SPA)"
       echo "  8788  Cloudflare Worker (brand injection + R2 serving)"
+      echo ""
+      echo "Worktree Parallelization:"
+      echo "  # Main worktree (default ports)"
+      echo "  ./scripts/dev.sh"
+      echo ""
+      echo "  # Second worktree (offset ports by 10)"
+      echo "  ./scripts/dev.sh --port 5183 --api-port 8010 --worker-port 8798"
+      echo ""
+      echo "  # Third worktree (offset ports by 20)"
+      echo "  ./scripts/dev.sh --port 5193 --api-port 8020 --worker-port 8808"
       exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Run './scripts/dev.sh --help' for usage"
+      exit 1
       ;;
   esac
 done
@@ -186,17 +223,17 @@ WORKER_PID=""
 
 cleanup() {
   echo -e "\n${BLUE}Shutting down all services...${NC}"
-  
+
   # Kill by PID first (more reliable)
   [ -n "$API_PID" ] && kill $API_PID 2>/dev/null
   [ -n "$WEB_PID" ] && kill $WEB_PID 2>/dev/null
   [ -n "$WORKER_PID" ] && kill $WORKER_PID 2>/dev/null
-  
+
   # Then clean up any stragglers on the ports
-  kill_port 8000
-  kill_port 5173
-  kill_port 8788
-  
+  kill_port $API_PORT
+  kill_port $VITE_PORT
+  kill_port $WORKER_PORT
+
   echo -e "${GREEN}All services stopped.${NC}"
   exit 0
 }
@@ -206,10 +243,10 @@ trap cleanup SIGINT SIGTERM EXIT
 # -----------------------------------------------------------------------------
 # Clean up any existing processes on our ports
 # -----------------------------------------------------------------------------
-echo -e "${YELLOW}Cleaning up existing processes...${NC}"
-kill_port 8000
-kill_port 5173
-kill_port 8788
+echo -e "${YELLOW}Cleaning up existing processes on ports $API_PORT, $VITE_PORT, $WORKER_PORT...${NC}"
+kill_port $API_PORT
+kill_port $VITE_PORT
+kill_port $WORKER_PORT
 
 # -----------------------------------------------------------------------------
 # 1. START DENO API SERVER
@@ -225,9 +262,9 @@ kill_port 8788
 # The --watch flag enables auto-reload on file changes
 # -----------------------------------------------------------------------------
 if [ "$START_API" = true ]; then
-  echo -e "${GREEN}Starting Deno API server on :8000${NC}"
+  echo -e "${GREEN}Starting Deno API server on :$API_PORT${NC}"
   echo -e "${YELLOW}Logs: $LOG_FILE${NC}"
-  DENO_NO_PACKAGE_JSON=1 deno run \
+  PORT=$API_PORT DENO_NO_PACKAGE_JSON=1 deno run \
     --env \
     --watch \
     --allow-net \
@@ -237,11 +274,11 @@ if [ "$START_API" = true ]; then
     --allow-ffi \
     main.ts 2>&1 | tee -a "$LOG_FILE" &
   API_PID=$!
-  
+
   # Wait for API to be ready before starting dependent services
   echo -e "${YELLOW}Waiting for API server to start...${NC}"
   for i in {1..30}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    if curl -s http://localhost:$API_PORT/health > /dev/null 2>&1; then
       echo -e "${GREEN}API server ready!${NC}"
       break
     fi
@@ -277,8 +314,8 @@ if [ "$START_WEB" = true ] && [ -d "$WEB_DIR" ]; then
   fi
 
   if [ -d "$WEB_DIR/node_modules" ]; then
-    echo -e "${GREEN}Starting Svelte SPA on :5173${NC}"
-    (cd "$WEB_DIR" && npm run dev 2>&1 | tee -a "$LOG_FILE") &
+    echo -e "${GREEN}Starting Svelte SPA on :$VITE_PORT${NC}"
+    (cd "$WEB_DIR" && npm run dev -- --port $VITE_PORT 2>&1 | tee -a "$LOG_FILE") &
     WEB_PID=$!
   fi
 fi
@@ -311,42 +348,42 @@ if [ "$START_WORKER" = true ] && [ -d "$WORKER_DIR" ]; then
     (cd "$WORKER_DIR" && npm install)
   fi
 
-  echo -e "${GREEN}Starting Cloudflare Worker on :8788${NC}"
+  echo -e "${GREEN}Starting Cloudflare Worker on :$WORKER_PORT${NC}"
   echo -e "${YELLOW}  Attempting --remote mode (real R2 bucket)...${NC}"
-  
+
   # Try to start with --remote first (connects to real R2)
   # If it fails, fall back to local mode (simulated R2)
   cd "$WORKER_DIR"
-  
+
   # Start wrangler with --remote in background and capture PID
   npx wrangler dev \
     --remote \
-    --port 8788 \
-    --var API_ORIGIN:http://localhost:8000 2>&1 | tee -a "$LOG_FILE" &
+    --port $WORKER_PORT \
+    --var API_ORIGIN:http://localhost:$API_PORT 2>&1 | tee -a "$LOG_FILE" &
   WORKER_PID=$!
-  
+
   # Wait briefly to see if it starts successfully
   sleep 5
-  
+
   # Check if Worker is actually listening
-  if ! lsof -i:8788 > /dev/null 2>&1; then
+  if ! lsof -i:$WORKER_PORT > /dev/null 2>&1; then
     echo -e "${YELLOW}  --remote mode failed, falling back to local mode...${NC}"
     echo -e "${YELLOW}  Note: Local mode uses simulated R2 (brand injection won't work)${NC}"
-    
+
     # Kill failed process
     kill $WORKER_PID 2>/dev/null || true
-    
+
     # Start in local mode
     npx wrangler dev \
-      --port 8788 \
-      --var API_ORIGIN:http://localhost:8000 2>&1 | tee -a "$LOG_FILE" &
+      --port $WORKER_PORT \
+      --var API_ORIGIN:http://localhost:$API_PORT 2>&1 | tee -a "$LOG_FILE" &
     WORKER_PID=$!
-    
+
     sleep 3
   else
     echo -e "${GREEN}  Worker connected to real R2 bucket${NC}"
   fi
-  
+
   cd "$DIR"
 fi
 
@@ -361,16 +398,16 @@ echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}  All services running!${NC}"
 echo -e "${GREEN}==========================================${NC}"
 echo ""
-echo -e "  ${BLUE}Deno API:${NC}         http://localhost:8000"
-echo -e "  ${BLUE}Vite (Svelte):${NC}    http://localhost:5173 or :5174"
+echo -e "  ${BLUE}Deno API:${NC}         http://localhost:$API_PORT"
+echo -e "  ${BLUE}Vite (Svelte):${NC}    http://localhost:$VITE_PORT"
 if [ "$START_WORKER" = true ]; then
-  echo -e "  ${BLUE}Cloudflare Worker:${NC} http://localhost:8788"
+  echo -e "  ${BLUE}Cloudflare Worker:${NC} http://localhost:$WORKER_PORT"
   echo ""
   echo -e "  ${YELLOW}For brand injection testing:${NC}"
-  echo -e "    http://localhost:8788/#/w/chat/{app-slug}"
+  echo -e "    http://localhost:$WORKER_PORT/#/w/chat/{app-slug}"
   echo ""
   echo -e "  ${YELLOW}For fast frontend iteration (no brand injection):${NC}"
-  echo -e "    http://localhost:5173/#/w/chat/{app-slug}"
+  echo -e "    http://localhost:$VITE_PORT/#/w/chat/{app-slug}"
 fi
 echo ""
 echo -e "  ${YELLOW}Log file:${NC}"

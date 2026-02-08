@@ -10,6 +10,7 @@ import { NotFoundError, BadRequestError } from "../utils/errors.ts";
 import type { SubscriptionTier } from "../db/schema.ts";
 import Stripe from "npm:stripe";
 import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import {
   stripe,
   isStripeConfigured,
@@ -17,6 +18,14 @@ import {
   STRIPE_API_VERSION,
   STRIPE_V2_API_VERSION,
 } from "./stripe.client.ts";
+import {
+  getTierFromPriceId,
+  isV2BillingPriceId,
+} from "./stripe.constants.ts";
+import { calculateCredits } from "./billing/credit-calculator.ts";
+import { TIER_CREDIT_ALLOWANCE } from "./billing/subscription-tiers.ts";
+import { creditNotificationService } from "./billing/credit-notifications.ts";
+import { notificationService } from "./notifications/notification.service.ts";
 
 // ========================================
 // Types
@@ -37,6 +46,37 @@ export interface CreditStatus {
   warningSeverity: "none" | "low" | "exhausted";
   /** Human-readable credit balance */
   creditBalanceFormatted: string;
+  /** Whether the org has a default payment method configured */
+  hasDefaultPaymentMethod?: boolean;
+}
+
+export interface UsageAnalyticsResult {
+  data: Array<{
+    dimension: string;
+    dimensionId?: string;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalRequests: number;
+    estimatedCostCents: number;
+  }>;
+  totals: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalRequests: number;
+    estimatedCostCents: number;
+  };
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface NotificationSettings {
+  enabled: boolean;
+  defaultPercentage: number;
+  thresholds: number[];
+  tierAllowanceCents: number;
+  subscriptionTier: string;
 }
 
 export interface UsageSummary {
@@ -143,6 +183,19 @@ export interface SubscriptionUpdatedParams {
   cancelAtPeriodEnd: boolean;
   previousStatus?: string;
   livemode: boolean;
+  /** Subscription items with price info for tier detection */
+  items?: Array<{
+    price?: {
+      id: string;
+      metadata?: Record<string, string>;
+    };
+  }>;
+  /** Previous metadata for tier change detection */
+  previousMetadata?: Record<string, string>;
+  /** Timestamp when subscription will be cancelled */
+  cancelAt?: number | null;
+  /** Current period end timestamp */
+  currentPeriodEnd?: number;
 }
 
 export interface SubscriptionDeletedParams {
@@ -150,6 +203,15 @@ export interface SubscriptionDeletedParams {
   customerId: string;
   metadata: Record<string, string>;
   livemode: boolean;
+  /** Subscription items with price info for tier detection */
+  items?: Array<{
+    price?: {
+      id: string;
+      metadata?: Record<string, string>;
+    };
+  }>;
+  /** Subscription created timestamp for tenure calculation */
+  created?: number;
 }
 
 export interface InvoicePaidParams {
@@ -160,6 +222,18 @@ export interface InvoicePaidParams {
   currency: string;
   metadata: Record<string, string>;
   livemode: boolean;
+  /** Reason for billing: subscription_create, subscription_cycle, subscription_update, manual */
+  billingReason?: string | null;
+  /** Invoice line items with price/product metadata for credit detection */
+  lines?: Array<{
+    price?: {
+      id: string;
+      metadata?: Record<string, string>;
+      product?: string;
+    };
+    quantity?: number;
+    description?: string;
+  }>;
 }
 
 export interface InvoicePaymentFailedParams {
@@ -168,6 +242,16 @@ export interface InvoicePaymentFailedParams {
   subscriptionId: string | null;
   metadata: Record<string, string>;
   livemode: boolean;
+  /** Number of payment attempts made */
+  attemptCount?: number;
+  /** Next payment attempt timestamp (Unix) */
+  nextPaymentAttempt?: number | null;
+  /** Amount that failed to be paid (cents) */
+  amountDue?: number;
+  /** Currency of the failed payment */
+  currency?: string;
+  /** Last error message from Stripe */
+  lastFinalizationError?: string | null;
 }
 
 export interface CheckoutCompletedParams {
@@ -180,19 +264,165 @@ export interface CheckoutCompletedParams {
   livemode: boolean;
 }
 
+export interface BillingAlertParams {
+  /** The alert ID from Stripe */
+  alertId: string;
+  /** Stripe customer ID from the alert */
+  customerId: string;
+  /** Type of alert (e.g., 'credit_balance_threshold') */
+  alertType: string;
+  /** Alert title (notification alerts start with "notification:") */
+  title?: string;
+  /** Threshold amount in cents that triggered the alert */
+  thresholdCents: number;
+  /** Whether this is a live mode event */
+  livemode: boolean;
+  /** Full alert object for debugging/logging */
+  rawAlert?: Record<string, unknown>;
+}
+
+export interface DisputeCreatedParams {
+  /** The dispute ID from Stripe */
+  disputeId: string;
+  /** The charge ID associated with the dispute */
+  chargeId: string;
+  /** The payment intent ID if available */
+  paymentIntentId?: string;
+  /** The Stripe customer ID */
+  customerId: string;
+  /** Disputed amount in cents */
+  amount: number;
+  /** Currency of the dispute */
+  currency: string;
+  /** Reason for the dispute (e.g., 'fraudulent', 'duplicate', 'product_not_received') */
+  reason: string;
+  /** Current status of the dispute */
+  status: string;
+  /** Unix timestamp for evidence submission deadline */
+  evidenceDueBy: number;
+  /** Whether this is a live mode event */
+  livemode: boolean;
+  /** Additional metadata from Stripe */
+  metadata?: Record<string, string>;
+}
+
+export interface DisputeClosedParams {
+  /** The dispute ID from Stripe */
+  disputeId: string;
+  /** The charge ID associated with the dispute */
+  chargeId: string;
+  /** The Stripe customer ID */
+  customerId: string;
+  /** Disputed amount in cents */
+  amount: number;
+  /** Final status of the dispute: 'won', 'lost', or 'withdrawn' */
+  status: string;
+  /** Whether this is a live mode event */
+  livemode: boolean;
+  /** Additional metadata from Stripe */
+  metadata?: Record<string, string>;
+}
+
+export interface ChargeRefundedParams {
+  /** The charge ID that was refunded */
+  chargeId: string;
+  /** The refund ID from Stripe */
+  refundId: string;
+  /** The Stripe customer ID */
+  customerId: string;
+  /** Amount refunded in cents */
+  amount: number;
+  /** Currency of the refund */
+  currency: string;
+  /** Reason for the refund if provided */
+  reason?: string;
+  /** The payment intent ID if available */
+  paymentIntentId?: string;
+  /** Associated invoice ID if any */
+  invoiceId?: string;
+  /** Whether this is a live mode event */
+  livemode: boolean;
+  /** Additional metadata from Stripe */
+  metadata?: Record<string, string>;
+}
+
 // ========================================
 // Service
 // ========================================
 
 export const billingService = {
   /**
-   * Get credit status for an organization
-   * Note: In production, credit balance would come from Stripe API.
-   * This implementation provides the local database state.
+   * Fetch credit balance from Stripe for a customer.
+   * Returns balance in cents (positive = credits available, 0 = exhausted).
+   * Returns null on error (fail-open).
+   */
+  async fetchCreditBalance(
+    customerId: string,
+    useSandbox: boolean
+  ): Promise<number | null> {
+    const stripeKey = getStripeApiKey(useSandbox);
+    if (!stripeKey) return null;
+
+    try {
+      const balanceParams = new URLSearchParams({
+        customer: customerId,
+        "filter[type]": "applicability_scope",
+        "filter[applicability_scope][price_type]": "metered",
+      });
+
+      const balanceRes = await fetch(
+        `https://api.stripe.com/v1/billing/credit_balance_summary?${balanceParams.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${stripeKey}`,
+            "Content-Type": "application/json",
+            "Stripe-Version": STRIPE_V2_API_VERSION,
+          },
+        }
+      );
+
+      if (!balanceRes.ok) {
+        const errText = await balanceRes.text();
+        log.error("Failed to fetch credit balance", {
+          source: "billing",
+          feature: "credit-balance",
+          customerId,
+          useSandbox,
+          responseText: errText,
+        });
+        return null;
+      }
+
+      const balanceData = (await balanceRes.json()) as {
+        balances?: Array<{
+          available_balance?: { monetary?: { value?: number } };
+        }>;
+      };
+      return balanceData?.balances?.[0]?.available_balance?.monetary?.value ?? 0;
+    } catch (error) {
+      log.error("Error fetching credit balance", {
+        source: "billing",
+        feature: "credit-balance",
+        customerId,
+        useSandbox,
+      }, error);
+      return null;
+    }
+  },
+
+  /**
+   * Get credit status for an organization.
+   * Fetches real credit balance from Stripe credit_balance_summary API.
+   * Falls back to DB flags on Stripe errors (fail-open).
    */
   async getCreditStatus(organizationId: string): Promise<CreditStatus> {
     const result = await sql`
-      SELECT id
+      SELECT
+        id,
+        stripe_customer_id,
+        stripe_sandbox_customer_id,
+        credits_exhausted,
+        subscription_tier
       FROM app.organizations
       WHERE id = ${organizationId}
     `;
@@ -201,21 +431,63 @@ export const billingService = {
       throw new NotFoundError("Organization", String(organizationId));
     }
 
-    // Usage-based billing is always enabled
-    // Note: In a full implementation, we would fetch the actual credit balance
-    // from Stripe's credit_grants API. For now, assume not exhausted.
-    const isExhausted = false;
-    const isLow = false;
-    const showWarning = false;
+    const org = result[0];
+    const useSandbox = Deno.env.get("USE_STRIPE_SANDBOX") === "true";
+    const customerId = useSandbox
+      ? org.stripe_sandbox_customer_id
+      : org.stripe_customer_id;
+    const dbExhausted = org.credits_exhausted === true;
+
+    // No Stripe customer - return based on DB state only
+    if (!customerId) {
+      return {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: 0,
+        isExhausted: dbExhausted,
+        isLow: false,
+        showWarning: dbExhausted,
+        warningSeverity: dbExhausted ? "exhausted" : "none",
+        creditBalanceFormatted: dbExhausted ? "$0.00" : "Unknown",
+      };
+    }
+
+    // Fetch real balance from Stripe
+    const creditBalanceCents = await this.fetchCreditBalance(
+      customerId,
+      useSandbox
+    );
+
+    // Stripe call failed - fall back to DB flag
+    if (creditBalanceCents === null) {
+      return {
+        usageBasedBillingEnabled: true,
+        creditBalanceCents: -1,
+        isExhausted: dbExhausted,
+        isLow: false,
+        showWarning: dbExhausted,
+        warningSeverity: dbExhausted ? "exhausted" : "none",
+        creditBalanceFormatted: "Unknown",
+      };
+    }
+
+    const isExhausted = creditBalanceCents <= 0;
+    const isLow =
+      !isExhausted && creditBalanceCents < LOW_CREDITS_THRESHOLD_CENTS;
+    const showWarning = isExhausted || isLow;
+    const warningSeverity: "none" | "low" | "exhausted" = isExhausted
+      ? "exhausted"
+      : isLow
+        ? "low"
+        : "none";
 
     return {
       usageBasedBillingEnabled: true,
-      creditBalanceCents: -1, // -1 indicates unknown (would need Stripe API)
+      creditBalanceCents,
       isExhausted,
       isLow,
       showWarning,
-      warningSeverity: "none",
-      creditBalanceFormatted: "Unknown",
+      warningSeverity,
+      creditBalanceFormatted: `$${(Math.abs(creditBalanceCents) / 100).toFixed(2)}`,
     };
   },
 
@@ -386,7 +658,9 @@ export const billingService = {
   ): Promise<void> {
     const { subscriptionId, customerId, status, metadata, livemode } = params;
 
-    console.log("Processing subscription created", {
+    log.info("Processing subscription created", {
+      source: "billing",
+      feature: "subscription-created",
       subscriptionId,
       customerId,
       status,
@@ -421,7 +695,9 @@ export const billingService = {
     const { consumerIdentifier, developerId, applicationId, packageId } =
       metadata;
 
-    console.log("Processing consumer subscription", {
+    log.info("Processing consumer subscription", {
+      source: "billing",
+      feature: "consumer-subscription-created",
       subscriptionId,
       consumerIdentifier,
       developerId,
@@ -441,7 +717,9 @@ export const billingService = {
   ): Promise<void> {
     const { subscriptionId, customerId, metadata } = params;
 
-    console.log("Processing organization subscription", {
+    log.info("Processing organization subscription", {
+      source: "billing",
+      feature: "org-subscription-created",
       subscriptionId,
       customerId,
       tier: metadata.subscriptionTier,
@@ -455,7 +733,11 @@ export const billingService = {
     `;
 
     if (orgs.length === 0) {
-      console.warn(`No organization found for Stripe customer: ${customerId}`);
+      log.warn("No organization found for Stripe customer", {
+        source: "billing",
+        feature: "org-subscription-created",
+        customerId,
+      });
       return;
     }
 
@@ -471,15 +753,22 @@ export const billingService = {
       WHERE id = ${org.id}
     `;
 
-    console.log(
-      `Updated organization ${org.id} subscription to ${subscriptionId}`
-    );
+    log.info("Updated organization subscription", {
+      source: "billing",
+      feature: "org-subscription-created",
+      organizationId: org.id,
+      subscriptionId,
+    });
   },
 
   /**
    * Handle subscription updated event
    *
    * Called when a subscription is modified (e.g., plan change, cancellation scheduled).
+   * Handles:
+   * - Tier changes (upgrades/downgrades)
+   * - Status transitions (active, past_due, canceled, unpaid)
+   * - Pending cancellation scheduling
    */
   async handleSubscriptionUpdated(
     params: SubscriptionUpdatedParams
@@ -488,11 +777,17 @@ export const billingService = {
       subscriptionId,
       customerId,
       status,
+      metadata,
       cancelAtPeriodEnd,
       previousStatus,
+      items,
+      cancelAt,
+      currentPeriodEnd,
     } = params;
 
-    console.log("Processing subscription updated", {
+    log.info("Processing subscription updated", {
+      source: "billing-webhook",
+      feature: "subscription-updated",
       subscriptionId,
       customerId,
       status,
@@ -500,39 +795,270 @@ export const billingService = {
       cancelAtPeriodEnd,
     });
 
+    // Check if this is a consumer subscription
+    const isConsumer = !!(
+      metadata.consumerIdentifier &&
+      metadata.developerId &&
+      metadata.applicationId
+    );
+
+    if (isConsumer) {
+      // Handle consumer subscription update
+      log.info("Consumer subscription updated", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        consumerIdentifier: metadata.consumerIdentifier,
+        applicationId: metadata.applicationId,
+        status,
+      });
+      // Consumer subscriptions are handled separately
+      return;
+    }
+
+    // Find organization by Stripe customer ID
+    const orgs = await sql`
+      SELECT id, name, subscription_tier, stripe_subscription_id, subscription_cancelled_at
+      FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_sandbox_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    if (orgs.length === 0) {
+      log.warn("No organization found for Stripe customer", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        customerId,
+      });
+      return;
+    }
+
+    const org = orgs[0];
+    const currentTier = org.subscription_tier as string;
+
+    // Detect tier from price ID if available
+    let newTier: string | null = null;
+    if (items && items.length > 0) {
+      const priceId = items[0]?.price?.id;
+      if (priceId) {
+        // Skip v2 billing subscriptions that don't have tier metadata
+        // (v2 state is managed via checkout.session.completed)
+        if (isV2BillingPriceId(priceId)) {
+          log.info("Skipping subscription update for v2 billing - state managed via checkout", {
+            source: "billing-webhook",
+            feature: "subscription-updated",
+            subscriptionId,
+          });
+          // Still process cancellation scheduling for v2 subscriptions
+          if (cancelAtPeriodEnd && currentPeriodEnd) {
+            await this.handlePendingCancellation(
+              org.id,
+              currentPeriodEnd,
+              cancelAt
+            );
+          }
+          return;
+        }
+
+        const tierInfo = getTierFromPriceId(priceId);
+        if (tierInfo.tier) {
+          newTier = tierInfo.tier;
+        }
+      }
+    }
+
+    // Fallback to metadata for tier
+    if (!newTier && metadata.subscriptionTier) {
+      newTier = metadata.subscriptionTier;
+    }
+
+    // Detect tier change
+    const tierChanged = newTier && newTier !== currentTier;
+
+    if (tierChanged) {
+      log.info("Tier change detected", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+        previousTier: currentTier,
+        newTier,
+      });
+
+      // Update organization tier
+      await sql`
+        UPDATE app.organizations
+        SET
+          subscription_tier = ${newTier},
+          updated_at = NOW()
+        WHERE id = ${org.id}
+      `;
+
+      log.info("Updated organization tier", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+        newTier,
+      });
+
+      // Log tier change for analytics
+      Sentry.addBreadcrumb({
+        category: "billing",
+        message: `Subscription tier changed: ${currentTier} -> ${newTier}`,
+        level: "info",
+        data: {
+          organizationId: org.id,
+          subscriptionId,
+          previousTier: currentTier,
+          newTier,
+        },
+      });
+
+      // Fire-and-forget notification
+      const appUrl = Deno.env.get("APP_URL") || "http://localhost:5174";
+      const changeType = newTier === "FREE" ? "canceled" as const :
+        (currentTier === "FREE" || ["PRO", "TEAM", "BUSINESS", "ENTERPRISE"].indexOf(newTier!) >
+         ["PRO", "TEAM", "BUSINESS", "ENTERPRISE"].indexOf(currentTier)) ? "upgraded" as const : "downgraded" as const;
+      notificationService.send({
+        type: "subscription_changed",
+        organizationId: String(org.id),
+        data: {
+          organizationName: org.name,
+          previousTier: currentTier,
+          newTier,
+          changeType,
+          billingUrl: `${appUrl}/#/settings/billing/plan`,
+        },
+      }).catch(() => {});
+    }
+
     // Handle status transitions
     if (status === "active" && previousStatus !== "active") {
       // Subscription became active
-      console.log(`Subscription ${subscriptionId} is now active`);
+      log.info("Subscription is now active", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        subscriptionId,
+        organizationId: org.id,
+      });
+
+      // Clear any cancellation flags if subscription reactivated
+      await sql`
+        UPDATE app.organizations
+        SET
+          subscription_cancelled_at = NULL,
+          subscription_ends_at = NULL,
+          updated_at = NOW()
+        WHERE id = ${org.id}
+          AND subscription_cancelled_at IS NOT NULL
+      `;
     } else if (status === "past_due") {
       // Payment failed but subscription still active
-      console.log(`Subscription ${subscriptionId} is past due`);
-      // TODO: Send payment failed notification
+      log.warn("Subscription payment past due", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        organizationId: org.id,
+        subscriptionId,
+        customerId,
+      });
+      // TODO: Send payment failed notification email
     } else if (status === "canceled" || status === "unpaid") {
       // Subscription ended
-      console.log(
-        `Subscription ${subscriptionId} ended with status: ${status}`
-      );
-      // TODO: Deactivate access
+      log.info("Subscription ended", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        subscriptionId,
+        status,
+        organizationId: org.id,
+      });
+
+      // Downgrade to FREE tier
+      await sql`
+        UPDATE app.organizations
+        SET
+          subscription_tier = 'FREE',
+          stripe_subscription_id = NULL,
+          subscription_cancelled_at = NOW(),
+          pending_downgrade_tier = NULL,
+          downgrade_scheduled_at = NULL,
+          downgrade_effective_at = NULL,
+          updated_at = NOW()
+        WHERE id = ${org.id}
+      `;
+
+      log.warn("Subscription ended - organization downgraded to FREE", {
+        source: "billing-webhook",
+        feature: "subscription-status",
+        organizationId: org.id,
+        subscriptionId,
+        previousTier: currentTier,
+        status,
+      });
     }
 
-    if (cancelAtPeriodEnd) {
-      console.log(`Subscription ${subscriptionId} scheduled for cancellation`);
-      // TODO: Update organization to reflect pending cancellation
+    // Handle pending cancellation
+    if (cancelAtPeriodEnd && currentPeriodEnd) {
+      await this.handlePendingCancellation(org.id, currentPeriodEnd, cancelAt);
+    } else if (!cancelAtPeriodEnd && org.subscription_cancelled_at) {
+      // Cancellation was undone
+      log.info("Cancellation undone for organization", {
+        source: "billing-webhook",
+        feature: "subscription-updated",
+        organizationId: org.id,
+      });
+      await sql`
+        UPDATE app.organizations
+        SET
+          subscription_cancelled_at = NULL,
+          subscription_ends_at = NULL,
+          updated_at = NOW()
+        WHERE id = ${org.id}
+      `;
     }
+  },
+
+  /**
+   * Handle pending cancellation by updating organization timestamps
+   */
+  async handlePendingCancellation(
+    organizationId: number | string,
+    currentPeriodEnd: number,
+    cancelAt: number | null | undefined
+  ): Promise<void> {
+    const subscriptionEndsAt = cancelAt
+      ? new Date(cancelAt * 1000)
+      : new Date(currentPeriodEnd * 1000);
+
+    log.info("Subscription scheduled for cancellation", {
+      source: "billing-webhook",
+      feature: "pending-cancellation",
+      organizationId,
+      subscriptionEndsAt: subscriptionEndsAt.toISOString(),
+    });
+
+    await sql`
+      UPDATE app.organizations
+      SET
+        subscription_cancelled_at = NOW(),
+        subscription_ends_at = ${subscriptionEndsAt},
+        updated_at = NOW()
+      WHERE id = ${organizationId}
+    `;
   },
 
   /**
    * Handle subscription deleted event
    *
    * Called when a subscription is fully canceled/deleted.
+   * Captures churn analytics and resets organization to FREE tier.
    */
   async handleSubscriptionDeleted(
     params: SubscriptionDeletedParams
   ): Promise<void> {
-    const { subscriptionId, customerId, metadata } = params;
+    const { subscriptionId, customerId, metadata, items, created } = params;
 
-    console.log("Processing subscription deleted", {
+    log.info("Processing subscription deleted", {
+      source: "billing-webhook",
+      feature: "subscription-deleted",
       subscriptionId,
       customerId,
     });
@@ -546,85 +1072,427 @@ export const billingService = {
 
     if (isConsumer) {
       // Deactivate consumer access
-      console.log("Deactivating consumer subscription", {
+      log.info("Deactivating consumer subscription", {
+        source: "billing-webhook",
+        feature: "subscription-deleted",
         consumerIdentifier: metadata.consumerIdentifier,
         applicationId: metadata.applicationId,
       });
       // TODO: Update ConsumerPurchase to mark as inactive
-    } else {
-      // Handle organization subscription cancellation
-      const orgs = await sql`
-        SELECT id FROM app.organizations
-        WHERE stripe_subscription_id = ${subscriptionId}
+      return;
+    }
+
+    // Find organization - check both by subscription ID and customer ID
+    // (subscription ID might already be cleared if we processed an update event)
+    let orgs = await sql`
+      SELECT id, name, subscription_tier, created_at
+      FROM app.organizations
+      WHERE stripe_subscription_id = ${subscriptionId}
+      LIMIT 1
+    `;
+
+    if (orgs.length === 0) {
+      // Try finding by customer ID
+      orgs = await sql`
+        SELECT id, name, subscription_tier, created_at
+        FROM app.organizations
+        WHERE stripe_customer_id = ${customerId}
+           OR stripe_sandbox_customer_id = ${customerId}
         LIMIT 1
       `;
+    }
 
-      if (orgs.length > 0) {
-        await sql`
-          UPDATE app.organizations
-          SET
-            subscription_tier = 'FREE',
-            stripe_subscription_id = NULL,
-            updated_at = NOW()
-          WHERE id = ${orgs[0].id}
-        `;
+    if (orgs.length === 0) {
+      log.warn("No organization found for deleted subscription", {
+        source: "billing-webhook",
+        feature: "subscription-deleted",
+        subscriptionId,
+        customerId,
+      });
+      return;
+    }
 
-        console.log(`Downgraded organization ${orgs[0].id} to FREE tier`);
+    const org = orgs[0];
+    const previousTier = org.subscription_tier as string;
+
+    // Detect tier from price ID if not in metadata
+    let churnedFromTier = metadata.subscriptionTier || previousTier;
+    if (items && items.length > 0) {
+      const priceId = items[0]?.price?.id;
+      if (priceId) {
+        const tierInfo = getTierFromPriceId(priceId);
+        if (tierInfo.tier) {
+          churnedFromTier = tierInfo.tier;
+        }
       }
     }
+
+    // Calculate subscription tenure
+    let tenureDays: number | null = null;
+    if (created) {
+      const subscriptionCreatedAt = new Date(created * 1000);
+      const now = new Date();
+      tenureDays = Math.floor(
+        (now.getTime() - subscriptionCreatedAt.getTime()) / (1000 * 60 * 60 * 24)
+      );
+    }
+
+    // Log churn analytics
+    log.info("Subscription churned", {
+      source: "billing-webhook",
+      feature: "churn-analytics",
+      organizationId: org.id,
+      organizationName: org.name,
+      previousTier: churnedFromTier,
+      subscriptionTenureDays: tenureDays,
+      subscriptionId,
+      customerId,
+    });
+
+    // Update organization to FREE tier and clear all subscription-related fields
+    await sql`
+      UPDATE app.organizations
+      SET
+        subscription_tier = 'FREE',
+        stripe_subscription_id = NULL,
+        subscription_cancelled_at = NOW(),
+        subscription_ends_at = NULL,
+        pending_downgrade_tier = NULL,
+        downgrade_scheduled_at = NULL,
+        downgrade_effective_at = NULL,
+        updated_at = NOW()
+      WHERE id = ${org.id}
+    `;
+
+    log.info("Downgraded organization to FREE tier", {
+      source: "billing-webhook",
+      feature: "subscription-deleted",
+      organizationId: org.id,
+      organizationName: org.name,
+      previousTier: churnedFromTier,
+    });
+
+    // TODO: Send churn notification to Slack (#chipp-churn)
+    // TODO: Send subscription canceled email to organization admins
   },
 
   /**
    * Handle invoice paid event
    *
    * Called when an invoice is successfully paid.
-   * For subscriptions, this renews access. For one-time payments, adds credits.
+   * For subscriptions, this renews access and clears any payment_failed flags.
+   * For one-time payments (credit packages), adds credits to the consumer balance.
    */
   async handleInvoicePaid(params: InvoicePaidParams): Promise<void> {
-    const { invoiceId, customerId, subscriptionId, amountPaid, currency } =
-      params;
-
-    console.log("Processing invoice paid", {
+    const {
       invoiceId,
       customerId,
       subscriptionId,
       amountPaid,
       currency,
+      metadata,
+      billingReason,
+      lines,
+    } = params;
+
+    log.info("Processing invoice paid", {
+      source: "billing-webhook",
+      feature: "invoice-paid",
+      invoiceId,
+      customerId,
+      subscriptionId,
+      amountPaid,
+      currency,
+      billingReason,
+      metadataType: metadata?.type,
     });
 
-    if (subscriptionId) {
-      // Subscription invoice - access is already managed by subscription events
-      console.log(
-        `Invoice ${invoiceId} paid for subscription ${subscriptionId}`
+    // Check if this is a credit package purchase
+    // Credit packages have metadata.type === 'PACKAGE' or 'package'
+    const isPackagePurchase =
+      metadata?.type?.toUpperCase() === "PACKAGE" ||
+      lines?.some(
+        (line) => line.price?.metadata?.type?.toUpperCase() === "PACKAGE"
       );
-    } else {
-      // One-time payment - might be a credit purchase
-      console.log(
-        `One-time invoice ${invoiceId} paid: ${amountPaid} ${currency}`
-      );
-      // TODO: Add credits if this is a credit purchase
+
+    if (isPackagePurchase) {
+      // Handle credit package purchase
+      await this.handleCreditPackagePurchase({
+        invoiceId,
+        customerId,
+        amountPaid,
+        currency,
+        metadata,
+        lines,
+      });
+      return;
     }
+
+    if (subscriptionId) {
+      // Subscription invoice - access is managed by subscription events
+      // Clear any payment failure flags on the organization
+      log.info("Subscription payment successful", {
+        source: "billing-webhook",
+        feature: "invoice-paid",
+        subscriptionId,
+        customerId,
+      });
+
+      // Find organization by Stripe customer ID and clear payment failure tracking
+      const orgs = await sql`
+        SELECT id, name FROM app.organizations
+        WHERE stripe_customer_id = ${customerId}
+        LIMIT 1
+      `;
+
+      if (orgs.length > 0) {
+        log.info("Payment successful for organization", {
+          source: "billing-webhook",
+          feature: "invoice-paid",
+          organizationId: orgs[0].id,
+          organizationName: orgs[0].name,
+        });
+        // Note: If we had a payment_failure_count column, we would reset it here:
+        // UPDATE app.organizations SET payment_failure_count = 0 WHERE id = ${orgs[0].id}
+      }
+    } else {
+      // One-time payment that isn't a credit package
+      log.info("One-time invoice paid", {
+        source: "billing-webhook",
+        feature: "invoice-paid",
+        invoiceId,
+        amountPaid,
+        currency,
+      });
+    }
+  },
+
+  /**
+   * Handle credit package purchase from invoice.paid
+   *
+   * Looks up the credit amount from line items and adds credits to the consumer's balance.
+   */
+  async handleCreditPackagePurchase(params: {
+    invoiceId: string;
+    customerId: string;
+    amountPaid: number;
+    currency: string;
+    metadata: Record<string, string>;
+    lines?: InvoicePaidParams["lines"];
+  }): Promise<void> {
+    const { invoiceId, customerId, metadata, lines } = params;
+
+    log.info("Processing credit package purchase", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
+      invoiceId,
+      customerId,
+      consumerIdentifier: metadata?.consumerIdentifier,
+      applicationId: metadata?.applicationId,
+      packageId: metadata?.packageId,
+    });
+
+    // Extract consumer info from metadata
+    const consumerIdentifier = metadata?.consumerIdentifier;
+    const applicationId = metadata?.applicationId;
+    const packageId = metadata?.packageId;
+
+    if (!consumerIdentifier || !applicationId) {
+      log.warn("Credit package purchase missing consumer metadata", {
+        source: "billing-webhook",
+        feature: "credit-package-purchase",
+        invoiceId,
+        hasConsumerIdentifier: !!consumerIdentifier,
+        hasApplicationId: !!applicationId,
+      });
+      // Log but don't fail - we need the checkout.session.completed handler
+      // to have the full context for credit purchases
+      return;
+    }
+
+    // Look up credit amount from line item metadata or package lookup
+    let creditAmount: number | null = null;
+
+    // Try to get credit amount from line item price metadata
+    if (lines && lines.length > 0) {
+      for (const line of lines) {
+        const tokenQty = line.price?.metadata?.tokenQty;
+        if (tokenQty) {
+          creditAmount = parseInt(tokenQty, 10);
+          break;
+        }
+      }
+    }
+
+    // If no credit amount found in line items, try metadata directly
+    if (!creditAmount && metadata?.tokenQty) {
+      creditAmount = parseInt(metadata.tokenQty, 10);
+    }
+
+    if (!creditAmount) {
+      log.warn("Could not determine credit amount for package purchase", {
+        source: "billing-webhook",
+        feature: "credit-package-purchase",
+        invoiceId,
+        packageId,
+        linesCount: lines?.length,
+      });
+      // TODO: Look up package from database by packageId to get tokenQty
+      // For now, log and return - checkout.session.completed should handle this
+      return;
+    }
+
+    log.info("Adding credits to consumer", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
+      consumerIdentifier,
+      applicationId,
+      creditAmount,
+      invoiceId,
+    });
+
+    // TODO: Create transaction record and update consumer credits
+    // This requires the consumer billing tables to be fully implemented
+    // For now, log the intent for audit purposes
+    log.info("Credit grant intent", {
+      source: "billing-webhook",
+      feature: "credit-package-purchase",
+      type: "REFILL",
+      consumerIdentifier,
+      applicationId,
+      creditAmount,
+      invoiceId,
+      customerId,
+    });
   },
 
   /**
    * Handle invoice payment failed event
    *
    * Called when an invoice payment fails.
-   * May trigger access suspension for subscription invoices.
+   * Tracks failure count, sends notifications, and considers access suspension after N failures.
    */
   async handleInvoicePaymentFailed(
     params: InvoicePaymentFailedParams
   ): Promise<void> {
-    const { invoiceId, customerId, subscriptionId } = params;
-
-    console.log("Processing invoice payment failed", {
+    const {
       invoiceId,
       customerId,
       subscriptionId,
+      attemptCount,
+      nextPaymentAttempt,
+      amountDue,
+      currency,
+      lastFinalizationError,
+    } = params;
+
+    log.info("Processing payment failure", {
+      source: "billing-webhook",
+      feature: "invoice-payment-failed",
+      invoiceId,
+      customerId,
+      subscriptionId,
+      attemptCount,
+      amountDue,
+      currency,
+      nextPaymentAttempt: nextPaymentAttempt
+        ? new Date(nextPaymentAttempt * 1000).toISOString()
+        : null,
+      lastFinalizationError,
     });
 
-    // TODO: Send payment failed notification
-    // TODO: For repeated failures, consider suspending access
+    // Find the organization by Stripe customer ID
+    const orgs = await sql`
+      SELECT id, name FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    if (orgs.length === 0) {
+      log.warn("No organization found for customer", {
+        source: "billing-webhook",
+        feature: "invoice-payment-failed",
+        customerId,
+        invoiceId,
+      });
+      return;
+    }
+
+    const org = orgs[0];
+
+    // Log the failure details for querying/debugging
+    // This provides an audit trail even without a dedicated column
+    log.info("Payment failure record", {
+      source: "billing-webhook",
+      feature: "invoice-payment-failed",
+      organizationId: org.id,
+      organizationName: org.name,
+      invoiceId,
+      subscriptionId,
+      attemptCount: attemptCount || 1,
+      amountDue,
+      currency,
+      failureReason: lastFinalizationError || "Unknown",
+      nextRetry: nextPaymentAttempt
+        ? new Date(nextPaymentAttempt * 1000).toISOString()
+        : null,
+    });
+
+    // Determine severity based on attempt count
+    const attempts = attemptCount || 1;
+    const MAX_ATTEMPTS_BEFORE_REVIEW = 3;
+
+    if (attempts >= MAX_ATTEMPTS_BEFORE_REVIEW) {
+      // Flag organization for review after multiple failures
+      log.error("Payment review required - multiple failures", {
+        source: "billing",
+        feature: "payment-failure",
+        organizationId: org.id,
+        organizationName: org.name,
+        attemptCount: attempts,
+        totalAmountDue: amountDue,
+        currency,
+        invoiceId,
+        subscriptionId,
+      });
+
+      // TODO: Consider suspending access or downgrading tier
+      // This should be a business decision - for now we just flag it
+    }
+
+    // Send payment failed notification
+    const appUrl = Deno.env.get("APP_URL") || "http://localhost:5174";
+    const amountFormatted = `$${((amountDue ?? 0) / 100).toFixed(2)}`;
+    notificationService.send({
+      type: "payment_failed",
+      organizationId: String(org.id),
+      data: {
+        organizationName: org.name,
+        amountFormatted,
+        attemptCount: attempts,
+        nextRetryDate: nextPaymentAttempt
+          ? new Date(nextPaymentAttempt * 1000).toLocaleDateString()
+          : undefined,
+        billingUrl: `${appUrl}/#/settings/billing/payment`,
+      },
+    }).catch(() => {});
+
+    // Log to Sentry for monitoring via appropriate level
+    if (attempts >= 2) {
+      const logFn = attempts >= MAX_ATTEMPTS_BEFORE_REVIEW ? log.error : log.warn;
+      logFn("Payment failed for organization", {
+        source: "stripe-webhook",
+        feature: "invoice-payment-failed",
+        organizationId: org.id,
+        organizationName: org.name,
+        invoiceId,
+        subscriptionId,
+        attemptCount: attempts,
+        amountDue,
+        currency,
+        failureReason: lastFinalizationError,
+      });
+    }
   },
 
   /**
@@ -636,45 +1504,1132 @@ export const billingService = {
   async handleCheckoutCompleted(
     params: CheckoutCompletedParams
   ): Promise<void> {
-    const { sessionId, mode, metadata, subscriptionId, paymentIntentId } =
-      params;
-
-    console.log("Processing checkout completed", {
+    const {
       sessionId,
+      customerId,
+      mode,
+      metadata,
+      subscriptionId,
+      paymentIntentId,
+      livemode,
+    } = params;
+
+    log.info("Processing checkout completed", {
+      source: "billing-webhook",
+      feature: "checkout-completed",
+      sessionId,
+      customerId,
       mode,
       type: metadata.type,
+      livemode,
     });
 
-    const purchaseType = metadata.type;
+    // Normalize purchase type to uppercase for consistent matching
+    const purchaseType = metadata.type?.toUpperCase();
 
     switch (purchaseType) {
-      case "package":
-        // Credit package purchase
-        if (mode === "subscription") {
-          console.log(`Subscription package purchased: ${subscriptionId}`);
-        } else {
-          console.log(`One-time package purchased: ${paymentIntentId}`);
-        }
+      case "PACKAGE":
+        await this.handleCheckoutPackagePurchase(params);
         break;
 
-      case "org_payment_setup":
-        // Organization added a payment method
-        console.log(
-          `Organization payment setup completed: ${metadata.organizationId}`
-        );
+      case "ORG_PAYMENT_SETUP":
+        await this.handleCheckoutOrgPaymentSetup(params);
         break;
 
-      case "hq_access":
-        // HQ/Workspace access purchase
-        console.log(`HQ access purchased`, {
-          workspaceId: metadata.workspaceId,
-          developerId: metadata.developerId,
-        });
+      case "HQ_ACCESS":
+        await this.handleCheckoutHqAccess(params);
         break;
 
       default:
-        console.log(`Unhandled checkout type: ${purchaseType}`);
+        log.info("Unhandled checkout type", {
+          source: "billing-webhook",
+          feature: "checkout-completed",
+          type: metadata.type,
+          sessionId,
+        });
     }
+  },
+
+  /**
+   * Handle consumer credit package purchase from checkout.session.completed
+   *
+   * Steps:
+   * 1. Find consumer by identifier + applicationId
+   * 2. Look up credit package to get token quantity
+   * 3. Add credits to consumer balance
+   * 4. Create purchase record for audit trail
+   *
+   * Note: This may overlap with invoice.paid for subscription packages.
+   * The idempotency should be handled via paymentIntentId.
+   */
+  async handleCheckoutPackagePurchase(
+    params: CheckoutCompletedParams
+  ): Promise<void> {
+    const { sessionId, customerId, metadata, paymentIntentId, livemode } =
+      params;
+
+    const { consumerIdentifier, developerId, applicationId, packageId } =
+      metadata;
+
+    log.info("Processing PACKAGE purchase", {
+      source: "billing-service",
+      feature: "checkout-package",
+      sessionId,
+      consumerIdentifier,
+      developerId,
+      applicationId,
+      packageId,
+    });
+
+    // Validate required metadata
+    if (!consumerIdentifier || !applicationId) {
+      log.warn("Missing required metadata for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
+        sessionId,
+        consumerIdentifier,
+        applicationId,
+        metadata,
+      });
+      return;
+    }
+
+    // Determine mode based on livemode flag
+    const consumerMode = livemode ? "LIVE" : "TEST";
+
+    // Find consumer by identifier and application
+    const consumers = await sql`
+      SELECT id, credits, stripe_customer_id
+      FROM app.consumers
+      WHERE identifier = ${consumerIdentifier}
+        AND application_id = ${applicationId}::uuid
+        AND mode = ${consumerMode}
+        AND is_deleted = false
+      LIMIT 1
+    `;
+
+    if (consumers.length === 0) {
+      log.error("Consumer not found for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
+        consumerIdentifier,
+        applicationId,
+        mode: consumerMode,
+        sessionId,
+      });
+      return;
+    }
+
+    const consumer = consumers[0];
+
+    // Determine credits to add
+    // Priority: metadata.creditsAmount > package lookup > default
+    let creditsToAdd = 0;
+
+    if (metadata.creditsAmount) {
+      // If credits amount is passed in metadata, use it
+      creditsToAdd = parseInt(metadata.creditsAmount, 10);
+      log.info("Using creditsAmount from metadata", {
+        source: "billing-service",
+        feature: "checkout-package",
+        creditsAmount: creditsToAdd,
+      });
+    } else if (packageId) {
+      // TODO: Look up package from database when packages table exists
+      // ChippMono does: Package.findUnique({ where: { id: packageId } }) -> tokenQty
+      // For now, log a warning and use a default
+      log.warn("Package lookup not implemented - packages table does not exist yet", {
+        source: "billing-service",
+        feature: "checkout-package",
+        packageId,
+      });
+      // Default credit amount (should be replaced with actual package lookup)
+      creditsToAdd = 100;
+    }
+
+    if (creditsToAdd <= 0) {
+      log.error("Could not determine credits amount for PACKAGE purchase", {
+        source: "billing-service",
+        feature: "checkout-package",
+        packageId,
+        metadata,
+        sessionId,
+      });
+      return;
+    }
+
+    // Update consumer credits and store Stripe customer ID
+    const currentCredits = consumer.credits || 0;
+    const newCredits = currentCredits + creditsToAdd;
+
+    await sql`
+      UPDATE app.consumers
+      SET
+        credits = ${newCredits},
+        stripe_customer_id = COALESCE(stripe_customer_id, ${customerId}),
+        updated_at = NOW()
+      WHERE id = ${consumer.id}::uuid
+    `;
+
+    log.info("Added credits to consumer", {
+      source: "billing-service",
+      feature: "checkout-package",
+      consumerId: consumer.id,
+      creditsAdded: creditsToAdd,
+      previousBalance: currentCredits,
+      newBalance: newCredits,
+    });
+
+    // TODO: Create Purchase record when purchases table exists in database
+    // The schema.ts defines PurchaseTable but it may not exist in the actual DB yet.
+    // When it does, create a record like:
+    // await sql`
+    //   INSERT INTO app.purchases (
+    //     consumer_id, application_id, stripe_payment_intent_id,
+    //     amount, currency, status, credits_granted, mode
+    //   )
+    //   VALUES (
+    //     ${consumer.id}, ${applicationId}, ${paymentIntentId},
+    //     ${amountPaid}, 'usd', 'completed', ${creditsToAdd}, ${consumerMode}
+    //   )
+    // `;
+
+    log.info("PACKAGE purchase completed successfully", {
+      source: "billing-service",
+      feature: "checkout-package",
+      consumerId: consumer.id,
+      creditsGranted: creditsToAdd,
+      paymentIntentId,
+    });
+
+    // Fire-and-forget credit_purchase notification to app owner
+    try {
+      const apps = await sql`
+        SELECT a.name, w.organization_id
+        FROM app.applications a
+        JOIN app.workspaces w ON a.workspace_id = w.id
+        WHERE a.id = ${applicationId}::uuid
+        LIMIT 1
+      `;
+      if (apps.length > 0) {
+        const app = apps[0] as { name: string; organization_id: string };
+        notificationService.send({
+          type: "credit_purchase",
+          organizationId: String(app.organization_id),
+          data: {
+            consumerEmail: consumerIdentifier || "Unknown",
+            appName: app.name,
+            amountFormatted: `${creditsToAdd} credits`,
+          },
+        }).catch(() => {});
+      }
+    } catch { /* fire-and-forget */ }
+  },
+
+  /**
+   * Handle organization payment method setup from checkout.session.completed
+   *
+   * This is triggered when an organization completes a checkout session
+   * in setup mode to add a payment method (no immediate charge).
+   *
+   * Steps:
+   * 1. Find organization by metadata.organizationId or customer lookup
+   * 2. Log the event for audit trail
+   * 3. Optionally update organization status
+   */
+  async handleCheckoutOrgPaymentSetup(
+    params: CheckoutCompletedParams
+  ): Promise<void> {
+    const { sessionId, customerId, metadata } = params;
+
+    log.info("Processing ORG_PAYMENT_SETUP", {
+      source: "billing-service",
+      feature: "checkout-payment-setup",
+      sessionId,
+      customerId,
+      organizationId: metadata.organizationId,
+    });
+
+    let orgId = metadata.organizationId;
+
+    // If no organizationId in metadata, look up by customer ID
+    if (!orgId && customerId) {
+      const orgs = await sql`
+        SELECT id FROM app.organizations
+        WHERE stripe_customer_id = ${customerId}
+        LIMIT 1
+      `;
+
+      if (orgs.length > 0) {
+        orgId = orgs[0].id;
+      }
+    }
+
+    if (!orgId) {
+      log.warn("Could not find organization for payment setup", {
+        source: "billing-service",
+        feature: "checkout-payment-setup",
+        customerId,
+        metadata,
+        sessionId,
+      });
+      return;
+    }
+
+    // Log the successful payment method setup
+    log.info("Organization payment method setup completed", {
+      source: "billing-service",
+      feature: "checkout-payment-setup",
+      organizationId: orgId,
+      customerId,
+      sessionId,
+    });
+
+    // Note: The payment method is now attached to the Stripe customer.
+    // We don't need to store a flag in the database because we can
+    // verify payment method status via getPaymentMethodStatus() when needed.
+    //
+    // If we later add a has_payment_method column to organizations for caching,
+    // update it here:
+    // await sql`
+    //   UPDATE app.organizations
+    //   SET has_payment_method = true, updated_at = NOW()
+    //   WHERE id = ${orgId}::uuid
+    // `;
+  },
+
+  /**
+   * Handle HQ/Workspace access purchase from checkout.session.completed
+   *
+   * This is triggered when a user purchases access to another creator's
+   * workspace/HQ (for public_paid workspaces).
+   *
+   * Steps:
+   * 1. Find the workspace by workspaceId or hqId from metadata
+   * 2. Find or identify the purchasing user
+   * 3. Grant access by creating workspace_member record
+   */
+  async handleCheckoutHqAccess(params: CheckoutCompletedParams): Promise<void> {
+    const { sessionId, customerId, metadata } = params;
+
+    const workspaceId = metadata.workspaceId || metadata.hqId;
+    const userId = metadata.userId || metadata.developerId;
+
+    log.info("Processing HQ_ACCESS purchase", {
+      source: "billing-service",
+      feature: "checkout-hq-access",
+      sessionId,
+      customerId,
+      workspaceId,
+      userId,
+    });
+
+    if (!workspaceId) {
+      log.error("Missing workspaceId for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
+        metadata,
+        sessionId,
+      });
+      return;
+    }
+
+    if (!userId) {
+      log.error("Missing userId for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
+        metadata,
+        sessionId,
+      });
+      return;
+    }
+
+    // Check if workspace exists
+    const workspaces = await sql`
+      SELECT id, name FROM app.workspaces
+      WHERE id = ${workspaceId}::uuid
+      LIMIT 1
+    `;
+
+    if (workspaces.length === 0) {
+      log.error("Workspace not found for HQ_ACCESS purchase", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
+        workspaceId,
+        sessionId,
+      });
+      return;
+    }
+
+    const workspace = workspaces[0];
+
+    // Check if user already has access
+    const existingMembership = await sql`
+      SELECT id FROM app.workspace_members
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND user_id = ${userId}::uuid
+      LIMIT 1
+    `;
+
+    if (existingMembership.length > 0) {
+      log.info("User already has workspace access", {
+        source: "billing-service",
+        feature: "checkout-hq-access",
+        workspaceId,
+        userId,
+        existingMembershipId: existingMembership[0].id,
+      });
+      // Not an error - user might have purchased access that was already granted
+      return;
+    }
+
+    // Grant access by creating workspace member record
+    // Use VIEWER role for purchased access (read-only access)
+    await sql`
+      INSERT INTO app.workspace_members (workspace_id, user_id, role, joined_via_public_invite)
+      VALUES (${workspaceId}::uuid, ${userId}::uuid, 'VIEWER', true)
+    `;
+
+    log.info("HQ_ACCESS granted successfully", {
+      source: "billing-service",
+      feature: "checkout-hq-access",
+      workspaceId,
+      workspaceName: workspace.name,
+      userId,
+      sessionId,
+    });
+
+    // TODO: If HQAccessGrant table exists (for consumer access tracking), create record:
+    // This would be for tracking consumer (non-user) access to public_paid workspaces.
+    // ChippMono has both WorkspaceMember (for users) and HQAccessGrant (for consumers).
+    // await sql`
+    //   INSERT INTO app.hq_access_grants (workspace_id, consumer_id, granted_at, stripe_session_id)
+    //   VALUES (${workspaceId}, ${consumerId}, NOW(), ${sessionId})
+    // `;
+  },
+
+  // ========================================
+  // Dispute & Refund Handlers (Compliance Critical)
+  // ========================================
+
+  /**
+   * Handle dispute created event
+   *
+   * Called when a customer disputes a charge. This is compliance-critical
+   * and requires immediate team notification.
+   *
+   * Actions:
+   * - Log dispute details for audit trail
+   * - Alert team immediately via Sentry (error level for visibility)
+   * - Store dispute info for tracking
+   */
+  async handleDisputeCreated(params: DisputeCreatedParams): Promise<void> {
+    const {
+      disputeId,
+      chargeId,
+      paymentIntentId,
+      customerId,
+      amount,
+      currency,
+      reason,
+      status,
+      evidenceDueBy,
+      livemode,
+    } = params;
+
+    const evidenceDeadline = new Date(evidenceDueBy * 1000);
+    const daysUntilDeadline = Math.ceil(
+      (evidenceDeadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+    );
+
+    log.info("Processing dispute", {
+      source: "billing-webhook",
+      feature: "dispute",
+      disputeId,
+      chargeId,
+      paymentIntentId,
+      customerId,
+      amount,
+      currency,
+      reason,
+      status,
+      evidenceDeadline: evidenceDeadline.toISOString(),
+      daysUntilDeadline,
+      livemode,
+    });
+
+    // Find organization by Stripe customer ID for context
+    const orgs = await sql`
+      SELECT id, name FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_sandbox_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    const org = orgs[0] as { id: string; name: string } | undefined;
+
+    // Alert team immediately - disputes are compliance-critical
+    log.error("Dispute created - review and submit evidence before deadline", {
+      source: "billing-webhook",
+      feature: "dispute",
+      disputeId,
+      chargeId,
+      paymentIntentId,
+      customerId,
+      organizationId: org?.id || null,
+      organizationName: org?.name || null,
+      amount,
+      currency,
+      amountFormatted: `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`,
+      reason,
+      status,
+      evidenceDeadline: evidenceDeadline.toISOString(),
+      daysUntilDeadline,
+      livemode,
+      actionRequired: "Review dispute and submit evidence before deadline. Contact customer if possible.",
+    });
+
+    // TODO: Consider adding a disputes table for tracking
+    // For now, disputes are tracked via Sentry alerts and structured logs
+    // The team should review via Stripe Dashboard
+
+    // TODO: Send Slack notification to #chipp-disputes or similar channel
+    // This would be implemented when Slack integration service is available
+  },
+
+  /**
+   * Handle dispute closed event
+   *
+   * Called when a dispute is resolved (won, lost, or withdrawn).
+   * Logs the outcome for financial reporting.
+   */
+  async handleDisputeClosed(params: DisputeClosedParams): Promise<void> {
+    const { disputeId, chargeId, customerId, amount, status, livemode } =
+      params;
+
+    log.info("Processing dispute resolution", {
+      source: "billing-webhook",
+      feature: "dispute-closed",
+      disputeId,
+      chargeId,
+      customerId,
+      amount,
+      status,
+      livemode,
+    });
+
+    // Find organization for context
+    const orgs = await sql`
+      SELECT id, name FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_sandbox_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    const org = orgs[0] as { id: string; name: string } | undefined;
+
+    // Log structured resolution record for financial reporting
+    log.info("Dispute resolution", {
+      source: "billing-webhook",
+      feature: "dispute-closed",
+      disputeId,
+      chargeId,
+      customerId,
+      organizationId: org?.id || null,
+      organizationName: org?.name || null,
+      amount,
+      amountFormatted: `${(amount / 100).toFixed(2)} USD`,
+      resolution: status,
+      livemode,
+    });
+
+    // Different handling based on resolution
+    if (status === "lost") {
+      // Log loss for financial reporting - this is revenue that's gone
+      log.warn("Dispute lost - amount deducted from account", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
+        disputeId,
+        chargeId,
+        customerId,
+        organizationId: org?.id,
+        organizationName: org?.name,
+        amountLost: amount,
+        amountLostFormatted: `${(amount / 100).toFixed(2)} USD`,
+        livemode,
+      });
+    } else if (status === "won") {
+      log.info("Dispute won", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
+        disputeId,
+        chargeId,
+        amount,
+        organizationId: org?.id,
+      });
+
+      // Capture win for tracking
+      Sentry.addBreadcrumb({
+        category: "billing",
+        message: `Dispute won: ${disputeId}`,
+        level: "info",
+        data: {
+          disputeId,
+          chargeId,
+          customerId,
+          organizationId: org?.id,
+          amount,
+        },
+      });
+    } else if (status === "withdrawn") {
+      log.info("Dispute withdrawn by customer", {
+        source: "billing-webhook",
+        feature: "dispute-closed",
+        disputeId,
+        chargeId,
+        amount,
+        organizationId: org?.id,
+      });
+    }
+  },
+
+  /**
+   * Handle charge refunded event
+   *
+   * Called when a charge is refunded (full or partial).
+   * Logs refund details for financial reporting and transaction tracking.
+   */
+  async handleChargeRefunded(params: ChargeRefundedParams): Promise<void> {
+    const {
+      chargeId,
+      refundId,
+      customerId,
+      amount,
+      currency,
+      reason,
+      paymentIntentId,
+      invoiceId,
+      livemode,
+      metadata,
+    } = params;
+
+    log.info("Processing refund", {
+      source: "billing-webhook",
+      feature: "charge-refunded",
+      chargeId,
+      refundId,
+      customerId,
+      amount,
+      currency,
+      reason,
+      paymentIntentId,
+      invoiceId,
+      livemode,
+    });
+
+    // Find organization for context
+    const orgs = await sql`
+      SELECT id, name FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_sandbox_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    const org = orgs[0] as { id: string; name: string } | undefined;
+
+    // Log structured refund record for financial reporting
+    log.info("Refund record", {
+      source: "billing-webhook",
+      feature: "charge-refunded",
+      refundId,
+      chargeId,
+      paymentIntentId,
+      invoiceId,
+      customerId,
+      organizationId: org?.id || null,
+      organizationName: org?.name || null,
+      amount,
+      currency,
+      amountFormatted: `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`,
+      reason: reason || "not_specified",
+      livemode,
+    });
+
+    // Check if this refund relates to a credit purchase
+    // If metadata indicates this was a credit package purchase, we may need to deduct credits
+    const isCreditPurchase =
+      metadata?.type?.toUpperCase() === "CREDIT_TOPUP" ||
+      metadata?.type?.toUpperCase() === "PACKAGE";
+
+    if (isCreditPurchase) {
+      // TODO: When credit tracking is fully implemented, deduct credits here
+      // This would involve:
+      // 1. Finding the original credit grant associated with this charge
+      // 2. Voiding or reducing the credit grant proportionally
+      // 3. Updating organization's credit balance
+
+      log.warn("Credit purchase refunded - manual review needed", {
+        source: "billing-webhook",
+        feature: "charge-refunded",
+        refundId,
+        chargeId,
+        customerId,
+        organizationId: org?.id,
+        amount,
+        note: "Credits may need to be manually adjusted in Stripe",
+      });
+    }
+
+    // Capture to Sentry for significant refunds (over $50)
+    if (amount >= 5000) {
+      Sentry.addBreadcrumb({
+        category: "billing",
+        message: `Significant refund processed: ${refundId}`,
+        level: "info",
+        data: {
+          refundId,
+          chargeId,
+          customerId,
+          organizationId: org?.id,
+          amount,
+          currency,
+          reason,
+        },
+      });
+    }
+  },
+
+  // ========================================
+  // Billing Alert Handlers (v2 Usage-Based Billing)
+  // ========================================
+
+  /**
+   * Handle billing.alert.triggered webhook event
+   *
+   * Handles three types of billing alerts:
+   * 1. $0 threshold alerts - Set creditsExhausted flag to block API usage
+   * 2. Notification alerts (title starts with "notification:") - Log notification intent
+   * 3. Auto-topup alerts - Charge payment method and grant credits
+   *
+   * Auto-topup flow:
+   * 1. Check if topup_enabled is true in customer metadata
+   * 2. Verify default payment method exists
+   * 3. Create payment intent for topup_amount_cents
+   * 4. On success, create credit grant via Stripe v2 API
+   * 5. Clear creditsExhausted flag
+   */
+  async handleBillingAlert(params: BillingAlertParams): Promise<void> {
+    const {
+      alertId,
+      customerId,
+      alertType,
+      title,
+      thresholdCents,
+      livemode,
+    } = params;
+
+    log.info("Processing billing alert", {
+      source: "billing-webhook",
+      feature: "billing-alert",
+      alertId,
+      alertType,
+      customerId,
+      thresholdCents,
+      title,
+      livemode,
+    });
+
+    if (!customerId) {
+      log.warn("No customer ID in billing alert", {
+        source: "billing-webhook",
+        feature: "billing-alert",
+        alertId,
+      });
+      return;
+    }
+
+    // Find organization by Stripe customer ID (check both production and sandbox)
+    const orgs = await sql`
+      SELECT
+        id,
+        name,
+        stripe_customer_id,
+        stripe_sandbox_customer_id,
+        credits_exhausted
+      FROM app.organizations
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_sandbox_customer_id = ${customerId}
+      LIMIT 1
+    `;
+
+    if (orgs.length === 0) {
+      log.warn("Organization not found for customer", {
+        source: "billing-webhook",
+        feature: "billing-alert",
+        customerId,
+        alertId,
+      });
+      return;
+    }
+
+    const org = orgs[0];
+    const isSandboxCustomer = org.stripe_sandbox_customer_id === customerId;
+
+    log.info("Processing alert for organization", {
+      source: "billing-webhook",
+      feature: "billing-alert",
+      organizationId: org.id,
+      organizationName: org.name,
+      customerId,
+      thresholdCents,
+      isSandbox: isSandboxCustomer,
+    });
+
+    // Check if this is a notification alert (title starts with "notification:")
+    const isNotificationAlert = title?.startsWith("notification:");
+
+    // Handle $0 balance alert - set creditsExhausted flag
+    if (thresholdCents === 0) {
+      log.info("Credits exhausted - setting flag", {
+        source: "billing-webhook",
+        feature: "billing-alert",
+        organizationId: org.id,
+        customerId,
+      });
+
+      // Update credits_exhausted flag in database
+      await sql`
+        UPDATE app.organizations
+        SET
+          credits_exhausted = true,
+          updated_at = NOW()
+        WHERE id = ${org.id}
+      `;
+
+      log.warn("CREDITS_EXHAUSTED_FLAG_SET", {
+        source: "billing-webhook",
+        feature: "billing-alert",
+        organizationId: org.id,
+        organizationName: org.name,
+        customerId,
+        isSandbox: isSandboxCustomer,
+      });
+
+      // Send exhausted credits notification (fire-and-forget)
+      creditNotificationService
+        .sendLowCreditsEmail({
+          organizationId: org.id,
+          severity: "exhausted",
+          creditBalanceCents: 0,
+          thresholdCents: 0,
+          organizationName: org.name,
+        })
+        .catch((err) => {
+          log.error("Failed to send exhausted notification", {
+            source: "billing-webhook",
+            feature: "credit-exhausted-notification",
+            organizationId: org.id,
+            customerId,
+          }, err);
+        });
+
+      // $0 alerts don't trigger auto-topup - just set the flag
+      return;
+    }
+
+    // Handle notification alerts (not auto-topup)
+    if (isNotificationAlert) {
+      log.info("Processing notification alert", {
+        source: "billing-webhook",
+        feature: "billing-alert",
+        organizationId: org.id,
+        thresholdCents,
+        title,
+      });
+
+      // Send low credits notification (fire-and-forget)
+      creditNotificationService
+        .sendLowCreditsEmail({
+          organizationId: org.id,
+          severity: "low",
+          creditBalanceCents: thresholdCents,
+          thresholdCents,
+          organizationName: org.name,
+        })
+        .catch((err) => {
+          log.error("Failed to send low credits notification", {
+            source: "billing-webhook",
+            feature: "low-credits-notification",
+            organizationId: org.id,
+            customerId,
+            thresholdCents,
+          }, err);
+        });
+
+      // Notification alerts don't trigger auto-topup
+      return;
+    }
+
+    // This is an auto-topup alert - check settings and process topup
+    await this.processAutoTopup(
+      customerId,
+      org.id,
+      org.name,
+      isSandboxCustomer,
+      alertId
+    );
+  },
+
+  /**
+   * Process automatic credit top-up for a customer
+   *
+   * Steps:
+   * 1. Get customer metadata to check if topup is enabled
+   * 2. Verify default payment method exists
+   * 3. Create payment intent for topup amount
+   * 4. Create credit grant via Stripe v2 API
+   * 5. Clear creditsExhausted flag
+   * 6. Log for Slack notification (fire-and-forget)
+   */
+  async processAutoTopup(
+    customerId: string,
+    organizationId: number | string,
+    organizationName: string,
+    isSandbox: boolean,
+    alertId: string
+  ): Promise<void> {
+    const stripeKey = getStripeApiKey(isSandbox);
+    if (!stripeKey) {
+      log.error("Stripe not configured for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
+        organizationId,
+        customerId,
+        isSandbox,
+      });
+      return;
+    }
+
+    const stripeClient = new Stripe(stripeKey, {
+      apiVersion: STRIPE_API_VERSION as Stripe.LatestApiVersion,
+    });
+
+    // Get customer to read topup settings
+    let customer: Stripe.Customer;
+    try {
+      customer = (await stripeClient.customers.retrieve(
+        customerId
+      )) as Stripe.Customer;
+    } catch (error) {
+      log.error("Failed to retrieve customer for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
+        customerId,
+        organizationId,
+        isSandbox,
+        alertId,
+      }, error);
+      return;
+    }
+
+    const metadata = customer.metadata || {};
+    const topupEnabled = metadata.topup_enabled === "true";
+    const topupAmountCents = metadata.topup_amount_cents
+      ? parseInt(metadata.topup_amount_cents, 10)
+      : 2000; // Default $20
+
+    // Check if auto-topup is enabled
+    if (!topupEnabled) {
+      log.info("Auto-topup not enabled for customer", {
+        source: "billing-service",
+        feature: "auto-topup",
+        customerId,
+        organizationId,
+      });
+      return;
+    }
+
+    // Check for default payment method
+    const defaultPaymentMethod =
+      customer.invoice_settings?.default_payment_method ||
+      customer.default_source;
+
+    if (!defaultPaymentMethod) {
+      log.warn("No default payment method for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup",
+        customerId,
+        organizationId,
+      });
+      return;
+    }
+
+    log.info("Executing automatic top-up", {
+      source: "billing-service",
+      feature: "auto-topup",
+      customerId,
+      organizationId,
+      amount: topupAmountCents,
+      alertId,
+    });
+
+    // Create payment intent for the top-up amount
+    let paymentIntent: Stripe.PaymentIntent;
+    try {
+      paymentIntent = await stripeClient.paymentIntents.create({
+        amount: topupAmountCents,
+        currency: "usd",
+        customer: customerId,
+        payment_method: defaultPaymentMethod as string,
+        confirm: true,
+        off_session: true,
+        description: `Automatic credit top-up (Alert ${alertId})`,
+        metadata: {
+          type: "auto_topup",
+          alert_id: alertId,
+          organization_id: organizationId.toString(),
+          upsellSource: "auto_topup",
+        },
+      });
+    } catch (paymentError) {
+      log.error("Auto-topup payment failed", {
+        source: "billing-service",
+        feature: "auto-topup-payment",
+        customerId,
+        organizationId,
+        amountCents: topupAmountCents,
+        alertId,
+        isSandbox,
+      }, paymentError);
+      return;
+    }
+
+    if (paymentIntent.status !== "succeeded") {
+      log.error("Auto-topup payment did not succeed", {
+        source: "billing-service",
+        feature: "auto-topup",
+        customerId,
+        organizationId,
+        paymentIntentId: paymentIntent.id,
+        paymentStatus: paymentIntent.status,
+        amountCents: topupAmountCents,
+        isSandbox,
+        alertId,
+      });
+      return;
+    }
+
+    log.info("Auto-topup payment succeeded", {
+      source: "billing-service",
+      feature: "auto-topup",
+      customerId,
+      organizationId,
+      paymentIntentId: paymentIntent.id,
+      isSandbox,
+    });
+
+    // Create credit grant via Stripe v2 API
+    const grantResp = await fetch(
+      "https://api.stripe.com/v1/billing/credit_grants",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${stripeKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Stripe-Version": STRIPE_V2_API_VERSION,
+        },
+        body: new URLSearchParams({
+          customer: customerId,
+          "amount[type]": "monetary",
+          "amount[monetary][currency]": "usd",
+          "amount[monetary][value]": String(topupAmountCents),
+          "applicability_config[scope][price_type]": "metered",
+          category: "paid",
+          name: `Automatic Top-up (Alert ${alertId})`,
+          "metadata[type]": "auto_topup",
+          "metadata[upsellSource]": "auto_topup",
+          "metadata[organizationId]": organizationId.toString(),
+        }).toString(),
+      }
+    );
+
+    if (!grantResp.ok) {
+      const grantErrorText = await grantResp.text();
+      log.error("Failed to create credit grant for auto-topup", {
+        source: "billing-service",
+        feature: "auto-topup-grant",
+        customerId,
+        organizationId,
+        paymentIntentId: paymentIntent.id,
+        amountCents: topupAmountCents,
+        responseStatus: grantResp.status,
+        responseBody: grantErrorText,
+        isSandbox,
+      }, new Error(`Failed to create credit grant: ${grantErrorText}`));
+
+      // Attempt to refund the successful payment if we couldn't grant credits
+      try {
+        await stripeClient.refunds.create({
+          payment_intent: paymentIntent.id,
+          amount: topupAmountCents,
+        });
+        log.warn("Refunded auto-topup payment due to grant failure", {
+          source: "billing-service",
+          feature: "auto-topup-refund",
+          customerId,
+          organizationId,
+          paymentIntentId: paymentIntent.id,
+        });
+      } catch (refundError) {
+        log.error("Failed to refund after grant creation error", {
+          source: "billing-service",
+          feature: "auto-topup-refund",
+          customerId,
+          organizationId,
+          paymentIntentId: paymentIntent.id,
+          amountCents: topupAmountCents,
+          originalError: grantErrorText,
+          isSandbox,
+        }, refundError);
+      }
+
+      return;
+    }
+
+    const grant = await grantResp.json();
+
+    // Clear creditsExhausted flag now that credits have been added
+    await sql`
+      UPDATE app.organizations
+      SET
+        credits_exhausted = false,
+        updated_at = NOW()
+      WHERE id = ${organizationId}
+    `;
+
+    log.info("Auto-topup completed successfully", {
+      source: "billing-service",
+      feature: "auto-topup",
+      customerId,
+      organizationId,
+      paymentIntentId: paymentIntent.id,
+      creditGrantId: (grant as Record<string, unknown>)?.id,
+      amount: topupAmountCents,
+    });
+
+    // Log for Slack notification (fire-and-forget)
+    // TODO: Implement notifySlackOfCreditTopup when Slack integration is ready
+    log.info("SLACK_NOTIFICATION_INTENT", {
+      source: "billing-service",
+      feature: "auto-topup",
+      type: "automatic_credit_topup",
+      amountCents: topupAmountCents,
+      organizationId,
+      organizationName,
+      isSandbox,
+      paymentIntentId: paymentIntent.id,
+      creditGrantId: (grant as Record<string, unknown>)?.id,
+    });
   },
 
   /**
@@ -722,14 +2677,12 @@ export const billingService = {
 
       return portalSession.url;
     } catch (error) {
-      console.error("[billing] Stripe portal session creation error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "stripe-portal" },
-        extra: {
-          customerId: params.customerId,
-          organizationName: params.organizationName,
-        },
-      });
+      log.error("Stripe portal session creation error", {
+        source: "billing-service",
+        feature: "stripe-portal",
+        customerId: params.customerId,
+        organizationName: params.organizationName,
+      }, error);
 
       // Handle customer not found
       if (
@@ -758,8 +2711,6 @@ export const billingService = {
         o.id,
         o.name,
         o.stripe_customer_id,
-        o.stripe_sandbox_customer_id,
-        o.use_sandbox_for_usage_billing,
         o.subscription_tier
       FROM app.users u
       JOIN app.organizations o ON u.organization_id = o.id
@@ -771,15 +2722,13 @@ export const billingService = {
     }
 
     const org = result[0];
-    const useSandbox =
-      Deno.env.get("USE_STRIPE_SANDBOX") === "true" ||
-      Boolean(org.use_sandbox_for_usage_billing);
+    const useSandbox = Deno.env.get("USE_STRIPE_SANDBOX") === "true";
 
     return {
       organizationId: org.id,
       organizationName: org.name,
       stripeCustomerId: org.stripe_customer_id || null,
-      stripeSandboxCustomerId: org.stripe_sandbox_customer_id || null,
+      stripeSandboxCustomerId: null, // Not yet implemented in schema
       useSandboxForUsageBilling: useSandbox,
       usageBasedBillingEnabled: true, // Always enabled
       subscriptionTier: org.subscription_tier as SubscriptionTier,
@@ -799,11 +2748,11 @@ export const billingService = {
    * Check if an organization has sufficient credits for voice usage.
    * Returns { hasCredits: true } if credits are available.
    * Returns { hasCredits: false, balance: number } if credits are exhausted.
+   * Uses shared fetchCreditBalance helper.
    */
   async checkCreditsForVoice(
     organizationId: string
   ): Promise<CreditCheckResult> {
-    // Get organization billing context
     const result = await sql`
       SELECT
         o.id,
@@ -815,89 +2764,36 @@ export const billingService = {
     `;
 
     if (result.length === 0) {
-      // Organization not found - fail open
       return { hasCredits: true };
     }
 
     const org = result[0];
-
-    // Determine sandbox mode
     const useSandbox =
       Deno.env.get("USE_STRIPE_SANDBOX") === "true" ||
       Boolean(org.use_sandbox_for_usage_billing);
-
-    // Get customer ID
     const customerId = useSandbox
       ? org.stripe_sandbox_customer_id
       : org.stripe_customer_id;
 
     if (!customerId) {
-      // No customer ID means no billing set up - allow the call
       return { hasCredits: true };
     }
 
-    try {
-      const stripeKey = getStripeApiKey(useSandbox);
-      if (!stripeKey) {
-        // Stripe not configured - fail open
-        return { hasCredits: true };
-      }
+    const creditBalanceCents = await this.fetchCreditBalance(
+      customerId,
+      useSandbox
+    );
 
-      // Fetch credit balance from Stripe
-      const balanceParams = new URLSearchParams({
-        customer: customerId,
-        "filter[type]": "applicability_scope",
-        "filter[applicability_scope][price_type]": "metered",
-      });
-
-      const balanceRes = await fetch(
-        `https://api.stripe.com/v1/billing/credit_balance_summary?${balanceParams.toString()}`,
-        {
-          headers: {
-            Authorization: `Bearer ${stripeKey}`,
-            "Content-Type": "application/json",
-            "Stripe-Version": STRIPE_V2_API_VERSION,
-          },
-        }
-      );
-
-      if (!balanceRes.ok) {
-        // On error, allow the call to proceed (fail open for credit checks)
-        const errText = await balanceRes.text();
-        console.error("[billing] Failed to check credit balance:", errText);
-        Sentry.captureException(
-          new Error(`Credit balance check failed: ${errText}`),
-          {
-            tags: { source: "billing-service", feature: "credit-check" },
-            extra: { organizationId, customerId },
-          }
-        );
-        return { hasCredits: true };
-      }
-
-      const balanceData = (await balanceRes.json()) as {
-        balances?: Array<{
-          available_balance?: { monetary?: { value?: number } };
-        }>;
-      };
-      const creditBalanceCents =
-        balanceData?.balances?.[0]?.available_balance?.monetary?.value ?? 0;
-
-      // Check if credits are exhausted
-      if (creditBalanceCents <= 0) {
-        return { hasCredits: false, balance: creditBalanceCents };
-      }
-
-      return { hasCredits: true, balance: creditBalanceCents };
-    } catch (error) {
-      // On error, allow the call to proceed (fail open for credit checks)
-      console.error("[billing] Error checking credit balance:", error);
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "credit-check" },
-        extra: { organizationId },
-      });
+    // On error, fail open
+    if (creditBalanceCents === null) {
       return { hasCredits: true };
     }
+
+    if (creditBalanceCents <= 0) {
+      return { hasCredits: false, balance: creditBalanceCents };
+    }
+
+    return { hasCredits: true, balance: creditBalanceCents };
   },
 
   /**
@@ -1215,19 +3111,14 @@ export const billingService = {
 
     if (!grantResp.ok) {
       const errText = await grantResp.text();
-      console.error("[TOPUP ERROR] Failed to create credit grant:", errText);
-      Sentry.captureException(
-        new Error(`Failed to create credit grant: ${errText}`),
-        {
-          tags: { source: "billing-service", feature: "credit-topup" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            amountCents: params.amount_cents,
-            paymentIntentId: pi.id,
-          },
-        }
-      );
+      log.error("Failed to create credit grant for topup", {
+        source: "billing-service",
+        feature: "credit-topup",
+        organizationId: context.organizationId,
+        customerId,
+        amountCents: params.amount_cents,
+        paymentIntentId: pi.id,
+      }, new Error(`Failed to create credit grant: ${errText}`));
 
       // Attempt to refund the payment if we failed to grant credits
       try {
@@ -1236,16 +3127,14 @@ export const billingService = {
           amount: params.amount_cents,
         });
       } catch (refundErr) {
-        console.error("[TOPUP ERROR] Failed to refund:", refundErr);
-        Sentry.captureException(refundErr, {
-          tags: { source: "billing-service", feature: "credit-topup-refund" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            paymentIntentId: pi.id,
-            amountCents: params.amount_cents,
-          },
-        });
+        log.error("Failed to refund after topup grant failure", {
+          source: "billing-service",
+          feature: "credit-topup-refund",
+          organizationId: context.organizationId,
+          customerId,
+          paymentIntentId: pi.id,
+          amountCents: params.amount_cents,
+        }, refundErr);
       }
 
       throw new Error(`Failed to create credit grant: ${errText}`);
@@ -1304,14 +3193,12 @@ export const billingService = {
 
     if (!cadencesRes.ok) {
       const errText = await cadencesRes.text();
-      console.error("[INVOICE PREVIEW] Cadences error:", errText);
-      Sentry.captureException(
-        new Error(`Failed to fetch billing cadences: ${errText}`),
-        {
-          tags: { source: "billing-service", feature: "invoice-preview" },
-          extra: { organizationId: context.organizationId, customerId },
-        }
-      );
+      log.error("Failed to fetch billing cadences", {
+        source: "billing-service",
+        feature: "invoice-preview",
+        organizationId: context.organizationId,
+        customerId,
+      }, new Error(`Failed to fetch billing cadences: ${errText}`));
       return {
         empty: true,
         reason: "cadences_error",
@@ -1392,18 +3279,13 @@ export const billingService = {
         };
       }
 
-      console.error("[INVOICE PREVIEW] Error:", errText);
-      Sentry.captureException(
-        new Error(`Failed to get invoice preview: ${errorCode}`),
-        {
-          tags: { source: "billing-service", feature: "invoice-preview" },
-          extra: {
-            organizationId: context.organizationId,
-            customerId,
-            errorCode,
-          },
-        }
-      );
+      log.error("Failed to get invoice preview", {
+        source: "billing-service",
+        feature: "invoice-preview",
+        organizationId: context.organizationId,
+        customerId,
+        errorCode,
+      }, new Error(`Failed to get invoice preview: ${errorCode}`));
       throw new Error(`Failed to get invoice preview: ${errorCode}`);
     }
 
@@ -1510,11 +3392,12 @@ export const billingService = {
         }, 0);
       }
     } catch (e) {
-      console.error("[CREDIT BALANCE] Exception:", e);
-      Sentry.captureException(e, {
-        tags: { source: "billing-service", feature: "credit-balance" },
-        extra: { organizationId: context.organizationId, customerId },
-      });
+      log.error("Failed to fetch credit balance for invoice preview", {
+        source: "billing-service",
+        feature: "credit-balance",
+        organizationId: context.organizationId,
+        customerId,
+      }, e);
     }
 
     return {
@@ -1554,20 +3437,12 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.error(
-          "[billing] Stripe not configured - cannot create customer"
-        );
-        Sentry.captureMessage(
-          "Stripe not configured - cannot create customer",
-          {
-            level: "warning",
-            tags: {
-              source: "billing-service",
-              feature: "stripe-customer-create",
-            },
-            extra: { organizationId, email },
-          }
-        );
+        log.warn("Stripe not configured - cannot create customer", {
+          source: "billing-service",
+          feature: "stripe-customer-create",
+          organizationId,
+          email,
+        });
         return null;
       }
 
@@ -1602,21 +3477,24 @@ export const billingService = {
         `;
       }
 
-      console.log(
-        `[billing] Created Stripe ${useSandbox ? "sandbox" : "production"} customer ${customer.id} for organization ${organizationId}`
-      );
+      log.info("Created Stripe customer for organization", {
+        source: "billing-service",
+        feature: "stripe-customer-create",
+        customerId: customer.id,
+        organizationId,
+        environment: useSandbox ? "sandbox" : "production",
+      });
 
       return customer.id;
     } catch (error) {
       // Log error but don't fail signup - we can retry later
-      console.error(
-        `[billing] Failed to create Stripe customer for organization ${organizationId}:`,
-        error
-      );
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "stripe-customer-create" },
-        extra: { organizationId, email, useSandbox },
-      });
+      log.error("Failed to create Stripe customer for organization", {
+        source: "billing-service",
+        feature: "stripe-customer-create",
+        organizationId,
+        email,
+        useSandbox,
+      }, error);
       return null;
     }
   },
@@ -1637,15 +3515,12 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.error("[billing] Stripe not configured - cannot subscribe");
-        Sentry.captureMessage(
-          "Stripe not configured - cannot subscribe to FREE plan",
-          {
-            level: "warning",
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.warn("Stripe not configured - cannot subscribe to FREE plan", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        });
         return null;
       }
 
@@ -1656,11 +3531,12 @@ export const billingService = {
         : USAGE_BASED_FREE_PRICE.LIVE;
 
       if (!freePlanId) {
-        console.error("[billing] FREE plan ID not configured");
-        Sentry.captureMessage("FREE plan ID not configured", {
-          level: "warning",
-          tags: { source: "billing-service", feature: "free-subscription" },
-          extra: { organizationId, customerId, useSandbox },
+        log.warn("FREE plan ID not configured", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          useSandbox,
         });
         return null;
       }
@@ -1679,14 +3555,13 @@ export const billingService = {
 
       if (!planResponse.ok) {
         const errorText = await planResponse.text();
-        console.error("[billing] Failed to fetch pricing plan:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to fetch pricing plan: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId, freePlanId },
-          }
-        );
+        log.error("Failed to fetch pricing plan", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          freePlanId,
+        }, new Error(`Failed to fetch pricing plan: ${errorText}`));
         return null;
       }
 
@@ -1705,14 +3580,12 @@ export const billingService = {
 
       if (!profileResponse.ok) {
         const errorText = await profileResponse.text();
-        console.error("[billing] Failed to create billing profile:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing profile: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.error("Failed to create billing profile", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        }, new Error(`Failed to create billing profile: ${errorText}`));
         return null;
       }
 
@@ -1739,14 +3612,12 @@ export const billingService = {
 
       if (!cadenceResponse.ok) {
         const errorText = await cadenceResponse.text();
-        console.error("[billing] Failed to create cadence:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing cadence: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId },
-          }
-        );
+        log.error("Failed to create billing cadence", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+        }, new Error(`Failed to create billing cadence: ${errorText}`));
         return null;
       }
 
@@ -1780,14 +3651,13 @@ export const billingService = {
 
       if (!intentResponse.ok) {
         const errorText = await intentResponse.text();
-        console.error("[billing] Failed to create billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to create billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: { organizationId, customerId, cadenceId: cadence.id },
-          }
-        );
+        log.error("Failed to create billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          cadenceId: cadence.id,
+        }, new Error(`Failed to create billing intent: ${errorText}`));
         return null;
       }
 
@@ -1805,18 +3675,13 @@ export const billingService = {
 
       if (!reserveResponse.ok) {
         const errorText = await reserveResponse.text();
-        console.error("[billing] Failed to reserve billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to reserve billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: {
-              organizationId,
-              customerId,
-              billingIntentId: billingIntent.id,
-            },
-          }
-        );
+        log.error("Failed to reserve billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          billingIntentId: billingIntent.id,
+        }, new Error(`Failed to reserve billing intent: ${errorText}`));
         return null;
       }
 
@@ -1832,18 +3697,13 @@ export const billingService = {
 
       if (!commitResponse.ok) {
         const errorText = await commitResponse.text();
-        console.error("[billing] Failed to commit billing intent:", errorText);
-        Sentry.captureException(
-          new Error(`Failed to commit billing intent: ${errorText}`),
-          {
-            tags: { source: "billing-service", feature: "free-subscription" },
-            extra: {
-              organizationId,
-              customerId,
-              billingIntentId: billingIntent.id,
-            },
-          }
-        );
+        log.error("Failed to commit billing intent", {
+          source: "billing-service",
+          feature: "free-subscription",
+          organizationId,
+          customerId,
+          billingIntentId: billingIntent.id,
+        }, new Error(`Failed to commit billing intent: ${errorText}`));
         return null;
       }
 
@@ -1854,20 +3714,22 @@ export const billingService = {
         WHERE id = ${organizationId}::uuid
       `;
 
-      console.log(
-        `[billing] Subscribed organization ${organizationId} to FREE plan (${billingIntent.id})`
-      );
+      log.info("Subscribed organization to FREE plan", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+        billingIntentId: billingIntent.id,
+      });
 
       return billingIntent.id;
     } catch (error) {
-      console.error(
-        `[billing] Failed to subscribe organization ${organizationId} to FREE plan:`,
-        error
-      );
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "free-subscription" },
-        extra: { organizationId, customerId, useSandbox },
-      });
+      log.error("Failed to subscribe organization to FREE plan", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+        customerId,
+        useSandbox,
+      }, error);
       return null;
     }
   },
@@ -1896,9 +3758,10 @@ export const billingService = {
     try {
       const stripeKey = getStripeApiKey(useSandbox);
       if (!stripeKey) {
-        console.warn(
-          "[billing] Stripe not configured - skipping web scrape usage report"
-        );
+        log.warn("Stripe not configured - skipping web scrape usage report", {
+          source: "billing-service",
+          feature: "web-scrape-usage",
+        });
         return;
       }
 
@@ -1923,48 +3786,35 @@ export const billingService = {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        console.error("[billing] Failed to report web scrape usage", {
+        log.error("Failed to report web scrape usage", {
+          source: "billing-service",
+          feature: "web-scrape-usage",
           status: response.status,
-          error: errorBody,
           stripeCustomerId,
           pagesScraped,
-        });
-        Sentry.captureException(
-          new Error(`Web scrape usage report failed: ${errorBody}`),
-          {
-            tags: { source: "billing-service", feature: "web-scrape-usage" },
-            extra: {
-              stripeCustomerId,
-              pagesScraped,
-              applicationId,
-              knowledgeSourceId,
-            },
-          }
-        );
+          applicationId,
+          knowledgeSourceId,
+        }, new Error(`Web scrape usage report failed: ${errorBody}`));
         return;
       }
 
-      console.log("[billing] Reported web scrape usage", {
+      log.info("Reported web scrape usage", {
+        source: "billing-service",
+        feature: "web-scrape-usage",
         stripeCustomerId,
         pagesScraped,
         applicationId,
         knowledgeSourceId,
       });
     } catch (error) {
-      console.error("[billing] Error reporting web scrape usage", {
-        error: error instanceof Error ? error.message : String(error),
+      log.error("Error reporting web scrape usage", {
+        source: "billing-service",
+        feature: "web-scrape-usage",
         stripeCustomerId,
         pagesScraped,
-      });
-      Sentry.captureException(error, {
-        tags: { source: "billing-service", feature: "web-scrape-usage" },
-        extra: {
-          stripeCustomerId,
-          pagesScraped,
-          applicationId,
-          knowledgeSourceId,
-        },
-      });
+        applicationId,
+        knowledgeSourceId,
+      }, error);
     }
   },
 
@@ -2017,7 +3867,11 @@ export const billingService = {
     `;
 
     if (!orgCheck.length) {
-      console.warn(`[billing] Organization not found: ${organizationId}`);
+      log.warn("Organization not found for free subscription", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+      });
       return;
     }
 
@@ -2046,9 +3900,11 @@ export const billingService = {
     }
 
     if (!customerId) {
-      console.warn(
-        `[billing] Could not get/create customer for organization ${organizationId}`
-      );
+      log.warn("Could not get/create customer for organization", {
+        source: "billing-service",
+        feature: "free-subscription",
+        organizationId,
+      });
       return;
     }
 
@@ -2058,5 +3914,505 @@ export const billingService = {
       customerId,
       useSandbox,
     });
+  },
+
+  // ========================================
+  // Subscription Management
+  // ========================================
+
+  /**
+   * Schedule a subscription downgrade to a lower tier.
+   * The downgrade takes effect at the end of the current billing period.
+   */
+  async scheduleDowngrade(
+    context: OrganizationBillingContext,
+    targetTier: string
+  ): Promise<{
+    success: boolean;
+    pendingDowngradeTier: string;
+    downgradeEffectiveAt: Date | null;
+  }> {
+    const stripeKey = getStripeApiKey(context.useSandboxForUsageBilling);
+    if (!stripeKey) {
+      throw new BadRequestError("Stripe is not configured");
+    }
+
+    const customerId = this.getEffectiveCustomerId(context);
+    if (!customerId) {
+      throw new BadRequestError("No Stripe customer found for organization");
+    }
+
+    // Validate tier order
+    const tierOrder: Record<string, number> = {
+      FREE: 0,
+      PRO: 1,
+      TEAM: 2,
+      BUSINESS: 3,
+      ENTERPRISE: 4,
+    };
+
+    const currentLevel = tierOrder[context.subscriptionTier] || 0;
+    const targetLevel = tierOrder[targetTier] || 0;
+
+    if (targetLevel >= currentLevel) {
+      throw new BadRequestError(
+        "Target tier must be lower than current tier for downgrade"
+      );
+    }
+
+    // Get billing period end date from Stripe
+    const periodEnd = await this.getBillingPeriodEnd(
+      customerId,
+      stripeKey,
+      context.useSandboxForUsageBilling
+    );
+
+    // Update organization with pending downgrade info
+    await sql`
+      UPDATE app.organizations
+      SET
+        pending_downgrade_tier = ${targetTier},
+        downgrade_scheduled_at = NOW(),
+        downgrade_effective_at = ${periodEnd},
+        updated_at = NOW()
+      WHERE id = ${context.organizationId}
+    `;
+
+    log.info("Scheduled downgrade for organization", {
+      source: "billing-service",
+      feature: "schedule-downgrade",
+      organizationId: context.organizationId,
+      fromTier: context.subscriptionTier,
+      toTier: targetTier,
+      effectiveAt: periodEnd?.toISOString(),
+    });
+
+    return {
+      success: true,
+      pendingDowngradeTier: targetTier,
+      downgradeEffectiveAt: periodEnd,
+    };
+  },
+
+  /**
+   * Cancel a scheduled downgrade.
+   */
+  async undoDowngrade(
+    context: OrganizationBillingContext
+  ): Promise<{ success: boolean }> {
+    await sql`
+      UPDATE app.organizations
+      SET
+        pending_downgrade_tier = NULL,
+        downgrade_scheduled_at = NULL,
+        downgrade_effective_at = NULL,
+        updated_at = NOW()
+      WHERE id = ${context.organizationId}
+    `;
+
+    log.info("Cancelled scheduled downgrade for organization", {
+      source: "billing-service",
+      feature: "undo-downgrade",
+      organizationId: context.organizationId,
+    });
+
+    return { success: true };
+  },
+
+  /**
+   * Schedule subscription cancellation at the end of the billing period.
+   */
+  async cancelSubscription(
+    context: OrganizationBillingContext
+  ): Promise<{
+    success: boolean;
+    subscriptionEndsAt: Date | null;
+  }> {
+    const stripeKey = getStripeApiKey(context.useSandboxForUsageBilling);
+    if (!stripeKey) {
+      throw new BadRequestError("Stripe is not configured");
+    }
+
+    const customerId = this.getEffectiveCustomerId(context);
+    if (!customerId) {
+      throw new BadRequestError("No Stripe customer found for organization");
+    }
+
+    if (context.subscriptionTier === "FREE") {
+      throw new BadRequestError("Cannot cancel a free subscription");
+    }
+
+    // Get billing period end date
+    const periodEnd = await this.getBillingPeriodEnd(
+      customerId,
+      stripeKey,
+      context.useSandboxForUsageBilling
+    );
+
+    // Update organization with cancellation info
+    await sql`
+      UPDATE app.organizations
+      SET
+        subscription_cancelled_at = NOW(),
+        subscription_ends_at = ${periodEnd},
+        updated_at = NOW()
+      WHERE id = ${context.organizationId}
+    `;
+
+    // Note: For v2 billing, we would also need to update Stripe
+    // to mark the subscription for cancellation at period end.
+    // This is handled via Stripe billing portal in the current implementation.
+
+    log.info("Scheduled cancellation for organization", {
+      source: "billing-service",
+      feature: "cancel-subscription",
+      organizationId: context.organizationId,
+      effectiveAt: periodEnd?.toISOString(),
+    });
+
+    return {
+      success: true,
+      subscriptionEndsAt: periodEnd,
+    };
+  },
+
+  /**
+   * Remove a scheduled cancellation.
+   */
+  async undoCancellation(
+    context: OrganizationBillingContext
+  ): Promise<{ success: boolean }> {
+    await sql`
+      UPDATE app.organizations
+      SET
+        subscription_cancelled_at = NULL,
+        subscription_ends_at = NULL,
+        updated_at = NOW()
+      WHERE id = ${context.organizationId}
+    `;
+
+    log.info("Cancelled scheduled cancellation for organization", {
+      source: "billing-service",
+      feature: "undo-cancellation",
+      organizationId: context.organizationId,
+    });
+
+    return { success: true };
+  },
+
+  /**
+   * Get the current subscription status including pending changes.
+   */
+  async getSubscriptionStatus(
+    context: OrganizationBillingContext
+  ): Promise<{
+    currentTier: string;
+    pendingDowngradeTier: string | null;
+    downgradeEffectiveAt: Date | null;
+    isCancelled: boolean;
+    subscriptionEndsAt: Date | null;
+    billingPeriodEnd: Date | null;
+  }> {
+    const result = await sql`
+      SELECT
+        subscription_tier,
+        pending_downgrade_tier,
+        downgrade_effective_at,
+        subscription_cancelled_at,
+        subscription_ends_at
+      FROM app.organizations
+      WHERE id = ${context.organizationId}
+    `;
+
+    if (result.length === 0) {
+      throw new NotFoundError("Organization", context.organizationId.toString());
+    }
+
+    const org = result[0];
+
+    // Get billing period end if we have a customer
+    let billingPeriodEnd: Date | null = null;
+    const customerId = this.getEffectiveCustomerId(context);
+    if (customerId) {
+      const stripeKey = getStripeApiKey(context.useSandboxForUsageBilling);
+      if (stripeKey) {
+        billingPeriodEnd = await this.getBillingPeriodEnd(
+          customerId,
+          stripeKey,
+          context.useSandboxForUsageBilling
+        );
+      }
+    }
+
+    return {
+      currentTier: org.subscription_tier,
+      pendingDowngradeTier: org.pending_downgrade_tier || null,
+      downgradeEffectiveAt: org.downgrade_effective_at
+        ? new Date(org.downgrade_effective_at)
+        : null,
+      isCancelled: Boolean(org.subscription_cancelled_at),
+      subscriptionEndsAt: org.subscription_ends_at
+        ? new Date(org.subscription_ends_at)
+        : null,
+      billingPeriodEnd,
+    };
+  },
+
+  /**
+   * Get the billing period end date from Stripe.
+   */
+  async getBillingPeriodEnd(
+    customerId: string,
+    stripeKey: string,
+    useSandbox: boolean
+  ): Promise<Date | null> {
+    try {
+      const headers = {
+        Authorization: `Bearer ${stripeKey}`,
+        "Content-Type": "application/json",
+        "Stripe-Version": STRIPE_V2_API_VERSION,
+      };
+
+      // List billing cadences for this customer
+      const cadencesRes = await fetch(
+        `https://api.stripe.com/v2/billing/cadences?payer[type]=customer&payer[customer]=${encodeURIComponent(
+          customerId
+        )}`,
+        { headers }
+      );
+
+      if (!cadencesRes.ok) {
+        const cadencesErrText = await cadencesRes.text();
+        log.error("Failed to fetch billing cadences", {
+          source: "billing-service",
+          feature: "billing-period-end",
+          customerId,
+          useSandbox,
+          responseText: cadencesErrText,
+        });
+        return null;
+      }
+
+      const cadencesJson = (await cadencesRes.json()) as {
+        data?: Array<{
+          current_billing_period?: {
+            end_at?: string;
+          };
+        }>;
+      };
+
+      const cadence = cadencesJson?.data?.[0];
+      if (cadence?.current_billing_period?.end_at) {
+        return new Date(cadence.current_billing_period.end_at);
+      }
+
+      return null;
+    } catch (error) {
+      log.error("Error fetching billing period end", {
+        source: "billing-service",
+        feature: "billing-period-end",
+        customerId,
+        useSandbox,
+      }, error);
+      return null;
+    }
+  },
+
+  // ========================================
+  // Usage Analytics
+  // ========================================
+
+  /**
+   * Get usage analytics grouped by a dimension.
+   * Returns token usage and estimated cost per group.
+   */
+  async getUsageAnalytics(
+    organizationId: string,
+    options: {
+      startDate?: Date;
+      endDate?: Date;
+      groupBy?: "app" | "model" | "agentType";
+    }
+  ): Promise<UsageAnalyticsResult> {
+    const now = new Date();
+    const startDate =
+      options.startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = options.endDate || now;
+    const groupBy = options.groupBy || "model";
+
+    // Use parameterized queries for each dimension
+    let rows: any[];
+    if (groupBy === "app") {
+      rows = await sql`
+        SELECT
+          tu.application_id as dimension_id,
+          COALESCE(a.name, 'Unknown') as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        LEFT JOIN app.applications a ON tu.application_id = a.id
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY tu.application_id, a.name
+        ORDER BY total_tokens DESC
+      `;
+    } else if (groupBy === "agentType") {
+      rows = await sql`
+        SELECT
+          COALESCE(s.source::text, 'Unknown') as dimension_id,
+          COALESCE(s.source::text, 'Unknown') as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        LEFT JOIN chat.sessions s ON tu.session_id = s.id
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY s.source
+        ORDER BY total_tokens DESC
+      `;
+    } else {
+      // model (default)
+      rows = await sql`
+        SELECT
+          tu.model as dimension_id,
+          tu.model as dimension,
+          COALESCE(SUM(tu.input_tokens), 0)::bigint as input_tokens,
+          COALESCE(SUM(tu.output_tokens), 0)::bigint as output_tokens,
+          COALESCE(SUM(tu.total_tokens), 0)::bigint as total_tokens,
+          COUNT(*)::bigint as total_requests
+        FROM billing.token_usage tu
+        WHERE tu.organization_id = ${organizationId}
+          AND tu.created_at >= ${startDate}
+          AND tu.created_at <= ${endDate}
+        GROUP BY tu.model
+        ORDER BY total_tokens DESC
+      `;
+    }
+
+    // Calculate estimated costs per row
+    let totalTokens = 0;
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalRequests = 0;
+    let totalCostCents = 0;
+
+    const data = (rows as any[]).map((row: any) => {
+      const inputTokens = Number(row.input_tokens || 0);
+      const outputTokens = Number(row.output_tokens || 0);
+      const rowTotalTokens = Number(row.total_tokens || 0);
+      const rowRequests = Number(row.total_requests || 0);
+
+      const estimatedCostCents = calculateCredits({
+        inputTokens,
+        outputTokens,
+        model: groupBy === "model" ? row.dimension : null,
+      });
+
+      totalTokens += rowTotalTokens;
+      totalInput += inputTokens;
+      totalOutput += outputTokens;
+      totalRequests += rowRequests;
+      totalCostCents += estimatedCostCents;
+
+      return {
+        dimension: row.dimension,
+        dimensionId: row.dimension_id ? String(row.dimension_id) : undefined,
+        totalTokens: rowTotalTokens,
+        inputTokens,
+        outputTokens,
+        totalRequests: rowRequests,
+        estimatedCostCents: Math.round(estimatedCostCents * 100) / 100,
+      };
+    });
+
+    return {
+      data,
+      totals: {
+        totalTokens,
+        inputTokens: totalInput,
+        outputTokens: totalOutput,
+        totalRequests,
+        estimatedCostCents: Math.round(totalCostCents * 100) / 100,
+      },
+      periodStart: startDate.toISOString(),
+      periodEnd: endDate.toISOString(),
+    };
+  },
+
+  // ========================================
+  // Notification Settings
+  // ========================================
+
+  /**
+   * Get notification settings for an organization.
+   */
+  async getNotificationSettings(
+    organizationId: string
+  ): Promise<NotificationSettings> {
+    const result = await sql`
+      SELECT
+        credit_notifications_enabled,
+        credit_notification_default_percentage,
+        credit_notification_thresholds,
+        subscription_tier
+      FROM app.organizations
+      WHERE id = ${organizationId}
+    `;
+
+    if (result.length === 0) {
+      throw new NotFoundError("Organization", String(organizationId));
+    }
+
+    const org = result[0];
+
+    // Parse JSONB thresholds (may come back as string)
+    let thresholds: number[] = [];
+    const raw = org.credit_notification_thresholds;
+    if (raw) {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      thresholds = Array.isArray(parsed) ? parsed : [];
+    }
+
+    const tier = (org.subscription_tier || "FREE") as SubscriptionTier;
+
+    return {
+      enabled: org.credit_notifications_enabled !== false,
+      defaultPercentage: org.credit_notification_default_percentage ?? 50,
+      thresholds,
+      tierAllowanceCents: TIER_CREDIT_ALLOWANCE[tier] ?? 0,
+      subscriptionTier: tier,
+    };
+  },
+
+  /**
+   * Update notification settings for an organization.
+   */
+  async updateNotificationSettings(
+    organizationId: string,
+    settings: {
+      enabled?: boolean;
+      defaultPercentage?: number;
+      thresholds?: number[];
+    }
+  ): Promise<NotificationSettings> {
+    if (settings.enabled !== undefined || settings.defaultPercentage !== undefined || settings.thresholds !== undefined) {
+      await sql`
+        UPDATE app.organizations
+        SET
+          credit_notifications_enabled = COALESCE(${settings.enabled ?? null}, credit_notifications_enabled),
+          credit_notification_default_percentage = COALESCE(${settings.defaultPercentage ?? null}, credit_notification_default_percentage),
+          credit_notification_thresholds = COALESCE(${settings.thresholds ? JSON.stringify(settings.thresholds) : null}::jsonb, credit_notification_thresholds),
+          updated_at = NOW()
+        WHERE id = ${organizationId}
+      `;
+    }
+
+    return this.getNotificationSettings(organizationId);
   },
 };

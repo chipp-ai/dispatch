@@ -5,6 +5,7 @@
  * ~100 LOC as per migration plan.
  */
 
+import { log } from "@/lib/logger.ts";
 import type {
   ContentPart,
   LLMProvider,
@@ -52,7 +53,7 @@ export async function* agentLoop(
   while (iteration < maxIterations) {
     // Check if aborted before starting iteration
     if (options.abortSignal?.aborted) {
-      console.log("[agent] Aborted before iteration", iteration);
+      log.debug("Aborted before iteration", { source: "agent", feature: "loop", iteration });
       return;
     }
 
@@ -71,7 +72,7 @@ export async function* agentLoop(
     )) {
       // Check if aborted during streaming
       if (options.abortSignal?.aborted) {
-        console.log("[agent] Aborted during streaming");
+        log.debug("Aborted during streaming", { source: "agent", feature: "loop" });
         return;
       }
 
@@ -127,14 +128,11 @@ export async function* agentLoop(
       for (const call of pendingToolCalls) {
         // Check if aborted before tool execution
         if (options.abortSignal?.aborted) {
-          console.log("[agent] Aborted before tool execution");
+          log.debug("Aborted before tool execution", { source: "agent", feature: "loop" });
           return;
         }
 
-        console.log(
-          `[agent] Executing tool: ${call.name}`,
-          JSON.stringify(call.arguments).substring(0, 200)
-        );
+        log.info("Executing tool", { source: "agent", feature: "loop", toolName: call.name, arguments: JSON.stringify(call.arguments).substring(0, 200) });
         // Notify tool start
         options.onToolStart?.(call);
 
@@ -187,7 +185,7 @@ export async function* agentLoop(
 
   // Warn if we hit max iterations
   if (iteration >= maxIterations) {
-    console.warn(`Agent loop hit max iterations (${maxIterations})`);
+    log.warn("Agent loop hit max iterations", { source: "agent", feature: "loop", maxIterations });
   }
 }
 

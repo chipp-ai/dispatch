@@ -9,6 +9,7 @@
  * - Map stop_reason to unified finish reason
  */
 
+import { log } from "@/lib/logger.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   UnifiedResponse,
@@ -255,9 +256,11 @@ export class AnthropicStreamTracker {
           },
         };
       } catch {
-        console.warn(
-          `[anthropic-stream] Failed to parse tool call arguments for ${toolCall.name}`
-        );
+        log.warn("Failed to parse tool call arguments", {
+          source: "llm",
+          feature: "anthropic-stream",
+          toolName: toolCall.name,
+        });
       }
     }
     return {};

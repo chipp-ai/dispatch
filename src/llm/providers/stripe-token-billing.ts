@@ -29,7 +29,7 @@ import {
   BYOK_SUPPORTED_PROVIDERS,
   type ByokProviderName,
 } from "./stripe-model-mapping.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { GoogleProvider } from "./google.ts";
 
 // Stripe Token Billing configuration
@@ -200,9 +200,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
       (this.hasVideoContent(messages) || this.hasAudioContent(messages)) &&
       model.startsWith("gemini")
     ) {
-      console.log(
-        "[stripe-token-billing] Bypassing Stripe proxy for Gemini media request (direct Google API)"
-      );
+      log.info("Bypassing Stripe proxy for Gemini media request (direct Google API)", { source: "llm", feature: "token-billing", model });
       const googleProvider = new GoogleProvider();
       yield* googleProvider.stream(messages, tools, options);
       return;
@@ -262,14 +260,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
       requestPayload.stripe = { provider: byokProvider };
     }
 
-    console.log("[stripe-token-billing] Request", {
-      model: mappedModel,
-      originalModel: model,
-      customerId,
-      messageCount: allMessages.length,
-      byokEnabled: !!byokProvider,
-      byokProvider: byokProvider?.name,
-    });
+    log.info("Request", { source: "llm", feature: "token-billing", model: mappedModel, originalModel: model, customerId, messageCount: allMessages.length, byokEnabled: !!byokProvider, byokProvider: byokProvider?.name });
 
     // Cast through unknown since we're adding Stripe-specific extension properties
     // that aren't in the OpenAI SDK types
@@ -292,11 +283,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
       // Tool calls
       if (delta?.tool_calls?.[0]) {
         const tc = delta.tool_calls[0];
-        console.log("[stripe-token-billing] Tool call chunk", {
-          tcId: tc.id,
-          tcIndex: tc.index,
-          tcFunction: tc.function,
-        });
+        log.debug("Tool call chunk", { source: "llm", feature: "token-billing", tcId: tc.id, tcIndex: tc.index, tcFunction: tc.function });
 
         // Check if this is a new tool call (has ID or name for the first time)
         const isNewToolCall = tc.id || (tc.function?.name && !currentToolCall);
@@ -321,9 +308,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
                 },
               };
             } catch (parseError) {
-              console.error(
-                "[stripe-token-billing] Failed to parse tool call arguments"
-              );
+              log.error("Failed to parse tool call arguments", { source: "llm", feature: "token-billing", operation: "tool-call-parse", model: mappedModel, customerId }, parseError);
               // Still emit the tool call with empty args
               yield {
                 type: "tool_call",
@@ -366,11 +351,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
       if (finishReason) {
         // Complete final tool call if exists
         if (currentToolCall?.id) {
-          console.log("[stripe-token-billing] Final tool call", {
-            id: currentToolCall.id,
-            name: currentToolCall.name,
-            rawArguments: currentToolCall.rawArguments,
-          });
+          log.debug("Final tool call", { source: "llm", feature: "token-billing", id: currentToolCall.id, name: currentToolCall.name, rawArguments: currentToolCall.rawArguments });
           try {
             // Handle empty arguments (tools with no params)
             const rawArgs = currentToolCall.rawArguments?.trim() || "{}";
@@ -384,13 +365,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
               },
             };
           } catch (parseError) {
-            console.error(
-              "[stripe-token-billing] Failed to parse final tool call arguments",
-              {
-                rawArguments: currentToolCall.rawArguments,
-                error: parseError,
-              }
-            );
+            log.error("Failed to parse final tool call arguments", { source: "llm", feature: "token-billing", operation: "final-tool-call-parse", model: mappedModel, customerId, rawArguments: currentToolCall.rawArguments }, parseError);
             // Still emit the tool call with empty args rather than failing
             yield {
               type: "tool_call",
@@ -597,8 +572,9 @@ export class StripeTokenBillingProvider implements LLMProvider {
       requestPayload.stripe = { provider: byokProvider };
     }
 
-    // Debug: log what we're actually sending
-    console.log("[stripe-token-billing] Responses API Request", {
+    log.info("Responses API Request", {
+      source: "llm",
+      feature: "token-billing",
       model,
       customerId,
       inputCount: Array.isArray(input) ? input.length : 0,
@@ -607,7 +583,6 @@ export class StripeTokenBillingProvider implements LLMProvider {
       functionCallCount,
       byokEnabled: !!byokProvider,
       byokProvider: byokProvider?.name,
-      // Debug: show structure of input messages
       inputStructure: Array.isArray(input)
         ? input.map((item: any) => ({
             type: item.type || item.role,
@@ -728,9 +703,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
                 if (data.item?.type === "function_call") {
                   const callId =
                     data.item.call_id || data.item.id || crypto.randomUUID();
-                  console.log(
-                    `[stripe-token-billing] output_item.added: call_id=${data.item.call_id}, id=${data.item.id}, name=${data.item.name}, output_index=${data.output_index}`
-                  );
+                  log.debug("output_item.added", { source: "llm", feature: "token-billing", callId: data.item.call_id, itemId: data.item.id, name: data.item.name, outputIndex: data.output_index });
                   toolCallDeltas.set(data.output_index ?? 0, {
                     id: callId,
                     name: data.item.name || "",
@@ -743,9 +716,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
                 // Tool call complete
                 if (data.output_index !== undefined) {
                   const tc = toolCallDeltas.get(data.output_index);
-                  console.log(
-                    `[stripe-token-billing] function_call_arguments.done: output_index=${data.output_index}, tc=${JSON.stringify(tc)}`
-                  );
+                  log.debug("function_call_arguments.done", { source: "llm", feature: "token-billing", outputIndex: data.output_index, tc });
                   if (tc && tc.name) {
                     const toolCall: ToolCall = {
                       id: tc.id,
@@ -753,14 +724,10 @@ export class StripeTokenBillingProvider implements LLMProvider {
                       arguments: tc.arguments ? JSON.parse(tc.arguments) : {},
                     };
                     toolCalls.push(toolCall);
-                    console.log(
-                      `[stripe-token-billing] Yielding tool_call: id=${toolCall.id}, name=${toolCall.name}`
-                    );
+                    log.debug("Yielding tool_call", { source: "llm", feature: "token-billing", toolCallId: toolCall.id, toolName: toolCall.name });
                     yield { type: "tool_call", call: toolCall };
                   } else {
-                    console.warn(
-                      `[stripe-token-billing] Skipping tool_call - tc=${!!tc}, name=${tc?.name}`
-                    );
+                    log.warn("Skipping tool_call - missing name", { source: "llm", feature: "token-billing", hasTc: !!tc, name: tc?.name });
                   }
                 }
                 break;
@@ -803,10 +770,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
             }
           } catch (parseError) {
             // Skip malformed JSON events
-            console.warn(
-              "[stripe-token-billing] Failed to parse SSE event:",
-              eventData.slice(0, 100)
-            );
+            log.debug("Failed to parse SSE event", { source: "llm", feature: "token-billing", eventData: eventData.slice(0, 100) });
           }
         }
       }
@@ -854,9 +818,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
       if (msg.role === "tool") {
         // Skip tool results without a call_id
         if (!msg.toolCallId) {
-          console.warn(
-            "[stripe-token-billing] formatMessagesForResponsesApi: Skipping tool result without toolCallId"
-          );
+          log.debug("formatMessagesForResponsesApi: Skipping tool result without toolCallId", { source: "llm", feature: "token-billing" });
           continue;
         }
         result.push({
@@ -895,9 +857,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
             };
             // Skip if no name (invalid tool_use)
             if (!tu.name) {
-              console.warn(
-                "[stripe-token-billing] formatMessages: Skipping tool_use without name"
-              );
+              log.debug("formatMessages: Skipping tool_use without name", { source: "llm", feature: "token-billing" });
               continue;
             }
             // Responses API requires call_id - generate one if missing
@@ -994,20 +954,12 @@ export class StripeTokenBillingProvider implements LLMProvider {
   private formatMessages(
     messages: Message[]
   ): OpenAI.Chat.ChatCompletionMessageParam[] {
-    console.log(
-      `[stripe-token-billing] formatMessages: Input ${messages.length} messages`
-    );
-    const toolMsgs = messages.filter((m) => m.role === "tool");
-    console.log(
-      `[stripe-token-billing] formatMessages: ${toolMsgs.length} tool messages total`
-    );
+    log.debug("formatMessages", { source: "llm", feature: "token-billing", messageCount: messages.length, toolMessageCount: messages.filter((m) => m.role === "tool").length });
     return messages
       .filter((m) => {
         // Skip tool messages without toolCallId - they can't be matched to tool calls
         if (m.role === "tool" && !m.toolCallId) {
-          console.warn(
-            "[stripe-token-billing] formatMessages: Skipping tool message without toolCallId"
-          );
+          log.debug("formatMessages: Skipping tool message without toolCallId", { source: "llm", feature: "token-billing" });
           return false;
         }
         return true;
@@ -1135,7 +1087,7 @@ export class StripeTokenBillingProvider implements LLMProvider {
           content: m.content,
         };
       })
-      .filter((m): m is NonNullable<typeof m> => m !== null);
+      .filter((m): m is NonNullable<typeof m> => m !== null) as unknown as OpenAI.Chat.ChatCompletionMessageParam[];
   }
 
   private formatTools(tools: Tool[]): OpenAI.Chat.ChatCompletionTool[] {

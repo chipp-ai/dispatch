@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import { db } from "../../../db/index.ts";
 import { type AppOnlyContext } from "../../middleware/consumerAuth.ts";
 
@@ -76,9 +76,7 @@ consumerFormsRoutes.post(
 
       const submissionId = Number(result.insertId);
 
-      console.log(
-        `[consumer-forms] Form submission created: ${submissionId} for form ${formIdNum}`
-      );
+      log.info("Form submission created", { source: "consumer-forms", feature: "form-submission", submissionId, formId: formIdNum });
 
       return c.json({
         message: "Form submission created successfully",
@@ -90,11 +88,7 @@ consumerFormsRoutes.post(
         },
       });
     } catch (error) {
-      console.error("[consumer-forms] Error creating form submission:", error);
-      Sentry.captureException(error, {
-        tags: { source: "consumer-forms-api", feature: "form-submission" },
-        extra: { formId, appId: app.id, chatSessionId: body.chatSessionId },
-      });
+      log.error("Error creating form submission", { source: "consumer-forms", feature: "form-submission", formId, appId: app.id, chatSessionId: body.chatSessionId }, error);
       return c.json({ error: "Error creating form submission" }, 500);
     }
   }

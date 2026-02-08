@@ -13,7 +13,7 @@ import {
   formatEmbeddingForPg,
   padEmbedding,
 } from "./local-embeddings.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 const RELEVANCE_THRESHOLD = 0.15;
 const MAX_CHUNKS = 5;
@@ -98,11 +98,11 @@ export async function getRelevantChunks(
 
     return relevantChunks;
   } catch (error) {
-    console.error("[rag] Error retrieving relevant chunks:", error);
-    Sentry.captureException(error, {
-      tags: { source: "rag-service", feature: "get-relevant-chunks" },
-      extra: { applicationId },
-    });
+    log.error("Error retrieving relevant chunks", {
+      source: "rag-service",
+      feature: "get-relevant-chunks",
+      applicationId,
+    }, error);
     return [];
   }
 }

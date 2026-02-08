@@ -9,6 +9,7 @@ import { db } from "../db/client.ts";
 import { NotFoundError, ForbiddenError } from "../utils/errors.ts";
 import { organizationService } from "./organization.service.ts";
 import type { WhitelabelTenant as WhitelabelTenantRow } from "../db/schema.ts";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -264,7 +265,78 @@ export const whitelabelService = {
       .where("id", "=", tenantId)
       .executeTakeFirstOrThrow();
 
-    return this.mapTenant(tenant);
+    const mappedTenant = this.mapTenant(tenant);
+
+    // Sync to edge: update KV cache and domain brandStyles if custom domain exists
+    if (mappedTenant.customDomain) {
+      try {
+        const { domainService } = await import("./domain.service.ts");
+
+        // Update the brandStyles cache on the custom_domains row
+        await domainService.updateBrandStyles(mappedTenant.customDomain, {
+          primaryColor: mappedTenant.primaryColor ?? undefined,
+          logoUrl: mappedTenant.logoUrl ?? undefined,
+          faviconUrl: mappedTenant.faviconUrl ?? undefined,
+          companyName: mappedTenant.name,
+        });
+
+        // KV is updated inside updateBrandStyles via updateKvMapping
+      } catch (error) {
+        // Non-critical: edge sync can fail without breaking the save
+        log.warn("Edge sync failed", {
+          source: "whitelabel-service",
+          feature: "edge-sync",
+          tenantId,
+          customDomain: mappedTenant.customDomain,
+        });
+      }
+    }
+
+    return mappedTenant;
+  },
+
+  /**
+   * Set or clear the custom domain on a whitelabel tenant.
+   * Keeps whitelabel_tenants.customDomain in sync with custom_domains table.
+   */
+  async setCustomDomain(
+    tenantId: string,
+    hostname: string | null
+  ): Promise<void> {
+    await db
+      .updateTable("app.whitelabel_tenants")
+      .set({
+        customDomain: hostname,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", tenantId)
+      .execute();
+  },
+
+  /**
+   * Get a whitelabel tenant by ID (for public config endpoint)
+   */
+  async getById(tenantId: string): Promise<WhitelabelTenant | null> {
+    const tenant = await db
+      .selectFrom("app.whitelabel_tenants")
+      .select([
+        "id",
+        "slug",
+        "name",
+        "customDomain",
+        "primaryColor",
+        "secondaryColor",
+        "logoUrl",
+        "faviconUrl",
+        "features",
+        "organizationId",
+        "createdAt",
+        "updatedAt",
+      ])
+      .where("id", "=", tenantId)
+      .executeTakeFirst();
+
+    return tenant ? this.mapTenant(tenant) : null;
   },
 
   /**

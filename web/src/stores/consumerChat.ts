@@ -19,6 +19,9 @@ import type {
   SSEEvent,
   StagedFile,
 } from "$lib/design-system/components/chat/types";
+import { modelOverride } from "./modelOverride";
+import { getAnonymousToken } from "./consumerWebSocket";
+import { captureException } from "$lib/sentry";
 
 // Re-export StagedFile so existing imports from this module continue to work
 export type { StagedFile } from "$lib/design-system/components/chat/types";
@@ -72,6 +75,10 @@ interface ConsumerChatState {
   disclaimerText: string | null;
   inputPlaceholder: string | null;
   customInstructions: string | null;
+
+  // Human takeover state
+  isHumanTakeover: boolean;
+  takeoverOperatorName: string | null;
 }
 
 const initialState: ConsumerChatState = {
@@ -94,6 +101,8 @@ const initialState: ConsumerChatState = {
   disclaimerText: null,
   inputPlaceholder: null,
   customInstructions: null,
+  isHumanTakeover: false,
+  takeoverOperatorName: null,
 };
 
 // Abort controller for canceling streams
@@ -575,11 +584,16 @@ function createConsumerChatStore() {
       abortController = new AbortController();
 
       try {
+        const anonToken = getAnonymousToken();
         const response = await fetch(
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+              ...(anonToken && { "X-Anonymous-Token": anonToken }),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({
@@ -1027,11 +1041,16 @@ function createConsumerChatStore() {
       abortController = new AbortController();
 
       try {
+        const anonTokenAudio = getAnonymousToken();
         const response = await fetch(
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+              ...(anonTokenAudio && { "X-Anonymous-Token": anonTokenAudio }),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({
@@ -1184,7 +1203,7 @@ function createConsumerChatStore() {
         } else {
           const errorMsg =
             e instanceof Error ? e.message : "Failed to send audio message";
-          console.error("[consumerChat] Audio message error:", e);
+          captureException(e, { tags: { source: "consumer-chat-store" }, extra: { action: "sendAudioMessage", errorMsg } });
           update((s) => ({ ...s, error: errorMsg, lastError: errorMsg }));
           this.setMessageError(assistantId, errorMsg);
         }
@@ -1259,11 +1278,16 @@ function createConsumerChatStore() {
       abortController = new AbortController();
 
       try {
+        const anonTokenVideo = getAnonymousToken();
         const response = await fetch(
           `/consumer/${state.currentAppNameId}/chat/stream`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...modelOverride.getHeader(),
+              ...(anonTokenVideo && { "X-Anonymous-Token": anonTokenVideo }),
+            },
             credentials: "include",
             signal: abortController.signal,
             body: JSON.stringify({
@@ -1372,7 +1396,7 @@ function createConsumerChatStore() {
         } else {
           const errorMsg =
             e instanceof Error ? e.message : "Failed to send video message";
-          console.error("[consumerChat] Video message error:", e);
+          captureException(e, { tags: { source: "consumer-chat-store" }, extra: { action: "sendVideoMessage", errorMsg } });
           update((s) => ({ ...s, error: errorMsg, lastError: errorMsg }));
           this.setMessageError(assistantId, errorMsg);
         }
@@ -1669,6 +1693,111 @@ function createConsumerChatStore() {
       }));
     },
 
+    // ============ Takeover Helpers ============
+
+    /**
+     * Handle takeover:entered event from builder
+     */
+    handleTakeoverEntered(operatorName: string): void {
+      update((s) => ({
+        ...s,
+        isHumanTakeover: true,
+        takeoverOperatorName: operatorName,
+        messages: [
+          ...s.messages,
+          {
+            id: `system-${Date.now()}`,
+            role: "system" as const,
+            content: `**${operatorName} has entered the chat**`,
+          },
+        ],
+      }));
+    },
+
+    /**
+     * Handle takeover:left event from builder
+     */
+    handleTakeoverLeft(operatorName: string): void {
+      update((s) => ({
+        ...s,
+        isHumanTakeover: false,
+        takeoverOperatorName: null,
+        messages: [
+          ...s.messages,
+          {
+            id: `system-${Date.now()}`,
+            role: "system" as const,
+            content: `**${operatorName} has left the chat. AI has resumed.**`,
+          },
+        ],
+      }));
+    },
+
+    /**
+     * Handle takeover:message event from builder (human support message)
+     */
+    handleTakeoverMessage(
+      content: string,
+      operatorName: string,
+      messageId: string
+    ): void {
+      update((s) => ({
+        ...s,
+        messages: [
+          ...s.messages,
+          {
+            id: messageId,
+            role: "assistant" as const,
+            content,
+            operatorName,
+          },
+        ],
+      }));
+    },
+
+    // ============ Multiplayer Helpers ============
+
+    /**
+     * Add an external message (from another participant via WebSocket).
+     * Used by the multiplayer store to inject messages without triggering SSE.
+     */
+    addExternalMessage(msg: ChatMessage): void {
+      update((s) => ({
+        ...s,
+        messages: [...s.messages, msg],
+      }));
+    },
+
+    /**
+     * Add an empty observer assistant message (for WS AI chunk assembly).
+     */
+    addObserverMessage(assistantId: string): void {
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        parts: [],
+      };
+      update((s) => ({
+        ...s,
+        messages: [...s.messages, assistantMsg],
+        responseGenerating: true,
+        isStreaming: true,
+      }));
+    },
+
+    /**
+     * Load messages for a multiplayer session (called after join).
+     */
+    loadMultiplayerMessages(sessionId: string, messages: ChatMessage[]): void {
+      update((s) => ({
+        ...s,
+        sessionId,
+        messages,
+        error: null,
+      }));
+    },
+
     /**
      * Reset entire store
      */
@@ -1763,4 +1892,14 @@ export const inputPlaceholder = derived(
 export const customInstructions = derived(
   consumerChat,
   ($store) => $store.customInstructions
+);
+
+export const isHumanTakeover = derived(
+  consumerChat,
+  ($store) => $store.isHumanTakeover
+);
+
+export const takeoverOperatorName = derived(
+  consumerChat,
+  ($store) => $store.takeoverOperatorName
 );

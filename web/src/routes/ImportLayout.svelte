@@ -1,5 +1,6 @@
 <script lang="ts">
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import { Card, ChippLogo } from "$lib/design-system";
 
   // Eagerly import all content components to prevent flash
@@ -58,21 +59,21 @@
         credentials: "include",
       });
     } catch (err) {
-      console.error("[import] Error marking no-data skip:", err);
+      captureException(err, { tags: { page: "import", feature: "no-data-skip" } });
     }
     push("/onboarding");
   }
 
   async function handleCheckError(event: CustomEvent<{ message: string }>) {
     // On error checking, mark as skipped and continue to onboarding
-    console.error("[import] Check error:", event.detail.message);
+    captureException(new Error(event.detail.message), { tags: { page: "import", feature: "check-error" } });
     try {
       await fetch("/api/import/skip", {
         method: "POST",
         credentials: "include",
       });
     } catch (err) {
-      console.error("[import] Error marking error-skip:", err);
+      captureException(err, { tags: { page: "import", feature: "error-skip" } });
     }
     push("/onboarding");
   }
@@ -99,7 +100,7 @@
       const { data } = await res.json();
       push(`/import/progress/${data.importSessionId}`);
     } catch (err) {
-      console.error("[import] Start error:", err);
+      captureException(err, { tags: { page: "import", feature: "start-import" } });
       // On error, continue to onboarding
       push("/onboarding");
     }
@@ -113,7 +114,7 @@
         credentials: "include",
       });
     } catch (err) {
-      console.error("[import] Error marking skip:", err);
+      captureException(err, { tags: { page: "import", feature: "skip-import" } });
     }
     push("/onboarding");
   }
@@ -124,7 +125,7 @@
   }
 
   function handleImportError(event: CustomEvent<{ message: string }>) {
-    console.error("[import] Import error:", event.detail.message);
+    captureException(new Error(event.detail.message), { tags: { page: "import", feature: "import-error" } });
     // On error, continue to onboarding
     push("/onboarding");
   }

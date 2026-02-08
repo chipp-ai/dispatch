@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, toasts, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace, workspaceStore, fetchWorkspaces } from "../../../stores/workspace";
   import { user } from "../../../stores/auth";
   import { Trash2, LogOut } from "lucide-svelte";
@@ -81,7 +82,10 @@
       website = "";
       about = "";
     } catch (error) {
-      console.error("Failed to load workspace data:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace" },
+        extra: { action: "loadWorkspaceData", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", "Failed to load workspace data");
     } finally {
       isLoading = false;
@@ -139,7 +143,10 @@
 
       toasts.success("Success", "Workspace updated successfully");
     } catch (error) {
-      console.error("Failed to update workspace:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace" },
+        extra: { action: "handleSubmit", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", "Failed to update workspace");
     } finally {
       isSaving = false;
@@ -184,7 +191,10 @@
       await fetchWorkspaces();
       push("/dashboard");
     } catch (error) {
-      console.error("Failed to leave workspace:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace" },
+        extra: { action: "handleLeaveWorkspace", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", error instanceof Error ? error.message : "Failed to leave workspace");
     }
   }
@@ -207,7 +217,10 @@
       await fetchWorkspaces();
       push("/dashboard");
     } catch (error) {
-      console.error("Failed to delete workspace:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace" },
+        extra: { action: "handleDeleteWorkspace", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", "Failed to delete workspace");
     }
   }
@@ -232,7 +245,10 @@
       toasts.success("Success", "Ownership transferred successfully");
       await loadWorkspaceData();
     } catch (error) {
-      console.error("Failed to transfer ownership:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace" },
+        extra: { action: "handleTransferOwnership", newOwnerId: selectedNewOwner?.userId },
+      });
       toasts.error("Error", "Failed to transfer ownership");
     }
   }

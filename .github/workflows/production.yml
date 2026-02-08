@@ -24,7 +24,7 @@ jobs:
       contents: "read"
       id-token: "write"
 
-    runs-on: chipp-beefy
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,13 +59,17 @@ jobs:
             --description="Chipp Deno API Docker images"
 
       - name: Build and Push Container
+        env:
+          GIT_SHA: ${{ github.sha }}
         run: |-
+          IMAGE_BASE="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}"
           docker build \
-            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}" \
-            -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production" \
+            --build-arg GIT_SHA="${GIT_SHA}" \
+            -t "${IMAGE_BASE}:prod-${GIT_SHA}" \
+            -t "${IMAGE_BASE}:production" \
             .
-          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}"
-          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:production"
+          docker push "${IMAGE_BASE}:prod-${GIT_SHA}"
+          docker push "${IMAGE_BASE}:production"
 
       - name: Deploy Secrets
         env:
@@ -90,11 +94,37 @@ jobs:
 
       - name: Apply K8s manifests
         run: |
-          kubectl apply -f charts/
+          kubectl apply -f charts/deployment.yaml
+          kubectl apply -f charts/service.yaml
+
+      - name: Run Database Migrations
+        env:
+          GIT_SHA: ${{ github.sha }}
+          DEPLOY_IMAGE: "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}"
+        run: |
+          # Delete any previous migration job (may exist from failed deploy)
+          kubectl delete job chipp-deno-migrate --ignore-not-found=true
+
+          # Render the migration job manifest with the current image
+          sed "s|IMAGE_PLACEHOLDER|${DEPLOY_IMAGE}|" charts/migration-job.yaml | kubectl apply -f -
+
+          # Wait for the migration job to complete (2 min timeout)
+          # On failure, print logs before exiting so the error is visible in CI
+          echo "Waiting for migrations to complete..."
+          if ! kubectl wait --for=condition=complete job/chipp-deno-migrate --timeout=120s; then
+            echo "Migration failed! Logs:"
+            kubectl logs job/chipp-deno-migrate
+            exit 1
+          fi
+
+          # Print migration logs on success too
+          kubectl logs job/chipp-deno-migrate
 
       - name: Deploy
+        env:
+          GIT_SHA: ${{ github.sha }}
         run: |-
-          kubectl set image deployment/chipp-deno chipp-deno=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${{ github.sha }}
+          kubectl set image deployment/chipp-deno chipp-deno="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.REPO }}:prod-${GIT_SHA}"
           kubectl rollout status deployment/chipp-deno
           kubectl get services -o wide
 
@@ -110,6 +140,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          cache-dependency-path: web/package-lock.json
 
       - name: Build Svelte SPA
         run: |
@@ -122,25 +153,25 @@ jobs:
           echo "Built index.html references:"
           grep -oE 'index-[A-Za-z0-9_-]+\.js' dist/index.html
 
-      - name: Deploy SPA to R2 and Worker
+      - name: Deploy SPA to R2 (incremental)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           cd cloudflare-worker
           npm ci
 
-          # Upload SPA assets to R2 (run wrangler from cloudflare-worker dir)
-          for file in $(find ../web/dist -type f); do
-            key="${file#../web/dist/}"
-            echo "Uploading: $key"
-            npx wrangler r2 object put "chipp-deno-spa/$key" --file "$file"
-          done
+          # Incremental upload: only uploads changed files based on manifest diff
+          echo "=== Uploading SPA to R2 (incremental) ==="
+          ./scripts/upload-assets.sh --prod --ci --cleanup
 
           # Verify index.html was uploaded correctly
-          echo "Verifying R2 upload..."
+          echo ""
+          echo "Verifying index.html..."
           npx wrangler r2 object get chipp-deno-spa/index.html --pipe | grep -oE 'index-[A-Za-z0-9_-]+\.js' || echo "WARNING: Could not verify index.html"
 
           # Deploy Worker with production routes
+          echo ""
+          echo "=== Deploying Cloudflare Worker ==="
           npx wrangler deploy --env production
 
       - name: Notify Slack on failure

@@ -9,6 +9,7 @@
    * Dispatches: audioRecorded { audioBlob, durationMs, mimeType }
    */
   import { createEventDispatcher, onMount, onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
 
   export let disabled: boolean = false;
   export let primaryColor: string = "#4499ff";
@@ -105,7 +106,10 @@
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      console.error("[AudioRecordButton] Mic permission denied:", err);
+      captureException(err, {
+        tags: { feature: "audio-record" },
+        extra: { action: "mic-permission-denied" },
+      });
       permissionError = true;
       return;
     }

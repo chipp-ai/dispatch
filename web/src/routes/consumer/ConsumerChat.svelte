@@ -20,8 +20,9 @@
    * this by returning 401 for unauthenticated requests when requireAuth is true.
    */
 
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import {
     consumerAuth,
     consumerApp,
@@ -44,8 +45,24 @@
     inputPlaceholder,
     userCredits,
     subscriptionActive,
+    isHumanTakeover,
     type StagedFile,
   } from "../../stores/consumerChat";
+  import {
+    connect as connectConsumerWs,
+    disconnect as disconnectConsumerWs,
+    subscribe as subscribeConsumerWs,
+  } from "../../stores/consumerWebSocket";
+  import {
+    multiplayerChat,
+    isMultiplayer as isMultiplayerStore,
+    participants as participantsStore,
+    activeParticipants,
+    aiResponding,
+    typingNames,
+    myParticipantId,
+    isJoining,
+  } from "../../stores/multiplayerChat";
   import ConsumerLayout from "./ConsumerLayout.svelte";
   import ChatHeader from "$lib/design-system/components/consumer/ChatHeader.svelte";
   import ChatMessages from "$lib/design-system/components/consumer/ChatMessages.svelte";
@@ -58,6 +75,7 @@
   import PackageSelectionModal from "$lib/design-system/components/consumer/PackageSelectionModal.svelte";
   import ParticleAudioPage from "$lib/design-system/components/consumer/ParticleAudioPage.svelte";
   import InstallPrompt from "$lib/design-system/components/consumer/InstallPrompt.svelte";
+  import ParticipantSheet from "$lib/design-system/components/consumer/ParticipantSheet.svelte";
   import { getAppNameIdFromContext } from "$lib/utils/consumer-context";
 
   // App is determined by vanity subdomain or injected brand config
@@ -83,9 +101,80 @@
   let showCustomInstructions = false;
   let showCreditExhausted = false;
   let showPackageSelection = false;
+  let showParticipants = false;
   let isVoiceMode = false;
   let bookmarkedMessageIds = new Set<string>();
   let chatMessagesRef: ChatMessages;
+
+  // Multiplayer: check for session share token in URL
+  // Uses a reactive variable updated on mount and hashchange so that
+  // navigating to a share link via client-side routing also triggers join.
+  let shareTokenFromUrl: string | null = null;
+
+  function parseShareToken(): string | null {
+    if (typeof window === "undefined") return null;
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart === -1) return null;
+    const urlParams = new URLSearchParams(hash.slice(queryStart));
+    return urlParams.get("session");
+  }
+
+  function onHashChange() {
+    shareTokenFromUrl = parseShareToken();
+  }
+
+  onMount(() => {
+    shareTokenFromUrl = parseShareToken();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  });
+  $: multiplayerEnabled = Boolean(($consumerApp?.settings as Record<string, unknown>)?.multiplayerEnabled);
+
+  // Auto-join multiplayer session if share token is in URL
+  $: if (shareTokenFromUrl && $consumerApp && appNameId && !$isMultiplayerStore && !$isJoining) {
+    multiplayerChat.joinSession(appNameId, shareTokenFromUrl);
+  }
+
+  // Connect consumer WS for takeover event delivery (non-multiplayer sessions)
+  let takeoverWsUnsubscribers: (() => void)[] = [];
+  let takeoverWsConnectedSessionId: string | null = null;
+
+  $: if ($chatSessionId && appNameId && !$isMultiplayerStore && $chatSessionId !== takeoverWsConnectedSessionId) {
+    // Disconnect from previous session
+    if (takeoverWsConnectedSessionId) {
+      takeoverWsUnsubscribers.forEach((unsub) => unsub());
+      takeoverWsUnsubscribers = [];
+      disconnectConsumerWs();
+    }
+
+    takeoverWsConnectedSessionId = $chatSessionId;
+
+    // Connect consumer WS for this session
+    connectConsumerWs(appNameId, $chatSessionId).then((connected) => {
+      if (!connected) return;
+
+      // Subscribe to takeover events
+      takeoverWsUnsubscribers.push(
+        subscribeConsumerWs("takeover:entered", (event: any) => {
+          consumerChat.handleTakeoverEntered(event.operatorName);
+          chatMessagesRef?.scrollToBottom();
+        }),
+        subscribeConsumerWs("takeover:left", (event: any) => {
+          consumerChat.handleTakeoverLeft(event.operatorName);
+          chatMessagesRef?.scrollToBottom();
+        }),
+        subscribeConsumerWs("takeover:message", (event: any) => {
+          consumerChat.handleTakeoverMessage(
+            event.content,
+            event.operatorName,
+            event.messageId
+          );
+          chatMessagesRef?.scrollToBottom();
+        })
+      );
+    });
+  }
 
   // Menu toggle handler
   function handleMenuToggle() {
@@ -200,8 +289,29 @@
     consumerChat.clearError(true);
   }
 
+  // Multiplayer: start a group chat session
+  async function handleStartMultiplayer() {
+    if (!appNameId) return;
+    const result = await multiplayerChat.createSession(appNameId);
+    if (result) {
+      // Copy share URL to clipboard
+      const shareUrl = multiplayerChat.getShareUrl(appNameId);
+      if (shareUrl) {
+        navigator.clipboard.writeText(shareUrl).catch(() => {});
+      }
+    }
+  }
+
+  function handleOpenParticipants() {
+    showParticipants = true;
+  }
+
   // Handle send message
   function handleSend(event: CustomEvent<{ message: string }>) {
+    // Clear typing indicator when sending
+    if ($isMultiplayerStore) {
+      multiplayerChat.sendTyping(false);
+    }
     const message = consumerChat.buildMessageWithFiles(event.detail.message);
     consumerChat.sendMessage(message);
     consumerChat.clearStagedFiles();
@@ -252,6 +362,10 @@
   // Handle stop streaming
   function handleStop() {
     consumerChat.stop();
+    // In multiplayer, also send stop via WebSocket for observers
+    if ($isMultiplayerStore) {
+      multiplayerChat.stopAi();
+    }
   }
 
   // Handle retry
@@ -338,7 +452,7 @@
       chatSessionsTotal = data.total || 0;
       isLastPage = data.isLastPage ?? chatSessions.length < 10;
     } catch (e) {
-      console.error("Failed to fetch chat sessions:", e);
+      captureException(e, { tags: { page: "consumer-chat" }, extra: { action: "fetchSessions", appNameId } });
       chatSessions = [];
     } finally {
       chatSessionsLoading = false;
@@ -375,7 +489,7 @@
       chatSessions = chatSessions.filter((s) => s.id !== event.detail.sessionId);
       chatSessionsTotal = Math.max(0, chatSessionsTotal - 1);
     } catch (e) {
-      console.error("Failed to delete session:", e);
+      captureException(e, { tags: { page: "consumer-chat" }, extra: { action: "deleteSession", sessionId: event.detail.sessionId } });
     }
   }
 
@@ -405,7 +519,7 @@
         s.id === event.detail.sessionId ? { ...s, title: event.detail.title } : s
       );
     } catch (e) {
-      console.error("Failed to update session title:", e);
+      captureException(e, { tags: { page: "consumer-chat" }, extra: { action: "updateSessionTitle", sessionId: event.detail.sessionId } });
     }
   }
 
@@ -476,6 +590,15 @@
 
   // Cleanup on unmount
   onDestroy(() => {
+    if ($isMultiplayerStore && appNameId) {
+      multiplayerChat.leave(appNameId);
+    }
+    // Disconnect consumer WS for takeover events
+    takeoverWsUnsubscribers.forEach((unsub) => unsub());
+    takeoverWsUnsubscribers = [];
+    if (takeoverWsConnectedSessionId && !$isMultiplayerStore) {
+      disconnectConsumerWs();
+    }
     consumerChat.reset();
   });
 </script>
@@ -492,7 +615,10 @@
       maxCredits={100}
       subscriptionActive={$subscriptionActive}
       {menuOpen}
+      isMultiplayer={$isMultiplayerStore}
+      participants={$participantsStore}
       on:toggleMenu={handleMenuToggle}
+      on:openParticipants={handleOpenParticipants}
     />
 
     {#if isVoiceMode}
@@ -516,6 +642,7 @@
         {bookmarkedMessageIds}
         theme={chatTheme}
         {animationConfig}
+        showSenderAttribution={$isMultiplayerStore}
         on:bookmark={handleBookmark}
         on:retry={handleRetry}
       />
@@ -543,6 +670,8 @@
         disclaimerText={$disclaimerText}
         {showChippBadge}
         hasMessages={$chatMessages.length > 0}
+        typingNames={$typingNames}
+        multiplayerAiResponding={$aiResponding}
         on:send={handleSend}
         on:stop={handleStop}
         on:retry={handleRetry}
@@ -578,6 +707,15 @@
       open={showCustomInstructions}
       appNameId={appNameId}
       on:close={() => (showCustomInstructions = false)}
+    />
+
+    <ParticipantSheet
+      open={showParticipants}
+      participants={$participantsStore}
+      shareUrl={$isMultiplayerStore ? multiplayerChat.getShareUrl(appNameId) : null}
+      myParticipantId={$myParticipantId}
+      {forceDarkMode}
+      on:close={() => (showParticipants = false)}
     />
 
     <CreditExhaustedModal

@@ -9,6 +9,7 @@
  * - Extract content blocks (text, tool_calls)
  */
 
+import { log } from "@/lib/logger.ts";
 import type OpenAI from "openai";
 import type {
   UnifiedResponse,
@@ -81,9 +82,11 @@ export class OpenAIDecoder
         try {
           parsedArgs = JSON.parse(tc.function.arguments || "{}");
         } catch {
-          console.warn(
-            `[openai-decoder] Failed to parse tool call arguments for ${tc.function.name}`
-          );
+          log.warn("Failed to parse tool call arguments", {
+            source: "llm",
+            feature: "openai-decoder",
+            toolName: tc.function.name,
+          });
         }
 
         content.push({
@@ -260,9 +263,11 @@ export class OpenAIStreamTracker {
             arguments: parsedArgs,
           });
         } catch {
-          console.warn(
-            `[openai-stream] Failed to parse tool call arguments for ${toolCall.name}`
-          );
+          log.warn("Failed to parse tool call arguments", {
+            source: "llm",
+            feature: "openai-stream",
+            toolName: toolCall.name,
+          });
         }
       }
       this.currentToolCalls.clear();

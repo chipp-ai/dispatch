@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import SetupCard from "../../lib/design-system/components/builder/SetupCard.svelte";
   import TrainCard from "../../lib/design-system/components/builder/TrainCard.svelte";
   import ConnectCard, { type CustomAction, type Parameter } from "../../lib/design-system/components/builder/ConnectCard.svelte";
@@ -44,6 +45,7 @@
       streamResponses?: boolean;
       requireAuth?: boolean;
       showSources?: boolean;
+      multiplayerEnabled?: boolean;
     } | null;
     embeddingConfig?: {
       provider?: string;
@@ -98,6 +100,7 @@
   let streamResponses = true;
   let requireAuth = false;
   let showSources = true;
+  let multiplayerEnabled = false;
 
   // Animation config state
   let animationEnabled = DEFAULT_ANIMATION_CONFIG.enabled;
@@ -162,6 +165,7 @@
     streamResponses = app?.settings?.streamResponses ?? true;
     requireAuth = app?.settings?.requireAuth ?? false;
     showSources = app?.settings?.showSources ?? true;
+    multiplayerEnabled = app?.settings?.multiplayerEnabled ?? false;
 
     // Animation config state
     const animConfig = app?.capabilities?.animationConfig;
@@ -220,6 +224,7 @@
             streamResponses,
             requireAuth,
             showSources,
+            multiplayerEnabled,
           },
           embeddingConfig: {
             provider: embeddingProvider,
@@ -252,7 +257,7 @@
       lastSaved = new Date();
       versionRefreshTrigger++; // Trigger version history refresh
     } catch (error) {
-      console.error("Error saving changes:", error);
+      captureException(error, { tags: { feature: "builder-build" }, extra: { action: "save-changes", appId } });
     } finally {
       isSaving = false;
     }
@@ -382,6 +387,11 @@
     scheduleAutoSave();
   }
 
+  function handleMultiplayerEnabledChange(value: boolean) {
+    multiplayerEnabled = value;
+    scheduleAutoSave();
+  }
+
   // Animation config handlers
   function handleAnimationEnabledChange(value: boolean) {
     animationEnabled = value;
@@ -445,7 +455,7 @@
 
       versionRefreshTrigger++;
     } catch (error) {
-      console.error("Error publishing application:", error);
+      captureException(error, { tags: { feature: "builder-build" }, extra: { action: "publish-app", appId } });
       toasts.error("Failed to publish", "Something went wrong. Please try again.");
     }
 
@@ -482,7 +492,7 @@
       versionHistoryModalOpen = false;
       versionRefreshTrigger++; // Refresh version history
     } catch (error) {
-      console.error("Error restoring version:", error);
+      captureException(error, { tags: { feature: "builder-build" }, extra: { action: "restore-version", appId, versionId } });
       toasts.error("Restore failed", "Could not restore the selected version. Please try again.");
     }
   }
@@ -550,11 +560,13 @@
         {streamResponses}
         {requireAuth}
         {showSources}
+        {multiplayerEnabled}
         onTemperatureChange={handleTemperatureChange}
         onMaxTokensChange={handleMaxTokensChange}
         onStreamResponsesChange={handleStreamResponsesChange}
         onRequireAuthChange={handleRequireAuthChange}
         onShowSourcesChange={handleShowSourcesChange}
+        onMultiplayerEnabledChange={handleMultiplayerEnabledChange}
       />
 
       <StreamingAnimationCard

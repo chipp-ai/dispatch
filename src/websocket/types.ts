@@ -49,6 +49,14 @@ export interface AIToolResultEvent {
 export interface ConsumerDisconnectedEvent {
   type: "consumer:disconnected";
   sessionId: string;
+  applicationId: string;
+}
+
+export interface ConsumerPresenceEvent {
+  type: "consumer:presence";
+  sessionId: string;
+  applicationId: string;
+  status: "active" | "away";
 }
 
 export interface ConversationTakeoverEvent {
@@ -56,6 +64,16 @@ export interface ConversationTakeoverEvent {
   sessionId: string;
   takenOverBy: string | null;
   mode: "ai" | "human" | "hybrid";
+}
+
+export interface ConversationActivityEvent {
+  type: "conversation:started" | "conversation:activity" | "conversation:ended";
+  sessionId: string;
+  applicationId: string;
+  consumerEmail?: string;
+  consumerName?: string;
+  messagePreview?: string;
+  timestamp: string;
 }
 
 // ========================================
@@ -111,6 +129,22 @@ export interface BillingCreditsLowEvent {
 }
 
 // ========================================
+// Notification Events
+// ========================================
+
+export interface NotificationPushEvent {
+  type: "notification:push";
+  notificationType: string;
+  category: "engagement" | "billing" | "team";
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  actionUrl?: string;
+  actionLabel?: string;
+  timestamp: string;
+}
+
+// ========================================
 // System Events
 // ========================================
 
@@ -139,7 +173,9 @@ export type WebSocketEvent =
   | AIToolCallEvent
   | AIToolResultEvent
   | ConsumerDisconnectedEvent
+  | ConsumerPresenceEvent
   | ConversationTakeoverEvent
+  | ConversationActivityEvent
   // Jobs
   | JobStartedEvent
   | JobProgressEvent
@@ -149,6 +185,8 @@ export type WebSocketEvent =
   | BillingUsageAlertEvent
   | BillingLimitReachedEvent
   | BillingCreditsLowEvent
+  // Notifications
+  | NotificationPushEvent
   // System
   | SystemNotificationEvent
   | SystemMaintenanceEvent;

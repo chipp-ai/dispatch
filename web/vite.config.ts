@@ -1,9 +1,37 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import path from "path";
 
+/**
+ * Generates version.json in the build output and defines __APP_VERSION__
+ * as a compile-time constant. Uses git SHA when available (CI builds),
+ * falls back to timestamp for local dev. The version check module polls
+ * version.json to detect new deployments and nudge users to refresh.
+ */
+function versionPlugin(): Plugin {
+  const gitSha = process.env.GITHUB_SHA || process.env.GIT_SHA;
+  const version = gitSha ? gitSha.slice(0, 7) : Date.now().toString(36);
+  return {
+    name: "chipp-version",
+    config() {
+      return {
+        define: {
+          __APP_VERSION__: JSON.stringify(version),
+        },
+      };
+    },
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "version.json",
+        source: JSON.stringify({ version }),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [svelte(), versionPlugin()],
   resolve: {
     alias: {
       $lib: path.resolve("./src/lib"),

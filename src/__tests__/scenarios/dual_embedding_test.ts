@@ -1495,7 +1495,8 @@ describe("Dual Embedding Provider E2E", () => {
         name: `test_single_failure_${Date.now()}`,
         texts: ["Content for failure handling test."],
         embeddingProvider: "openai",
-        fallbackProvider: "local",
+        // Note: fallbackProvider not yet supported in type definition
+        // fallbackProvider: "local",
       });
       if (!source) {
         await del(`/api/applications/${testApp.id}`, user);
@@ -1528,7 +1529,8 @@ describe("Dual Embedding Provider E2E", () => {
         name: `test_retry_${Date.now()}`,
         texts: ["Content for retry test."],
         embeddingProvider: "openai",
-        maxRetries: 3,
+        // Note: maxRetries not yet supported in type definition
+        // maxRetries: 3,
       });
       if (!source) {
         await del(`/api/applications/${testApp.id}`, user);

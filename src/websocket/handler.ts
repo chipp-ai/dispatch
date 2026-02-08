@@ -6,7 +6,7 @@
  */
 
 import { jwtVerify } from "jose";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type {
   WebSocketEvent,
   ClientAction,
@@ -81,10 +81,11 @@ async function verifyToken(token: string): Promise<TokenPayload | null> {
       exp: payload.exp,
     };
   } catch (error) {
-    console.warn(
-      "[ws] Token verification failed:",
-      error instanceof Error ? error.message : error
-    );
+    log.warn("Token verification failed", {
+      source: "websocket",
+      feature: "auth",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -112,47 +113,74 @@ async function handleClientAction(
 
     case "subscribe":
       client.subscriptions.add(action.channel);
-      console.log(`[ws] User ${client.userId} subscribed to ${action.channel}`);
+      log.info("User subscribed to channel", {
+        source: "websocket",
+        feature: "subscribe",
+        userId: client.userId,
+        channel: action.channel,
+      });
       break;
 
     case "unsubscribe":
       client.subscriptions.delete(action.channel);
-      console.log(
-        `[ws] User ${client.userId} unsubscribed from ${action.channel}`
-      );
+      log.info("User unsubscribed from channel", {
+        source: "websocket",
+        feature: "unsubscribe",
+        userId: client.userId,
+        channel: action.channel,
+      });
       break;
 
     case "takeover": {
       // Handle conversation takeover
       const { sessionId, mode } = action;
-      console.log(
-        `[ws] User ${client.userId} taking over session ${sessionId} in ${mode} mode`
-      );
+      log.info("User taking over session", {
+        source: "websocket",
+        feature: "takeover",
+        userId: client.userId,
+        sessionId,
+        mode,
+      });
 
       try {
-        // Import chat service dynamically to avoid circular dependencies
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession } = await import("./pubsub.ts");
+        const { multiplayerService } = await import(
+          "../services/multiplayer.service.ts"
+        );
+        const { db } = await import("../db/client.ts");
+
+        // Get session (lightweight, no messages join)
+        const session = await chatService.getSessionBasic(sessionId);
+        if (!session) {
+          throw new Error("Session not found");
+        }
+
+        // Verify user has access to this app
+        await chatService.verifyAppAccess(session.applicationId, client.userId);
+
+        // Abort any active AI stream
+        multiplayerService.abortActiveStream(sessionId);
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
 
         // Update session mode in database
         await chatService.updateSessionMode(sessionId, mode, client.userId);
 
-        // Get session to find consumer
-        const session = await chatService.getSession(sessionId);
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:entered",
+          sessionId,
+          operatorName,
+        });
 
-        // Notify consumer about takeover (if they have a consumer_id)
-        if (session.consumer_id) {
-          // Find consumer's external user ID or use consumer_id
-          // For now, we'll publish to a channel based on session
-          await publishToUser(session.consumer_id, {
-            type: "conversation:takeover",
-            sessionId,
-            takenOverBy: client.userId,
-            mode,
-          });
-        }
-
-        // Notify the user who took over
+        // Confirm to builder
         sendToClient(client, {
           type: "conversation:takeover",
           sessionId,
@@ -160,11 +188,13 @@ async function handleClientAction(
           mode,
         });
       } catch (error) {
-        console.error(`[ws] Error handling takeover:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "websocket-handler", feature: "takeover" },
-          extra: { userId: client.userId, sessionId, mode },
-        });
+        log.error("Error handling takeover", {
+          source: "websocket",
+          feature: "takeover",
+          userId: client.userId,
+          sessionId,
+          mode,
+        }, error);
         sendToClient(client, {
           type: "system:notification",
           title: "Takeover failed",
@@ -178,29 +208,37 @@ async function handleClientAction(
     case "release": {
       // Handle releasing conversation back to AI
       const { sessionId } = action;
-      console.log(`[ws] User ${client.userId} releasing session ${sessionId}`);
+      log.info("User releasing session", {
+        source: "websocket",
+        feature: "release",
+        userId: client.userId,
+        sessionId,
+      });
 
       try {
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession } = await import("./pubsub.ts");
+        const { db } = await import("../db/client.ts");
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
 
         // Update session mode back to 'ai'
         await chatService.updateSessionMode(sessionId, "ai", null);
 
-        // Get session to find consumer
-        const session = await chatService.getSession(sessionId);
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:left",
+          sessionId,
+          operatorName,
+        });
 
-        // Notify consumer about release
-        if (session.consumer_id) {
-          await publishToUser(session.consumer_id, {
-            type: "conversation:takeover",
-            sessionId,
-            takenOverBy: null,
-            mode: "ai",
-          });
-        }
-
-        // Notify the user who released
+        // Confirm to builder
         sendToClient(client, {
           type: "conversation:takeover",
           sessionId,
@@ -208,11 +246,12 @@ async function handleClientAction(
           mode: "ai",
         });
       } catch (error) {
-        console.error(`[ws] Error handling release:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "websocket-handler", feature: "release" },
-          extra: { userId: client.userId, sessionId },
-        });
+        log.error("Error handling release", {
+          source: "websocket",
+          feature: "release",
+          userId: client.userId,
+          sessionId,
+        }, error);
         sendToClient(client, {
           type: "system:notification",
           title: "Release failed",
@@ -226,49 +265,97 @@ async function handleClientAction(
     case "send_message": {
       // Handle builder sending message to consumer
       const { sessionId, content } = action;
-      console.log(
-        `[ws] User ${client.userId} sending message to session ${sessionId}`
-      );
+      log.info("User sending message to session", {
+        source: "websocket",
+        feature: "send-message",
+        userId: client.userId,
+        sessionId,
+      });
 
       try {
-        const { chatService } = await import("../../services/chat.service.ts");
-        const { publishToUser } = await import("./pubsub.ts");
+        const { chatService } = await import("../services/chat.service.ts");
+        const { publishToSession, publishToUser } = await import("./pubsub.ts");
+        const { db } = await import("../db/client.ts");
 
-        // Get session to verify access and find consumer
-        const session = await chatService.getSession(sessionId);
+        // Get session (lightweight)
+        const session = await chatService.getSessionBasic(sessionId);
+        if (!session) {
+          throw new Error("Session not found");
+        }
 
         // Verify user has access to this app
-        await chatService.verifyAppAccess(
-          session.application_id,
-          client.userId
+        await chatService.verifyAppAccess(session.applicationId, client.userId);
+
+        // Get operator display name
+        const userRow = await db
+          .selectFrom("app.users")
+          .select(["name", "email"])
+          .where("id", "=", client.userId)
+          .executeTakeFirst();
+        const operatorName = userRow?.name || userRow?.email || "Support";
+
+        // Store message as assistant with model="human" to distinguish from AI
+        const savedMsg = await chatService.addMessage(
+          sessionId,
+          "assistant",
+          content,
+          { model: "human" }
         );
 
-        // Store message as assistant message (from builder)
-        await chatService.addMessage(sessionId, "assistant", content);
+        const timestamp = new Date().toISOString();
 
-        // Notify consumer about new message
-        if (session.consumer_id) {
-          await publishToUser(session.consumer_id, {
-            type: "consumer:message",
-            sessionId,
-            content,
-            timestamp: new Date().toISOString(),
-          });
+        // Notify consumer via session-based routing
+        await publishToSession(sessionId, {
+          type: "takeover:message",
+          sessionId,
+          content,
+          operatorName,
+          messageId: savedMsg.id,
+          timestamp,
+        });
+
+        // Broadcast activity to other org members viewing the live panel
+        const app = await db
+          .selectFrom("app.applications")
+          .select(["organizationId"])
+          .where("id", "=", session.applicationId)
+          .executeTakeFirst();
+
+        if (app?.organizationId) {
+          const orgMembers = await db
+            .selectFrom("app.workspace_members as wm")
+            .innerJoin("app.workspaces as w", "w.id", "wm.workspaceId")
+            .select(["wm.userId"])
+            .where("w.organizationId", "=", app.organizationId)
+            .execute();
+
+          for (const member of orgMembers) {
+            if (member.userId !== client.userId) {
+              publishToUser(member.userId, {
+                type: "conversation:activity" as const,
+                sessionId,
+                applicationId: session.applicationId,
+                messagePreview: content.slice(0, 120),
+                timestamp,
+              }).catch(() => {});
+            }
+          }
         }
 
         // Confirm to builder
         sendToClient(client, {
           type: "system:notification",
           title: "Message sent",
-          body: "Your message has been delivered",
+          body: "",
           severity: "info",
         });
       } catch (error) {
-        console.error(`[ws] Error sending message:`, error);
-        Sentry.captureException(error, {
-          tags: { source: "websocket-handler", feature: "send-message" },
-          extra: { userId: client.userId, sessionId },
-        });
+        log.error("Error sending message", {
+          source: "websocket",
+          feature: "send-message",
+          userId: client.userId,
+          sessionId,
+        }, error);
         sendToClient(client, {
           type: "system:notification",
           title: "Send failed",
@@ -280,7 +367,12 @@ async function handleClientAction(
     }
 
     default:
-      console.warn(`[ws] Unknown action:`, action);
+      log.warn("Unknown WebSocket action", {
+        source: "websocket",
+        feature: "action-router",
+        action: (action as { action: string }).action,
+        userId: client.userId,
+      });
   }
 }
 
@@ -294,13 +386,21 @@ function sendToClient(client: ConnectedClient, event: WebSocketEvent): boolean {
       return true;
     }
   } catch (error) {
-    console.error(`[ws] Error sending to client:`, error);
-    Sentry.captureException(error, {
-      tags: { source: "websocket-handler", feature: "send-to-client" },
-      extra: { userId: client.userId, eventType: event.type },
-    });
+    log.error("Error sending to client", {
+      source: "websocket",
+      feature: "send-to-client",
+      userId: client.userId,
+      eventType: event.type,
+    }, error);
   }
   return false;
+}
+
+/**
+ * Send event to all clients of a user (public wrapper for local delivery)
+ */
+export function localSendToUser(userId: string, event: WebSocketEvent): number {
+  return sendToUser(userId, event);
 }
 
 /**
@@ -367,9 +467,12 @@ async function handleConnection(
   connections.get(client.userId)!.add(client);
   totalConnections++;
 
-  console.log(
-    `[ws] User ${client.userId} connected (total: ${totalConnections})`
-  );
+  log.info("User connected", {
+    source: "websocket",
+    feature: "connection",
+    userId: client.userId,
+    totalConnections,
+  });
 
   // Handle incoming messages
   socket.onmessage = (e) => {
@@ -377,7 +480,11 @@ async function handleConnection(
       const action = JSON.parse(e.data) as ClientAction;
       handleClientAction(client, action);
     } catch (error) {
-      console.error(`[ws] Error parsing message:`, error);
+      log.error("Error parsing WebSocket message", {
+        source: "websocket",
+        feature: "message-parse",
+        userId: client.userId,
+      }, error);
     }
   };
 
@@ -391,14 +498,21 @@ async function handleConnection(
       }
     }
     totalConnections--;
-    console.log(
-      `[ws] User ${client.userId} disconnected (total: ${totalConnections})`
-    );
+    log.info("User disconnected", {
+      source: "websocket",
+      feature: "connection",
+      userId: client.userId,
+      totalConnections,
+    });
   };
 
   // Handle errors
-  socket.onerror = (e) => {
-    console.error(`[ws] Socket error for user ${client.userId}:`, e);
+  socket.onerror = () => {
+    log.error("WebSocket socket error", {
+      source: "websocket",
+      feature: "socket-error",
+      userId: client.userId,
+    });
   };
 }
 
@@ -437,9 +551,15 @@ export async function initWebSocket(): Promise<void> {
 
   if (pubsubReady) {
     await startSubscription(handleRedisEvent, handleRedisBroadcast);
-    console.log("[ws] WebSocket handler initialized with Redis pub/sub");
+    log.info("WebSocket handler initialized with Redis pub/sub", {
+      source: "websocket",
+      feature: "init",
+    });
   } else {
-    console.log("[ws] WebSocket handler initialized (single-pod mode)");
+    log.info("WebSocket handler initialized (single-pod mode)", {
+      source: "websocket",
+      feature: "init",
+    });
   }
 
   initialized = true;
@@ -462,7 +582,10 @@ export async function shutdownWebSocket(): Promise<void> {
   await closePubSub();
 
   initialized = false;
-  console.log("[ws] WebSocket handler shut down");
+  log.info("WebSocket handler shut down", {
+    source: "websocket",
+    feature: "shutdown",
+  });
 }
 
 /**
@@ -488,10 +611,10 @@ export function upgradeWebSocket(req: Request): Response | null {
   // Handle connection asynchronously
   socket.onopen = () => {
     handleConnection(socket, token).catch((error) => {
-      console.error("[ws] Error handling connection:", error);
-      Sentry.captureException(error, {
-        tags: { source: "websocket-handler", feature: "connection" },
-      });
+      log.error("Error handling WebSocket connection", {
+        source: "websocket",
+        feature: "connection",
+      }, error);
       socket.close(4000, "Connection error");
     });
   };

@@ -13,6 +13,7 @@
   import VersionHistoryCard from "../lib/design-system/components/builder/VersionHistoryCard.svelte";
   import VersionHistoryModal from "../lib/design-system/components/builder/VersionHistoryModal.svelte";
   import { DEFAULT_MODEL_ID } from "../lib/design-system/components/builder/modelConfig";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -168,7 +169,7 @@
       requireAuth = app?.settings?.requireAuth ?? false;
       showSources = app?.settings?.showSources ?? true;
     } catch (error) {
-      console.error("Error loading app:", error);
+      captureException(error, { tags: { page: "app-builder-build", feature: "load-app" }, extra: { appId: params.appId } });
     } finally {
       isLoading = false;
     }
@@ -241,7 +242,7 @@
       lastSaved = new Date();
       versionRefreshTrigger++; // Trigger version history refresh
     } catch (error) {
-      console.error("Error saving changes:", error);
+      captureException(error, { tags: { page: "app-builder-build", feature: "save-changes" }, extra: { appId: params.appId } });
     } finally {
       isSaving = false;
     }
@@ -391,7 +392,7 @@
       // Refresh version history to show the new published version
       versionRefreshTrigger++;
     } catch (error) {
-      console.error("Error publishing application:", error);
+      captureException(error, { tags: { page: "app-builder-build", feature: "publish" }, extra: { appId: params.appId } });
     } finally {
       isPublishing = false;
     }
@@ -432,7 +433,7 @@
       versionHistoryModalOpen = false;
       versionRefreshTrigger++; // Refresh version history
     } catch (error) {
-      console.error("Error restoring version:", error);
+      captureException(error, { tags: { page: "app-builder-build", feature: "restore-version" }, extra: { appId: params.appId, versionId } });
     }
   }
 </script>

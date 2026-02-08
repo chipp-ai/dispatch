@@ -5,6 +5,7 @@
   import BuilderHeader from "../lib/design-system/components/builder/BuilderHeader.svelte";
   import { Card, Button, toasts, Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "$lib/design-system";
   import { MessageSquare, Filter, Search, Trash2, ExternalLink, Clock, User } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -16,9 +17,9 @@
     id: string;
     title: string | null;
     source: string;
-    started_at: string;
-    ended_at: string | null;
-    is_bookmarked: boolean;
+    createdAt: string;
+    endedAt: string | null;
+    isBookmarked: boolean;
     mode: string | null;
     messageCount?: number;
   }
@@ -78,7 +79,7 @@
       const result = await response.json();
       app = result.data;
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-chats", feature: "load-app" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load application");
     }
   }
@@ -120,7 +121,7 @@
       hasMore = result.pagination?.hasMore ?? false;
       nextCursor = result.pagination?.nextCursor ?? null;
     } catch (e) {
-      console.error("Failed to load sessions:", e);
+      captureException(e, { tags: { page: "app-builder-chats", feature: "load-sessions" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load chat sessions");
     } finally {
       isLoading = false;
@@ -156,7 +157,7 @@
       const result = await response.json();
       transcriptMessages = result.data.messages || [];
     } catch (e) {
-      console.error("Failed to load transcript:", e);
+      captureException(e, { tags: { page: "app-builder-chats", feature: "load-transcript" }, extra: { sessionId: session.id } });
       toasts.error("Error", "Failed to load transcript");
     } finally {
       isLoadingTranscript = false;
@@ -185,7 +186,7 @@
       sessions = sessions.filter((s) => s.id !== sessionToDelete?.id);
       toasts.success("Deleted", "Chat session deleted");
     } catch (e) {
-      console.error("Failed to delete:", e);
+      captureException(e, { tags: { page: "app-builder-chats", feature: "delete-session" }, extra: { sessionId: sessionToDelete?.id } });
       toasts.error("Error", "Failed to delete session");
     } finally {
       isDeleting = false;
@@ -307,13 +308,13 @@
                     <div class="session-meta">
                       <span class="meta-item">
                         <Clock size={14} />
-                        {formatDate(session.started_at)}
+                        {formatDate(session.createdAt)}
                       </span>
-                      {#if session.ended_at}
+                      {#if session.endedAt}
                         <span class="meta-item">
                           Duration: {Math.round(
-                            (new Date(session.ended_at).getTime() -
-                              new Date(session.started_at).getTime()) /
+                            (new Date(session.endedAt).getTime() -
+                              new Date(session.createdAt).getTime()) /
                               60000
                           )} min
                         </span>

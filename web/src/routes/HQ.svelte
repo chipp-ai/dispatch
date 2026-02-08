@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Spinner, Button, Card } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { ExternalLink, Play, AlertCircle } from "lucide-svelte";
 
   export let params: { slug: string } = { slug: "" };
@@ -61,7 +62,7 @@
       featuredApps = result.data.featuredApps;
     } catch (e) {
       error = "Failed to load HQ";
-      console.error("Failed to fetch HQ:", e);
+      captureException(e, { tags: { page: "hq", feature: "fetch-hq" } });
     } finally {
       loading = false;
     }

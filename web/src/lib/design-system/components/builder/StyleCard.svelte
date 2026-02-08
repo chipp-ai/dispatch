@@ -2,6 +2,7 @@
   import BuilderCard from "./BuilderCard.svelte";
   import { Input, Select, SelectItem, toasts } from "$lib/design-system";
   import { getChatTheme, themeToCSS } from "$lib/design-system/themes/chatThemes";
+  import { captureException } from "$lib/sentry";
 
   export let primaryColor: string = "#4F46E5";
   export let botMessageColor: string = "#F3F4F6";
@@ -140,7 +141,10 @@
       onLogoChange(permanentUrl);
       toasts.success("Logo uploaded!");
     } catch (error) {
-      console.error("Error uploading logo:", error);
+      captureException(error, {
+        tags: { feature: "style-card" },
+        extra: { applicationId },
+      });
       toasts.error(
         error instanceof Error ? error.message : "Failed to upload logo"
       );

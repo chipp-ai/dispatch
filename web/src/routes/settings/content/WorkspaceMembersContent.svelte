@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, toasts, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace, fetchWorkspaces } from "../../../stores/workspace";
   import { user } from "../../../stores/auth";
   import { Trash2, UserPlus, ArrowUpDown, ArrowLeftRight } from "lucide-svelte";
@@ -81,7 +82,10 @@
         currentUserRole = currentMember?.role || null;
       }
     } catch (error) {
-      console.error("Failed to load members:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { action: "loadMembers", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", "Failed to load workspace members");
     } finally {
       isLoading = false;
@@ -199,7 +203,10 @@
       toasts.success("Success", "Member invited successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to invite member:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { action: "handleInvite", inviteEmail, inviteRole },
+      });
       toasts.error("Error", error instanceof Error ? error.message : "Failed to invite member");
     } finally {
       isInviting = false;
@@ -226,7 +233,10 @@
       toasts.success("Success", "Member removed successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to remove member:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { action: "handleDeleteMember", memberId: memberToDelete?.id },
+      });
       toasts.error("Error", error instanceof Error ? error.message : "Failed to remove member");
     } finally {
       isDeleting = false;
@@ -257,7 +267,10 @@
 
       toasts.success("Success", "Role updated successfully");
     } catch (error) {
-      console.error("Failed to update role:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { action: "handleRoleChange", memberId: member.id, newRole },
+      });
       toasts.error("Error", "Failed to update role");
     } finally {
       isUpdatingRole = false;
@@ -286,7 +299,10 @@
       toasts.success("Success", "Ownership transferred successfully");
       await loadMembers();
     } catch (error) {
-      console.error("Failed to transfer ownership:", error);
+      captureException(error, {
+        tags: { feature: "settings-workspace-members" },
+        extra: { action: "handleTransferOwnership", newOwnerId: selectedNewOwner?.userId },
+      });
       toasts.error("Error", "Failed to transfer ownership");
     } finally {
       isTransferring = false;

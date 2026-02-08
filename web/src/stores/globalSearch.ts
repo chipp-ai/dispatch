@@ -6,6 +6,7 @@
  */
 
 import { writable, derived } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 export interface SearchResult {
   id: string;
@@ -162,7 +163,7 @@ async function performSearch(query: string): Promise<void> {
       return;
     }
 
-    console.error("[GlobalSearch] Search error:", err);
+    captureException(err, { tags: { source: "global-search" }, extra: { action: "performSearch", query } });
     state.update((s) => ({
       ...s,
       results: [],

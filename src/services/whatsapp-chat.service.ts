@@ -19,7 +19,7 @@ import {
   processMediaMessage,
   getUnsupportedMediaMessage,
 } from "./whatsapp-media.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Agent framework imports
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
@@ -154,7 +154,7 @@ function truncateWithSemanticMeaning(text: string, maxLength: number): string {
 async function shouldStartNewSession(sessionId: string): Promise<boolean> {
   const SESSION_TIMEOUT_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
-  const messages = await chatService.getSessionMessages(sessionId, 1);
+  const messages = await chatService.getSessionMessages(sessionId);
   if (messages.length === 0) return false;
 
   const lastMessage = messages[0];
@@ -231,7 +231,9 @@ export async function handleWhatsAppMessage(
 ): Promise<void> {
   const { applicationId, message, credentials, correlationId } = params;
 
-  console.log("[WhatsAppChat] Processing message", {
+  log.info("Processing message", {
+    source: "whatsapp-chat",
+    feature: "message-processing",
     correlationId,
     from: message.from,
     type: message.type,
@@ -241,7 +243,7 @@ export async function handleWhatsAppMessage(
   try {
     // Get app config first (needed for language)
     const appConfig = await chatService.getAppConfig(applicationId);
-    const language = appConfig.language || "EN";
+    const language = "EN";
 
     // Check if this is a text message or media message
     const { type: mediaType, media: mediaObject } =
@@ -249,7 +251,9 @@ export async function handleWhatsAppMessage(
     const isTextMessage = message.type === "text" && message.text?.body;
     const isMediaMessage = mediaType !== null && mediaObject !== null;
 
-    console.log("[WhatsAppChat] Message classification", {
+    log.info("Message classification", {
+      source: "whatsapp-chat",
+      feature: "message-processing",
       correlationId,
       isTextMessage,
       isMediaMessage,
@@ -259,7 +263,9 @@ export async function handleWhatsAppMessage(
 
     // Skip if neither text nor supported media
     if (!isTextMessage && !isMediaMessage) {
-      console.warn("[WhatsAppChat] Unsupported message type, skipping", {
+      log.warn("Unsupported message type, skipping", {
+        source: "whatsapp-chat",
+        feature: "message-processing",
         correlationId,
         messageType: message.type,
       });
@@ -281,25 +287,14 @@ export async function handleWhatsAppMessage(
         );
 
         if (!mediaResult || !mediaResult.success) {
-          console.error("[WhatsAppChat] Media processing failed", {
+          log.error("Media processing failed", {
+            source: "whatsapp-chat",
+            feature: "media-processing",
             correlationId,
-            mediaType,
-            error: mediaResult?.error,
-          });
-
-          Sentry.captureException(
-            new Error(
-              `WhatsApp media processing failed: ${mediaResult?.error || "unknown error"}`
-            ),
-            {
-              tags: {
-                source: "whatsapp-chat",
-                feature: "media-processing",
-                mediaType: mediaType || "unknown",
-              },
-              extra: { correlationId, applicationId },
-            }
-          );
+            applicationId,
+            mediaType: mediaType || "unknown",
+            mediaError: mediaResult?.error,
+          }, new Error(`WhatsApp media processing failed: ${mediaResult?.error || "unknown error"}`));
 
           // Use localized fallback message
           userMessageContent = getUnsupportedMediaMessage(
@@ -308,7 +303,9 @@ export async function handleWhatsAppMessage(
           );
         } else {
           userMessageContent = mediaResult.messageContent;
-          console.log("[WhatsAppChat] Media processed successfully", {
+          log.info("Media processed successfully", {
+            source: "whatsapp-chat",
+            feature: "media-processing",
             correlationId,
             mediaType,
             hasImageUrl: !!mediaResult.imageUrl,
@@ -316,23 +313,13 @@ export async function handleWhatsAppMessage(
           });
         }
       } catch (mediaError) {
-        console.error("[WhatsAppChat] Unexpected error processing media", {
+        log.error("Unexpected error processing media", {
+          source: "whatsapp-chat",
+          feature: "media-processing",
           correlationId,
-          mediaType,
-          error:
-            mediaError instanceof Error
-              ? mediaError.message
-              : String(mediaError),
-        });
-
-        Sentry.captureException(mediaError, {
-          tags: {
-            source: "whatsapp-chat",
-            feature: "media-processing",
-            mediaType: mediaType || "unknown",
-          },
-          extra: { correlationId, applicationId },
-        });
+          applicationId,
+          mediaType: mediaType || "unknown",
+        }, mediaError);
 
         userMessageContent = getUnsupportedMediaMessage(
           mediaType || message.type,
@@ -344,21 +331,27 @@ export async function handleWhatsAppMessage(
     }
 
     if (!userMessageContent) {
-      console.log("[WhatsAppChat] Empty message after processing");
+      log.info("Empty message after processing", {
+        source: "whatsapp-chat",
+        feature: "message-processing",
+        correlationId,
+      });
       return;
     }
 
     // Get or create session
     const sessionId = await getOrCreateSession(applicationId, message.from);
 
-    console.log("[WhatsAppChat] Processing user message", {
+    log.info("Processing user message", {
+      source: "whatsapp-chat",
+      feature: "message-processing",
       correlationId,
       sessionId,
       userMessage: userMessageContent.substring(0, 100),
     });
 
     // Get previous messages (last 10, like chipp-admin)
-    const history = await chatService.getSessionMessages(sessionId, 10);
+    const history = await chatService.getSessionMessages(sessionId);
     const hasKnowledge = await hasKnowledgeSources(applicationId);
 
     // Save user message
@@ -414,26 +407,31 @@ export async function handleWhatsAppMessage(
 
     // Create LLM adapter with billing
     const modelId = appConfig.model || DEFAULT_MODEL_ID;
-    const adapter = await createAdapterWithBilling(modelId, {
-      organizationId: billingContext.organizationId,
-      applicationId,
-      sessionId,
-      subscriptionTier: billingContext.subscriptionTier,
-      usageBasedBillingEnabled: billingContext.usageBasedBillingEnabled,
-    });
+    const adapter = await createAdapterWithBilling(modelId, billingContext);
 
     // Create tool registry
     const registry = createRegistry();
 
     // Register tools
-    registerCoreTools(registry);
+    registerCoreTools(registry, { appId: applicationId });
 
     if (hasKnowledge) {
-      registerRAGTools(registry, applicationId);
+      registerRAGTools(registry, {
+        appId: applicationId,
+        searchKnowledge: async (
+          appId: string,
+          query: string,
+          limit: number
+        ) => {
+          const { getRelevantChunks } = await import("./rag.service.ts");
+          const chunks = await getRelevantChunks(appId, query);
+          return chunks.slice(0, limit);
+        },
+      });
     }
 
     // Register custom actions
-    const customActions = await customActionService.list(applicationId);
+    const customActions = await customActionService.listForApp(applicationId);
     if (customActions.length > 0) {
       const execContext: ExecutionContext = {
         applicationId,
@@ -447,28 +445,22 @@ export async function handleWhatsAppMessage(
     registerWebTools(registry);
 
     // Run agent loop
-    console.log("[WhatsAppChat] Running agent loop", { correlationId });
-    const response = await agentLoop({
-      adapter,
-      registry,
+    log.info("Running agent loop", { source: "whatsapp-chat", feature: "agent-loop", correlationId });
+    let responseText = "";
+    for await (const chunk of agentLoop(messages, registry, adapter, {
+      model: modelId,
+      temperature: appConfig.temperature ?? 0.7,
       systemPrompt,
-      messages,
       maxIterations: 10,
-    });
+    })) {
+      if (chunk.type === "text") {
+        responseText += chunk.delta;
+      }
+    }
 
-    // Extract text response
-    const responseText =
-      typeof response.content === "string"
-        ? response.content
-        : response.content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                part.type === "text"
-            )
-            .map((part) => part.text)
-            .join("\n");
-
-    console.log("[WhatsAppChat] Got response", {
+    log.info("Got response", {
+      source: "whatsapp-chat",
+      feature: "agent-loop",
       correlationId,
       length: responseText.length,
     });
@@ -488,25 +480,14 @@ export async function handleWhatsAppMessage(
     );
 
     if (sendResult.error) {
-      const error = new Error(
-        `WhatsApp API error: ${JSON.stringify(sendResult.error)}`
-      );
-      Sentry.captureException(error, {
-        tags: {
-          source: "whatsapp-chat",
-          feature: "send-message",
-        },
-        extra: {
-          correlationId,
-          applicationId,
-          error: sendResult.error,
-          recipientPhone: message.from,
-        },
-      });
-      console.error("[WhatsAppChat] Failed to send message", {
+      log.error("Failed to send message", {
+        source: "whatsapp-chat",
+        feature: "send-message",
         correlationId,
-        error: sendResult.error,
-      });
+        applicationId,
+        sendError: sendResult.error,
+        recipientPhone: message.from,
+      }, new Error(`WhatsApp API error: ${JSON.stringify(sendResult.error)}`));
     }
 
     // Mark original message as read
@@ -516,22 +497,13 @@ export async function handleWhatsAppMessage(
       message.id
     );
   } catch (error) {
-    console.error("[WhatsAppChat] Error generating response", {
+    log.error("Error generating response", {
+      source: "whatsapp-chat",
+      feature: "message-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    Sentry.captureException(error, {
-      tags: {
-        source: "whatsapp-chat",
-        feature: "message-processing",
-      },
-      extra: {
-        correlationId,
-        applicationId,
-        messageFrom: message.from,
-      },
-    });
+      applicationId,
+      messageFrom: message.from,
+    }, error);
 
     // Send error message to user
     try {
@@ -542,11 +514,13 @@ export async function handleWhatsAppMessage(
         "Sorry, I encountered an error processing your message. Please try again."
       );
     } catch (sendError) {
-      console.error("[WhatsAppChat] Failed to send error message", {
+      log.error("Failed to send error message", {
+        source: "whatsapp-chat",
+        feature: "send-error-message",
         correlationId,
-        error:
-          sendError instanceof Error ? sendError.message : String(sendError),
-      });
+        applicationId,
+        recipientPhone: message.from,
+      }, sendError);
     }
   }
 }

@@ -1,8 +1,15 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import PlanCard from "../../../lib/design-system/components/PlanCard.svelte";
   import { Card, Button, toasts } from "$lib/design-system";
-  import { currentOrganization } from "../../../stores/organization";
+  import { captureException } from "$lib/sentry";
+  import { currentOrganization, fetchOrganization } from "../../../stores/organization";
   import { BadgeCheck, ExternalLink } from "lucide-svelte";
+  import {
+    DowngradeDialog,
+    CancelSubscriptionDialog,
+    SubscriptionStatusBanner,
+  } from "../../../lib/design-system/components/billing";
 
   // Plan benefits mapping
   const PlanBenefits: Record<string, string[]> = {
@@ -47,9 +54,38 @@
     ],
   };
 
+  // Tier ordering for comparison
+  const tierOrder: Record<string, number> = {
+    FREE: 0,
+    PRO: 1,
+    TEAM: 2,
+    BUSINESS: 3,
+    ENTERPRISE: 4,
+  };
+
   // State
   let isLoadingPortal = false;
   let loadingTier: string | null = null;
+
+  // Subscription status state
+  let subscriptionStatus: {
+    currentTier: string;
+    pendingDowngradeTier: string | null;
+    downgradeEffectiveAt: Date | null;
+    isCancelled: boolean;
+    subscriptionEndsAt: Date | null;
+    billingPeriodEnd: Date | null;
+  } | null = null;
+  let isLoadingStatus = true;
+  let statusDismissed = false;
+
+  // Dialog state
+  let showDowngradeDialog = false;
+  let showCancelDialog = false;
+  let downgradeTargetTier: string | null = null;
+  let isSchedulingDowngrade = false;
+  let isCanceling = false;
+  let isUndoing = false;
 
   // Plans data
   const plans = [
@@ -118,6 +154,41 @@
     ? PlanBenefits[$currentOrganization.subscriptionTier] || PlanBenefits.FREE
     : PlanBenefits.FREE;
 
+  // Check if there's a pending change to show
+  $: hasPendingDowngrade = subscriptionStatus?.pendingDowngradeTier && !statusDismissed;
+  $: hasPendingCancellation = subscriptionStatus?.isCancelled && !statusDismissed;
+
+  async function fetchSubscriptionStatus() {
+    isLoadingStatus = true;
+    try {
+      const response = await fetch("/api/organization/subscription-status", {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        subscriptionStatus = {
+          ...data,
+          downgradeEffectiveAt: data.downgradeEffectiveAt
+            ? new Date(data.downgradeEffectiveAt)
+            : null,
+          subscriptionEndsAt: data.subscriptionEndsAt
+            ? new Date(data.subscriptionEndsAt)
+            : null,
+          billingPeriodEnd: data.billingPeriodEnd
+            ? new Date(data.billingPeriodEnd)
+            : null,
+        };
+      }
+    } catch (error) {
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "fetchSubscriptionStatus" },
+      });
+    } finally {
+      isLoadingStatus = false;
+    }
+  }
+
   async function handleManageSubscription() {
     isLoadingPortal = true;
     try {
@@ -135,12 +206,18 @@
         window.location.href = url;
       } else {
         const errorData = await response.json();
-        console.error("Failed to create billing portal session:", errorData);
+        captureException(new Error("Failed to create billing portal session"), {
+          tags: { feature: "settings-billing-plan" },
+          extra: { action: "handleManageSubscription", errorData },
+        });
         toasts.error("Error", "Failed to open billing portal");
         isLoadingPortal = false;
       }
     } catch (error) {
-      console.error("Error opening billing portal:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleManageSubscription" },
+      });
       toasts.error("Error", "Failed to open billing portal");
       isLoadingPortal = false;
     }
@@ -149,23 +226,17 @@
   async function handlePlanClick(tier: string) {
     if (!$currentOrganization) return;
 
-    // Check if this would be a downgrade
-    const tierOrder: Record<string, number> = {
-      FREE: 0,
-      PRO: 1,
-      TEAM: 2,
-      BUSINESS: 3,
-      ENTERPRISE: 4,
-    };
     const currentTierLevel = tierOrder[$currentOrganization.subscriptionTier] || 0;
     const newTierLevel = tierOrder[tier] || 0;
 
+    // Check if this would be a downgrade
     if (newTierLevel < currentTierLevel) {
-      if (!confirm("Are you sure you want to downgrade your plan?")) {
-        return;
-      }
+      downgradeTargetTier = tier;
+      showDowngradeDialog = true;
+      return;
     }
 
+    // Upgrade flow - redirect to Stripe checkout
     loadingTier = tier;
     try {
       const response = await fetch(
@@ -180,11 +251,139 @@
       const data = await response.json();
       window.location.href = data.url;
     } catch (error) {
-      console.error("Error generating payment URL:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handlePlanClick", tier },
+      });
       toasts.error("Error", "Failed to generate payment URL. Please try again.");
       loadingTier = null;
     }
   }
+
+  async function handleConfirmDowngrade() {
+    if (!downgradeTargetTier) return;
+
+    isSchedulingDowngrade = true;
+    try {
+      const response = await fetch("/api/organization/schedule-downgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          targetTier: downgradeTargetTier,
+        }),
+      });
+
+      if (response.ok) {
+        toasts.success("Downgrade scheduled", "Your plan will change at the end of your billing period.");
+        showDowngradeDialog = false;
+        statusDismissed = false;
+        await fetchSubscriptionStatus();
+      } else {
+        const errorData = await response.json();
+        toasts.error("Error", errorData.error || "Failed to schedule downgrade");
+      }
+    } catch (error) {
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleConfirmDowngrade", downgradeTargetTier },
+      });
+      toasts.error("Error", "Failed to schedule downgrade. Please try again.");
+    } finally {
+      isSchedulingDowngrade = false;
+      downgradeTargetTier = null;
+    }
+  }
+
+  async function handleCancelSubscription() {
+    showCancelDialog = true;
+  }
+
+  async function handleConfirmCancellation() {
+    isCanceling = true;
+    try {
+      const response = await fetch("/api/organization/cancel-subscription", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        toasts.success("Cancellation scheduled", "Your subscription will end at the billing period end.");
+        showCancelDialog = false;
+        statusDismissed = false;
+        await fetchSubscriptionStatus();
+      } else {
+        const errorData = await response.json();
+        toasts.error("Error", errorData.error || "Failed to cancel subscription");
+      }
+    } catch (error) {
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleConfirmCancellation" },
+      });
+      toasts.error("Error", "Failed to cancel subscription. Please try again.");
+    } finally {
+      isCanceling = false;
+    }
+  }
+
+  async function handleUndoDowngrade() {
+    isUndoing = true;
+    try {
+      const response = await fetch("/api/organization/undo-downgrade", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        toasts.success("Downgrade cancelled", "Your plan will remain unchanged.");
+        await fetchSubscriptionStatus();
+        await fetchOrganization();
+      } else {
+        const errorData = await response.json();
+        toasts.error("Error", errorData.error || "Failed to undo downgrade");
+      }
+    } catch (error) {
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleUndoDowngrade" },
+      });
+      toasts.error("Error", "Failed to undo downgrade. Please try again.");
+    } finally {
+      isUndoing = false;
+    }
+  }
+
+  async function handleUndoCancellation() {
+    isUndoing = true;
+    try {
+      const response = await fetch("/api/organization/undo-cancellation", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        toasts.success("Cancellation undone", "Your subscription will continue.");
+        await fetchSubscriptionStatus();
+        await fetchOrganization();
+      } else {
+        const errorData = await response.json();
+        toasts.error("Error", errorData.error || "Failed to undo cancellation");
+      }
+    } catch (error) {
+      captureException(error, {
+        tags: { feature: "settings-billing-plan" },
+        extra: { action: "handleUndoCancellation" },
+      });
+      toasts.error("Error", "Failed to undo cancellation. Please try again.");
+    } finally {
+      isUndoing = false;
+    }
+  }
+
+  onMount(() => {
+    fetchSubscriptionStatus();
+  });
 </script>
 
 <!-- Page header -->
@@ -194,6 +393,28 @@
 </div>
 
 <div class="billing-sections">
+  <!-- Status Banners -->
+  {#if hasPendingCancellation}
+    <SubscriptionStatusBanner
+      type="cancellation"
+      currentTier={$currentOrganization?.subscriptionTier}
+      effectiveDate={subscriptionStatus?.subscriptionEndsAt}
+      isLoading={isUndoing}
+      on:undo={handleUndoCancellation}
+      on:dismiss={() => (statusDismissed = true)}
+    />
+  {:else if hasPendingDowngrade}
+    <SubscriptionStatusBanner
+      type="downgrade"
+      currentTier={$currentOrganization?.subscriptionTier}
+      pendingTier={subscriptionStatus?.pendingDowngradeTier}
+      effectiveDate={subscriptionStatus?.downgradeEffectiveAt}
+      isLoading={isUndoing}
+      on:undo={handleUndoDowngrade}
+      on:dismiss={() => (statusDismissed = true)}
+    />
+  {/if}
+
   <!-- Current Plan Card -->
   <Card padding="lg" class="current-plan-card">
     <div class="plan-badge">
@@ -218,19 +439,32 @@
       </ul>
 
       {#if $currentOrganization?.subscriptionTier !== "FREE"}
-        <Button
-          variant="outline"
-          on:click={handleManageSubscription}
-          disabled={isLoadingPortal}
-          class="manage-btn"
-        >
-          {#if isLoadingPortal}
-            Opening portal...
-          {:else}
-            Manage Subscription
-            <ExternalLink size={16} />
+        <div class="plan-actions">
+          <Button
+            variant="outline"
+            on:click={handleManageSubscription}
+            disabled={isLoadingPortal}
+            class="manage-btn"
+          >
+            {#if isLoadingPortal}
+              Opening portal...
+            {:else}
+              Manage Subscription
+              <ExternalLink size={16} />
+            {/if}
+          </Button>
+
+          {#if !subscriptionStatus?.isCancelled}
+            <Button
+              variant="ghost"
+              size="sm"
+              on:click={handleCancelSubscription}
+              class="cancel-btn"
+            >
+              Cancel Subscription
+            </Button>
           {/if}
-        </Button>
+        </div>
       {/if}
     </div>
   </Card>
@@ -266,6 +500,29 @@
   </section>
 </div>
 
+<!-- Downgrade Dialog -->
+<DowngradeDialog
+  open={showDowngradeDialog}
+  currentTier={$currentOrganization?.subscriptionTier || "FREE"}
+  targetTier={downgradeTargetTier || "FREE"}
+  isLoading={isSchedulingDowngrade}
+  on:close={() => {
+    showDowngradeDialog = false;
+    downgradeTargetTier = null;
+  }}
+  on:confirm={handleConfirmDowngrade}
+/>
+
+<!-- Cancel Subscription Dialog -->
+<CancelSubscriptionDialog
+  open={showCancelDialog}
+  currentTier={$currentOrganization?.subscriptionTier || "FREE"}
+  billingPeriodEnd={subscriptionStatus?.billingPeriodEnd}
+  isLoading={isCanceling}
+  on:close={() => (showCancelDialog = false)}
+  on:confirm={handleConfirmCancellation}
+/>
+
 <style>
   .page-header {
     margin-bottom: var(--space-8);
@@ -288,7 +545,7 @@
   .billing-sections {
     display: flex;
     flex-direction: column;
-    gap: var(--space-12);
+    gap: var(--space-8);
   }
 
   /* Current Plan Card */
@@ -349,8 +606,23 @@
     flex-shrink: 0;
   }
 
+  .plan-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
   .manage-btn :global(svg) {
     margin-left: var(--space-2);
+  }
+
+  .cancel-btn {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .cancel-btn:hover {
+    color: hsl(0 84.2% 60.2%);
   }
 
   /* Section Header */

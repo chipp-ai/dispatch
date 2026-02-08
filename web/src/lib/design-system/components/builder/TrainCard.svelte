@@ -3,6 +3,7 @@
   import BuilderCard from "./BuilderCard.svelte";
   import { Input } from "$lib/design-system";
   import { toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import ModelSelector from "./ModelSelector.svelte";
   import ModelDetailSheet from "./ModelDetailSheet.svelte";
   import ModelComparisonModal from "./ModelComparisonModal.svelte";
@@ -248,7 +249,10 @@
 
       onKnowledgeSourcesChange(newSources);
     } catch (error) {
-      console.error('Upload error:', error);
+      captureException(error, {
+        tags: { feature: "knowledge-sources" },
+        extra: { context: "file-upload" },
+      });
       toasts.error(error instanceof Error ? error.message : 'Failed to upload files');
     } finally {
       isUploading = false;
@@ -345,7 +349,10 @@
       urlInput = "";
       isAddingUrl = false;
     } catch (error) {
-      console.error('URL upload error:', error);
+      captureException(error, {
+        tags: { feature: "knowledge-sources" },
+        extra: { context: "url-upload" },
+      });
       toasts.error(error instanceof Error ? error.message : 'Failed to add URL');
     } finally {
       isUploading = false;
@@ -368,7 +375,10 @@
       onKnowledgeSourcesChange(newSources);
       toasts.success("Knowledge source removed");
     } catch (error) {
-      console.error('Delete error:', error);
+      captureException(error, {
+        tags: { feature: "knowledge-sources" },
+        extra: { context: "delete-source", sourceId: id },
+      });
       toasts.error(error instanceof Error ? error.message : 'Failed to remove knowledge source');
     }
   }

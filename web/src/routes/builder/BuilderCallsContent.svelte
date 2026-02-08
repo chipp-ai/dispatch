@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { toasts, Button, Badge, Skeleton } from "$lib/design-system";
   import { Phone, Play, Pause, Download, FileText, ChevronDown, ChevronUp } from "lucide-svelte";
 
@@ -70,7 +71,7 @@
       const data = await response.json();
       calls = data.data || [];
     } catch (error) {
-      console.error("Error loading calls:", error);
+      captureException(error, { tags: { feature: "builder-calls" }, extra: { action: "load-calls", appId } });
       toasts.error("Failed to load call history");
     } finally {
       isLoading = false;
@@ -134,7 +135,7 @@
       // Start playing
       await audio.play();
     } catch (error) {
-      console.error("Error playing recording:", error);
+      captureException(error, { tags: { feature: "builder-calls" }, extra: { action: "play-recording", callId } });
       toasts.error("Failed to play recording");
       loadingAudioCallId = null;
     }
@@ -181,7 +182,7 @@
 
       toasts.success("Recording downloaded");
     } catch (error) {
-      console.error("Error downloading recording:", error);
+      captureException(error, { tags: { feature: "builder-calls" }, extra: { action: "download-recording", callId } });
       toasts.error("Failed to download recording");
     } finally {
       downloadingCallId = null;

@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
+import { log } from "@/lib/logger.ts";
 
 import {
   appMiddleware,
@@ -25,6 +26,10 @@ import {
 } from "../../middleware/consumerAuth.ts";
 import { consumerAuthService } from "../../../services/consumer-auth.service.ts";
 import { modelSupportsVideoInput } from "../../../llm/utils/video-capabilities.ts";
+import {
+  sendOtpEmail,
+  type EmailContext,
+} from "../../../services/transactional-email.service.ts";
 
 // ========================================
 // Validation Schemas
@@ -46,27 +51,28 @@ const verifyOtpSchema = z.object({
   otpCode: z.string().length(6),
 });
 
-const magicLinkRequestSchema = z.object({
-  email: z.string().email(),
-});
-
-const magicLinkVerifySchema = z.object({
-  token: z.string().min(1),
-});
-
-const passwordResetRequestSchema = z.object({
-  email: z.string().email(),
-});
-
-const passwordResetSchema = z.object({
-  token: z.string().min(1),
-  password: z.string().min(8),
-});
-
 const profileUpdateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   pictureUrl: z.string().url().optional(),
 });
+
+// ========================================
+// Helpers
+// ========================================
+
+// deno-lint-ignore no-explicit-any
+function getEmailContext(app: any): EmailContext {
+  const brandStyles =
+    typeof app.brandStyles === "string"
+      ? JSON.parse(app.brandStyles)
+      : (app.brandStyles ?? {});
+  return {
+    appName: app.name,
+    appId: app.id,
+    organizationId: app.organizationId,
+    brandColor: brandStyles.primaryColor || "#000000",
+  };
+}
 
 // ========================================
 // Router Setup
@@ -125,9 +131,12 @@ consumerRoutes.post(
         },
       });
 
-      // In production, send OTP via email
-      // For now, return success (OTP would be sent by email service)
-      console.log(`[consumer] OTP for ${body.email}: ${otp}`);
+      // Send OTP via email (fire-and-forget)
+      sendOtpEmail({
+        to: body.email,
+        otpCode: otp,
+        context: getEmailContext(app),
+      }).catch(() => {});
 
       return c.json(
         {
@@ -228,145 +237,6 @@ consumerRoutes.post(
 );
 
 /**
- * POST /:appNameId/auth/magic-link
- * Request a magic link for passwordless login
- */
-consumerRoutes.post(
-  "/:appNameId/auth/magic-link",
-  zValidator("json", magicLinkRequestSchema),
-  async (c) => {
-    const app = c.get("app");
-    const body = c.req.valid("json");
-
-    try {
-      const token = await consumerAuthService.createMagicLink(
-        app.id,
-        body.email
-      );
-
-      // In production, send magic link via email
-      console.log(`[consumer] Magic link token for ${body.email}: ${token}`);
-
-      return c.json({
-        success: true,
-        message: "Magic link sent to your email.",
-      });
-    } catch (error) {
-      // Don't reveal if email exists
-      return c.json({
-        success: true,
-        message: "If an account exists, a magic link has been sent.",
-      });
-    }
-  }
-);
-
-/**
- * POST /:appNameId/auth/magic-link/verify
- * Verify a magic link token
- */
-consumerRoutes.post(
-  "/:appNameId/auth/magic-link/verify",
-  zValidator("json", magicLinkVerifySchema),
-  async (c) => {
-    const app = c.get("app");
-    const body = c.req.valid("json");
-
-    try {
-      const session = await consumerAuthService.verifyMagicLink({
-        applicationId: app.id,
-        token: body.token,
-      });
-
-      // Set session cookie
-      setCookie(c, "consumer_session_id", session.sessionId, {
-        path: "/",
-        httpOnly: true,
-        secure: Deno.env.get("ENVIRONMENT") === "production",
-        sameSite: "Lax",
-        maxAge: 30 * 24 * 60 * 60,
-      });
-
-      return c.json({
-        success: true,
-        consumer: session.consumer,
-        expiresAt: session.expiresAt,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid magic link";
-      return c.json({ error: message }, 401);
-    }
-  }
-);
-
-/**
- * POST /:appNameId/auth/password-reset
- * Request a password reset
- */
-consumerRoutes.post(
-  "/:appNameId/auth/password-reset",
-  zValidator("json", passwordResetRequestSchema),
-  async (c) => {
-    const app = c.get("app");
-    const body = c.req.valid("json");
-
-    try {
-      const token = await consumerAuthService.requestPasswordReset(
-        app.id,
-        body.email
-      );
-
-      // In production, send reset link via email
-      console.log(
-        `[consumer] Password reset token for ${body.email}: ${token}`
-      );
-
-      return c.json({
-        success: true,
-        message: "If an account exists, a password reset link has been sent.",
-      });
-    } catch {
-      // Don't reveal if email exists
-      return c.json({
-        success: true,
-        message: "If an account exists, a password reset link has been sent.",
-      });
-    }
-  }
-);
-
-/**
- * POST /:appNameId/auth/password-reset/confirm
- * Reset password with token
- */
-consumerRoutes.post(
-  "/:appNameId/auth/password-reset/confirm",
-  zValidator("json", passwordResetSchema),
-  async (c) => {
-    const app = c.get("app");
-    const body = c.req.valid("json");
-
-    try {
-      await consumerAuthService.resetPassword(
-        app.id,
-        body.token,
-        body.password
-      );
-
-      return c.json({
-        success: true,
-        message: "Password reset successfully. You can now log in.",
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Password reset failed";
-      return c.json({ error: message }, 400);
-    }
-  }
-);
-
-/**
  * POST /:appNameId/auth/logout
  * Logout and invalidate session
  */
@@ -395,8 +265,12 @@ consumerRoutes.post(
     try {
       const otp = await consumerAuthService.createOtp(app.id, body.email);
 
-      // In production, send OTP via email
-      console.log(`[consumer] OTP for ${body.email}: ${otp}`);
+      // Send OTP via email (fire-and-forget)
+      sendOtpEmail({
+        to: body.email,
+        otpCode: otp,
+        context: getEmailContext(app),
+      }).catch(() => {});
 
       return c.json({
         success: true,
@@ -498,6 +372,7 @@ consumerRoutes.get(
       disclaimerText: settings?.disclaimerText as string | undefined,
       inputPlaceholder: settings?.inputPlaceholder as string | undefined,
       customInstructionsEnabled: settings?.customInstructionsEnabled ?? true,
+      multiplayerEnabled: settings?.multiplayerEnabled ?? false,
     };
 
     // Get pictureUrl from brandStyles (logoUrl field)
@@ -535,6 +410,13 @@ consumerRoutes.route("/", pwaRoutes);
 
 import { consumerChatRoutes } from "./chat.ts";
 consumerRoutes.route("/:appNameId/chat", consumerChatRoutes);
+
+// ========================================
+// Multiplayer Routes
+// ========================================
+
+import { multiplayerRoutes } from "./multiplayer.ts";
+consumerRoutes.route("/:appNameId/chat/multiplayer", multiplayerRoutes);
 
 // ========================================
 // Upload Routes (video for chat)
@@ -593,7 +475,7 @@ consumerRoutes.post("/:appNameId/upload/video", async (c) => {
 
     return c.json({ url });
   } catch (error) {
-    console.error("[consumer-upload] Error uploading video:", error);
+    log.error("Error uploading video", { source: "consumer", feature: "video-upload", appId: c.get("app")?.id }, error);
     return c.json(
       {
         error: "Upload failed",

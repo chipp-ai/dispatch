@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { sql } from "../../../db/client.ts";
 import { BadRequestError } from "../../../utils/errors.ts";
@@ -104,10 +105,7 @@ async function getLicenseFeeComponentId(
     );
 
     if (!componentsRes.ok) {
-      console.error(
-        "[STRIPE PLAN] Failed to fetch pricing plan components:",
-        componentsRes.status
-      );
+      log.error("Failed to fetch pricing plan components", { source: "stripe-api", feature: "pricing-plan-components", pricingPlanId, statusCode: componentsRes.status });
       return null;
     }
 
@@ -122,13 +120,13 @@ async function getLicenseFeeComponentId(
     );
 
     if (!licenseFeeComponent?.id) {
-      console.error("[STRIPE PLAN] No license_fee component found");
+      log.error("No license_fee component found in pricing plan", { source: "stripe-api", feature: "license-fee-component", pricingPlanId });
       return null;
     }
 
     return licenseFeeComponent.id;
   } catch (error) {
-    console.error("[STRIPE PLAN] Error fetching license fee component:", error);
+    log.error("Error fetching license fee component", { source: "stripe-api", feature: "license-fee-component", pricingPlanId }, error);
     return null;
   }
 }
@@ -146,18 +144,17 @@ async function ensureStripeCustomerForOrganization(
     throw new BadRequestError("Stripe is not configured");
   }
 
-  // Get organization details
+  // Get organization details with user info
   const orgs = await sql`
     SELECT
       o.id,
       o.name,
       o.stripe_customer_id,
       o.stripe_sandbox_customer_id,
-      d.email,
-      d.name as developer_name
+      u.email,
+      u.name as developer_name
     FROM app.organizations o
     JOIN app.users u ON u.organization_id = o.id
-    JOIN app.developers d ON d.id = u.id
     WHERE o.id = ${organizationId}
     LIMIT 1
   `;
@@ -250,24 +247,18 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
     return c.json({ error: "Invalid subscription period" }, 400);
   }
 
-  // Get user's workspace and organization
+  // Get user's organization info
   const userResult = await sql`
     SELECT
       u.id as user_id,
-      d.id as developer_id,
-      d.email,
-      d.name as developer_name,
-      d.referral_id,
-      d.active_workspace_id,
-      w.id as workspace_id,
-      w.organization_id,
+      u.id as developer_id,
+      u.email,
+      u.name as developer_name,
+      u.organization_id,
       o.name as organization_name,
-      o.subscription_tier,
-      o.use_sandbox_for_usage_billing
+      o.subscription_tier
     FROM app.users u
-    JOIN app.developers d ON d.id = u.id
-    LEFT JOIN app.workspaces w ON w.id = d.active_workspace_id
-    LEFT JOIN app.organizations o ON o.id = w.organization_id
+    LEFT JOIN app.organizations o ON o.id = u.organization_id
     WHERE u.id = ${user.id}
   `;
 
@@ -281,23 +272,22 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
     return c.json({ error: "No organization found for user" }, 400);
   }
 
-  // Usage-based billing is always enabled
-  const globalSandboxDefault =
-    Deno.env.get("USE_STRIPE_SANDBOX_BY_DEFAULT") === "true";
+  // Usage-based billing is the default for everyone
+  // Mode is determined by:
+  // 1. STRIPE_USE_LIVE_MODE=true forces LIVE mode
+  // 2. ENVIRONMENT=production forces LIVE mode
+  // 3. Otherwise use TEST mode
+  const isProduction = Deno.env.get("ENVIRONMENT") === "production";
+  const useLiveMode =
+    Deno.env.get("STRIPE_USE_LIVE_MODE") === "true" || isProduction;
+  const mode: Mode = useLiveMode ? "LIVE" : "TEST";
 
-  const useSandboxForUsageBilling =
-    userData.use_sandbox_for_usage_billing === true
-      ? true
-      : globalSandboxDefault;
-
-  // Get appropriate Stripe key
-  const stripeKey = getStripeApiKey(useSandboxForUsageBilling);
+  // Get appropriate Stripe key based on mode
+  // useSandbox is inverted: true = use sandbox keys (TEST mode)
+  const stripeKey = getStripeApiKey(!useLiveMode);
   if (!stripeKey) {
     return c.json({ error: "Stripe is not configured" }, 500);
   }
-
-  // Determine mode
-  const mode: Mode = useSandboxForUsageBilling ? "TEST" : "LIVE";
 
   // Get price ID (usage-based billing is always enabled)
   let price: string | undefined;
@@ -327,7 +317,7 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
   const stripeCustomerId = await ensureStripeCustomerForOrganization(
     userData.developer_id,
     userData.organization_id,
-    useSandboxForUsageBilling
+    !useLiveMode // useSandbox = true in TEST mode, false in LIVE mode
   );
 
   // Create Stripe client
@@ -336,8 +326,7 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
   });
 
   const encodedReturnToUrl = returnToUrl.replace(/\s/g, "%20");
-  const clientReferenceId =
-    userData.referral_id || userData.developer_id.toString();
+  const clientReferenceId = userData.developer_id.toString();
 
   // Build checkout session options (usage-based billing is always enabled)
   // Get license fee component ID for v2 billing
@@ -396,7 +385,15 @@ stripeRoutes.get("/plans/payment-url", async (c) => {
 
     return c.json({ url: checkoutSession.url });
   } catch (error) {
-    console.error("[STRIPE] Checkout session creation failed:", error);
+    log.error("Checkout session creation failed", {
+      source: "stripe-api",
+      feature: "checkout-session",
+      tier,
+      period,
+      organizationId: userData.organization_id,
+      developerId: userData.developer_id,
+      stripeCustomerId,
+    }, error);
     if (error instanceof Error) {
       return c.json({ error: `Stripe error: ${error.message}` }, 400);
     }

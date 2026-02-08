@@ -133,21 +133,48 @@
     color: var(--text-primary);
   }
 
-  .nav-item:hover {
+  .nav-item:hover:not(.active) {
     background: var(--bg-secondary);
   }
 
   .nav-item.active {
     font-weight: 700;
-    background: var(--bg-inverse);
-    color: var(--text-inverse);
+    color: var(--color-white);
+    background: linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--bg-inverse) 72%, transparent) 0%,
+      color-mix(in srgb, var(--bg-inverse) 58%, transparent) 100%
+    );
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
     box-shadow:
-      0px 0.48px 1.25px -1.17px rgba(0, 0, 0, 0.1),
-      0px 1.83px 4.76px -2.33px rgba(0, 0, 0, 0.09),
-      0px 8px 20.8px -3.5px rgba(0, 0, 0, 0.05),
-      inset 0px -2px 9px 0px rgba(255, 255, 255, 0.49),
-      0px 0px 0px 2px rgba(0, 0, 0, 0.2);
-    border: 0.5px solid var(--border-secondary);
+      /* Outer depth */
+      0 4px 20px -4px rgba(0, 0, 0, 0.25),
+      0 1px 3px rgba(0, 0, 0, 0.12),
+      /* Inner glass refraction - top edge catch light */
+      inset 0 1px 1px rgba(255, 255, 255, 0.18),
+      /* Inner glass refraction - bottom subtle rim */
+      inset 0 -1px 1px rgba(255, 255, 255, 0.06),
+      /* Brand color ambient glow */
+      0 0 24px -6px var(--brand-color-glow);
+  }
+
+  :global(.dark) .nav-item.active,
+  :global([data-theme="dark"]) .nav-item.active {
+    color: var(--color-white);
+    background: linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--bg-inverse) 22%, transparent) 0%,
+      color-mix(in srgb, var(--bg-inverse) 10%, transparent) 100%
+    );
+    border: 0.5px solid rgba(255, 255, 255, 0.18);
+    box-shadow:
+      0 4px 20px -4px rgba(0, 0, 0, 0.5),
+      0 1px 3px rgba(0, 0, 0, 0.3),
+      inset 0 1px 1px rgba(255, 255, 255, 0.16),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.04),
+      0 0 32px -2px var(--brand-color-glow);
   }
 
   .icon {

@@ -2,7 +2,7 @@
   Consumer Login Page
 
   Login form for end-users (consumers) of published chat applications.
-  Supports email/password login and magic link authentication.
+  Supports email/password login.
 -->
 <script lang="ts">
   import { push } from "svelte-spa-router";
@@ -10,13 +10,10 @@
   import ConsumerLayout from "./ConsumerLayout.svelte";
   import { getAppNameIdFromContext } from "$lib/utils/consumer-context";
 
-  // App is determined by vanity subdomain or injected brand config
   const appNameId = getAppNameIdFromContext();
 
   let email = "";
   let password = "";
-  let showMagicLink = false;
-  let magicLinkSent = false;
   let localError = "";
 
   $: app = $consumerApp;
@@ -38,30 +35,9 @@
     }
   }
 
-  async function handleMagicLink() {
-    localError = "";
-
-    if (!email) {
-      localError = "Please enter your email";
-      return;
-    }
-
-    const result = await consumerAuth.requestMagicLink(appNameId, email);
-
-    if (result.success) {
-      magicLinkSent = true;
-    } else {
-      localError = result.error || "Failed to send magic link";
-    }
-  }
-
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") {
-      if (showMagicLink) {
-        handleMagicLink();
-      } else {
-        handleLogin();
-      }
+      handleLogin();
     }
   }
 </script>
@@ -75,93 +51,56 @@
 
     <h1>{app?.name || "Login"}</h1>
 
-    {#if magicLinkSent}
-      <div class="success-message">
-        <p>Check your email for a magic link to sign in.</p>
-        <button
-          type="button"
-          class="text-button"
-          on:click={() => { magicLinkSent = false; showMagicLink = false; }}
-        >
-          Back to login
-        </button>
-      </div>
-    {:else}
-      <form on:submit|preventDefault={showMagicLink ? handleMagicLink : handleLogin}>
-        {#if localError || $consumerError}
-          <div class="error-message">
-            {localError || $consumerError}
-          </div>
-        {/if}
-
-        <div class="form-group">
-          <label for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="you@example.com"
-            autocomplete="email"
-            on:keydown={handleKeydown}
-          />
+    <form on:submit|preventDefault={handleLogin}>
+      {#if localError || $consumerError}
+        <div class="error-message">
+          {localError || $consumerError}
         </div>
+      {/if}
 
-        {#if !showMagicLink}
-          <div class="form-group">
-            <label for="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              bind:value={password}
-              placeholder="Your password"
-              autocomplete="current-password"
-              on:keydown={handleKeydown}
-            />
-          </div>
-        {/if}
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          bind:value={email}
+          placeholder="you@example.com"
+          autocomplete="email"
+          on:keydown={handleKeydown}
+        />
+      </div>
 
-        <button
-          type="submit"
-          class="submit-button"
-          disabled={$consumerIsLoading}
-        >
-          {#if $consumerIsLoading}
-            Signing in...
-          {:else if showMagicLink}
-            Send Magic Link
-          {:else}
-            Sign In
-          {/if}
-        </button>
-      </form>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          bind:value={password}
+          placeholder="Your password"
+          autocomplete="current-password"
+          on:keydown={handleKeydown}
+        />
+      </div>
 
-      <div class="auth-options">
-        {#if showMagicLink}
-          <button
-            type="button"
-            class="text-button"
-            on:click={() => showMagicLink = false}
-          >
-            Sign in with password instead
-          </button>
+      <button
+        type="submit"
+        class="submit-button"
+        disabled={$consumerIsLoading}
+      >
+        {#if $consumerIsLoading}
+          Signing in...
         {:else}
-          <button
-            type="button"
-            class="text-button"
-            on:click={() => showMagicLink = true}
-          >
-            Sign in with magic link
-          </button>
+          Sign In
         {/if}
-      </div>
+      </button>
+    </form>
 
-      <div class="auth-footer">
-        <p>
-          Don't have an account?
-          <a href="#/chat/signup">Sign up</a>
-        </p>
-      </div>
-    {/if}
+    <div class="auth-footer">
+      <p>
+        Don't have an account?
+        <a href="#/chat/signup">Sign up</a>
+      </p>
+    </div>
   </div>
 </div>
 </ConsumerLayout>
@@ -266,34 +205,6 @@
     color: hsl(var(--destructive));
     font-size: var(--text-sm);
     text-align: left;
-  }
-
-  .success-message {
-    padding: var(--space-4);
-    background: hsl(var(--primary) / 0.1);
-    border-radius: var(--radius-md);
-    color: hsl(var(--foreground));
-  }
-
-  .success-message p {
-    margin-bottom: var(--space-4);
-  }
-
-  .auth-options {
-    margin-top: var(--space-4);
-  }
-
-  .text-button {
-    background: none;
-    border: none;
-    color: var(--consumer-primary, hsl(var(--primary)));
-    font-size: var(--text-sm);
-    cursor: pointer;
-    text-decoration: underline;
-  }
-
-  .text-button:hover {
-    opacity: 0.8;
   }
 
   .auth-footer {
