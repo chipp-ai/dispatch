@@ -353,9 +353,20 @@ jobs:
           FOR API CHANGES: The API server is running at http://localhost:8000.
           Use curl to hit the actual running endpoints and paste the responses.
 
+          ENVIRONMENT VARIABLES:
+          If you need an environment variable, FIRST read .env and .env.example to check what is
+          already configured. Many variables are already set in the CI environment. Only report a
+          missing env var as a blocker AFTER checking both files. If a variable exists in .env but
+          is empty or has a placeholder value, that counts as missing -- stop and report it.
+
+          PRE-EXISTING ISSUES:
+          If you encounter a pre-existing bug, wrong env var name, broken import, or misconfiguration
+          during your work, FIX IT. Do not work around it. Do not say "this is pre-existing so we'll
+          leave it." Every issue you find gets fixed in the same PR.
+
           CRITICAL STOP CONDITIONS:
           If you encounter ANY of the following, STOP IMMEDIATELY:
-          - Missing environment variables or secrets that you cannot create
+          - Missing environment variables or secrets (after checking .env and .env.example)
           - Requirements that are unclear or contradictory
           - Dependencies that are not available or cannot be installed
           - Test failures that indicate a fundamental design issue
