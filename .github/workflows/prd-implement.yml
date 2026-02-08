@@ -89,6 +89,38 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
+      - name: Install MCP browser-devtools dependencies
+        run: cd tools/mcp-browser-devtools && npm ci
+
+      - name: Configure CI MCP servers
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          # Override .mcp.json with CI-appropriate servers (browser + database only)
+          cat > .mcp.json << 'MCPEOF'
+          {
+            "mcpServers": {
+              "browser-devtools": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["tools/mcp-browser-devtools/index.js"],
+                "env": {
+                  "CDP_HOST": "localhost",
+                  "CDP_PORT": "9222"
+                }
+              },
+              "chipp-database": {
+                "type": "stdio",
+                "command": "deno",
+                "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
+                "env": {
+                  "DATABASE_URL": "postgresql://postgres:postgres@localhost:5436/chipp_deno"
+                }
+              }
+            }
+          }
+          MCPEOF
+
       - name: Sanitize branch name
         id: branch
         run: |
@@ -121,6 +153,77 @@ jobs:
           # Run migrations to set up the schema
           deno task db:migrate || echo "Warning: Migration failed (may need manual schema setup)"
 
+      - name: Seed test data
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          psql "$DATABASE_URL" -f scripts/seed-test-data.sql
+
+      - name: Install web dependencies
+        run: cd web && npm ci
+
+      - name: Start dev servers
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          NODE_ENV: development
+          PORT: "8000"
+        run: |
+          mkdir -p .scratch/logs
+
+          # Start Deno API server (with --watch so it picks up Claude's changes)
+          deno task dev > .scratch/logs/api-server.log 2>&1 &
+          API_PID=$!
+          echo "API server started (PID: $API_PID)"
+
+          # Start Vite dev server
+          cd web && npm run dev > ../.scratch/logs/vite-server.log 2>&1 &
+          VITE_PID=$!
+          echo "Vite server started (PID: $VITE_PID)"
+          cd ..
+
+          # Health check API server (wait up to 30s)
+          echo "Waiting for API server at localhost:8000..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "API server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "WARNING: API server not responding after 30s"
+              echo "Last 20 lines of API log:"
+              tail -20 .scratch/logs/api-server.log
+            fi
+            sleep 1
+          done
+
+          # Health check Vite server (wait up to 30s)
+          echo "Waiting for Vite server at localhost:5173..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              echo "Vite server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "WARNING: Vite server not responding after 30s"
+              echo "Last 20 lines of Vite log:"
+              tail -20 .scratch/logs/vite-server.log
+            fi
+            sleep 1
+          done
+
+          echo "Dev servers are running."
+
+      - name: Start Chrome for browser testing
+        run: |
+          # Chrome is pre-installed on ubuntu-latest; start after dev servers are up
+          google-chrome --headless --no-sandbox --disable-gpu \
+            --remote-debugging-port=9222 \
+            --remote-debugging-address=127.0.0.1 \
+            about:blank &
+          sleep 2
+          # Verify Chrome DevTools Protocol is accessible
+          curl -sf http://localhost:9222/json/version && echo "Chrome DevTools ready" || echo "WARNING: Chrome DevTools not responding"
+
       - name: Build implementation prompt
         run: |
           mkdir -p .scratch
@@ -148,6 +251,43 @@ jobs:
           APPROVED IMPLEMENTATION PLAN:
           {d['plan']}
 
+          RUNNING ENVIRONMENT:
+          A full-stack dev environment is running and available:
+          - API server: http://localhost:8000 (Deno with --watch, auto-reloads on file changes)
+          - Frontend: http://localhost:5173 (Vite dev server, hot module reload)
+          - Database: postgresql://postgres:postgres@localhost:5436/chipp_deno (seeded with test data)
+          - Chrome: headless Chrome with DevTools Protocol on port 9222
+          - Server logs: .scratch/logs/api-server.log and .scratch/logs/vite-server.log
+
+          BROWSER TESTING (MCP tools available):
+          You have access to browser-devtools MCP tools for interacting with Chrome.
+          Use these tools -- do NOT write puppeteer scripts:
+          - mcp__browser-devtools__browser_navigate: Navigate to a URL
+          - mcp__browser-devtools__browser_take_screenshot: Take a screenshot (saves to .scratch/screenshots/)
+          - mcp__browser-devtools__browser_click: Click elements by CSS selector or text
+          - mcp__browser-devtools__browser_type: Type into input fields
+          - mcp__browser-devtools__browser_get_element: Inspect element text/attributes
+          - mcp__browser-devtools__browser_wait_for: Wait for elements to appear
+          - mcp__browser-devtools__browser_get_console_logs: Check for console errors
+          - mcp__browser-devtools__browser_get_network_requests: Check API calls
+          - mcp__browser-devtools__browser_execute_js: Run JS in the browser context
+          Use these to verify your implementation works visually before committing.
+
+          DATABASE (MCP tools available):
+          You have access to chipp-database MCP tools:
+          - mcp__chipp-database__db_query: Run SELECT queries
+          - mcp__chipp-database__db_execute: Run INSERT/UPDATE/DELETE
+          - mcp__chipp-database__db_list_tables: List tables
+          - mcp__chipp-database__db_describe_table: Show table schema
+          Use these to verify database changes work correctly.
+
+          Test data in the database:
+          - Organization: id=11111111-1111-1111-1111-111111111111, name='Test Organization'
+          - User: id=22222222-2222-2222-2222-222222222222, email='test-developer@example.com'
+          - Application: id=00000000-0000-0000-0000-000000000003, app_name_id='test-chat-app'
+          - Consumer: id=44444444-4444-4444-4444-444444444444, email='test-consumer@example.com'
+          - Session: id=00000000-0000-0000-0000-000000000005 (valid for 30 days)
+
           Instructions:
           1. Read CLAUDE.md first to understand the codebase conventions
           2. Create a feature branch: git checkout -b feat/{d['identifier'].lower().replace(' ', '-')}
@@ -161,7 +301,7 @@ jobs:
              a. deno check main.ts          (type checking)
              b. deno lint                    (linting -- covers src/ AND dispatch/)
              c. deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi src/__tests__/llm/normalization/ src/__tests__/llm/normalize_history_test.ts
-             d. cd web && npm ci && npm run check && npm run build  (Svelte type check + build)
+             d. cd web && npm run check && npm run build  (Svelte type check + build -- npm ci already done)
              If ANY check fails, fix the issue and re-run ALL checks until they pass.
              Fix pre-existing failures too -- the PR must be green.
           5. Commit your changes with a descriptive message referencing {d['identifier']}
@@ -196,15 +336,23 @@ jobs:
           ### Evidence
           <This section depends on the type of change:>
 
-          FOR UI CHANGES: Start the dev server (./scripts/dev.sh or deno task dev),
-          install google-chrome-stable if not present, then use puppeteer or similar
-          to capture screenshots of the changed pages. Save screenshots to .scratch/screenshots/.
-          Reference them here: ![description](.scratch/screenshots/filename.png)
+          FOR UI CHANGES (MANDATORY SCREENSHOTS):
+          Use the browser-devtools MCP tools to test and screenshot your changes:
+          1. Navigate to the changed page: mcp__browser-devtools__browser_navigate
+          2. Interact with UI elements: browser_click, browser_type, browser_wait_for
+          3. Take screenshots: mcp__browser-devtools__browser_take_screenshot
+          4. Check for console errors: mcp__browser-devtools__browser_get_console_logs
+          Save screenshots to .scratch/screenshots/ and reference them in the summary.
+          You MUST take at least one screenshot for any change that affects the UI.
 
-          FOR DATABASE CHANGES: Show the migration SQL, run it against the test database,
-          and demonstrate a query that proves the schema change works. Paste the output here.
+          FOR DATABASE CHANGES: Use the chipp-database MCP tools:
+          1. Run the migration: deno task db:migrate
+          2. Verify with mcp__chipp-database__db_query or db_describe_table
+          Paste the query results in the summary as proof.
 
-          FOR API CHANGES: Show example curl commands and their responses.
+          FOR API CHANGES: The API server is running at http://localhost:8000.
+          Use curl to hit the actual running endpoints and paste the responses.
+          Also check browser_get_network_requests if the UI calls these endpoints.
 
           FOR LOGIC/REFACTOR CHANGES: Show before/after code snippets or test output
           that proves the change works correctly.
@@ -244,8 +392,9 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
           BRANCH_NAME: ${{ steps.branch.outputs.name }}
         run: |
+          mkdir -p .scratch/screenshots
           PROMPT=$(cat .scratch/implementation-prompt.md)
-          claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+          claude --print --dangerously-skip-permissions --mcp-config .mcp.json "$PROMPT" 2>&1 | tee .scratch/claude-output.log
 
       - name: Verify PR checks pass
         id: verify
@@ -274,7 +423,7 @@ jobs:
           fi
 
           echo "=== svelte build ==="
-          if ! (cd web && npm ci && npm run check && npm run build) 2>&1 | tee .scratch/verify-svelte.log; then
+          if ! (cd web && npm run check && npm run build) 2>&1 | tee .scratch/verify-svelte.log; then
             FAILURES="${FAILURES}svelte-build "
           fi
 
@@ -306,7 +455,7 @@ jobs:
           After fixing, commit with a message like 'fix: resolve PR check failures for ISSUE_ID'.
           Do NOT push."
 
-          claude --print --dangerously-skip-permissions "$FIX_PROMPT" 2>&1 | tee -a .scratch/claude-output.log
+          claude --print --dangerously-skip-permissions --mcp-config .mcp.json "$FIX_PROMPT" 2>&1 | tee -a .scratch/claude-output.log
 
       - name: Re-verify after fix
         if: steps.verify.outputs.checks_failed == 'true'
