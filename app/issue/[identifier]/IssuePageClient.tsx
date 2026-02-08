@@ -511,9 +511,11 @@ function StatusIcon({ status }: { status: string }) {
 function AgentActivityItem({
   activity,
   isLatest,
+  isAgentActive,
 }: {
   activity: AgentActivity;
   isLatest: boolean;
+  isAgentActive: boolean;
 }) {
   const config = activityTypeConfig[activity.type] || activityTypeConfig.action;
 
@@ -522,7 +524,7 @@ function AgentActivityItem({
       className={`flex gap-3 p-2.5 rounded-lg transition-all duration-300 relative ${isLatest ? "animate-slide-in" : ""}`}
       style={{ backgroundColor: isLatest ? config.bgColor : "transparent" }}
     >
-      {/* Icon with pulse effect for latest */}
+      {/* Icon with pulse effect for latest - only when agent is actively running */}
       <div className="relative flex-shrink-0">
         <div
           className="w-7 h-7 rounded-lg flex items-center justify-center text-sm"
@@ -530,7 +532,7 @@ function AgentActivityItem({
         >
           {config.icon}
         </div>
-        {isLatest && (
+        {isLatest && isAgentActive && (
           <span className="absolute -top-0.5 -right-0.5 w-2 h-2">
             <span
               className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
@@ -1860,6 +1862,10 @@ export default function IssuePageClient() {
                         key={activity.id}
                         activity={activity}
                         isLatest={index === agentActivities.length - 1}
+                        isAgentActive={
+                          issue.agent_status === "investigating" ||
+                          issue.agent_status === "implementing"
+                        }
                       />
                     ))}
 
