@@ -175,12 +175,43 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          # Run Claude Code with streaming output
+          # Claude CLI buffers ALL output when stdout is not a TTY.
+          # Use `script` to create a pseudo-TTY, forcing line-buffered output.
+          cat > .scratch/run-claude.sh << 'RUNEOF'
+          #!/bin/bash
           PROMPT=$(cat .scratch/investigation-prompt.md)
-          claude --print --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT" 2>&1 \
-            | tee .scratch/claude-raw.log \
-            | python3 .scratch/stream-filter.py \
-            | tee .scratch/claude-output.log
+          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
+          RUNEOF
+          chmod +x .scratch/run-claude.sh
+
+          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude started (PID: $CLAUDE_PID)"
+
+          PREV_LINES=0
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 15
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+              PREV_LINES=$CURR_LINES
+            else
+              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines)"
+            fi
+          done
+          wait $CLAUDE_PID
+          CLAUDE_EXIT=$?
+          echo "=== Claude exited with code $CLAUDE_EXIT ==="
+
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py
+          fi
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
+          exit $CLAUDE_EXIT
 
           # Ensure investigation report exists even if Claude didn't create one
           if [ ! -f .scratch/investigation-report.md ]; then
