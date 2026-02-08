@@ -390,17 +390,58 @@ jobs:
         run: |
           mkdir -p .scratch/screenshots
 
-          # Background heartbeat: tail the log and post progress every 60s
-          # Completely separate from Claude's process -- just reads the tee'd file
+          # Create a stream-json to human-readable filter script
+          cat > .scratch/stream-filter.py << 'PYEOF'
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  event = json.loads(line)
+                  t = event.get("type", "")
+                  if t == "assistant":
+                      msg = event.get("message", {})
+                      for c in msg.get("content", []):
+                          if c.get("type") == "text" and c.get("text"):
+                              print(c["text"], flush=True)
+                          elif c.get("type") == "tool_use":
+                              name = c.get("name", "unknown")
+                              inp = c.get("input", {})
+                              # Show a compact summary of tool calls
+                              summary_parts = []
+                              for k, v in list(inp.items())[:3]:
+                                  val = str(v)[:80]
+                                  summary_parts.append(f"{k}={val}")
+                              summary = ", ".join(summary_parts)
+                              print(f"[TOOL] {name}({summary})", flush=True)
+                  elif t == "tool_result":
+                      # Show brief tool result (truncated)
+                      content = event.get("content", "")
+                      if isinstance(content, list):
+                          content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                      preview = str(content)[:200]
+                      if len(str(content)) > 200:
+                          preview += "..."
+                      print(f"[RESULT] {preview}", flush=True)
+                  elif t == "result":
+                      cost = event.get("total_cost_usd", 0)
+                      turns = event.get("num_turns", 0)
+                      print(f"\n[COMPLETED] Cost: ${cost:.2f}, Turns: {turns}", flush=True)
+              except (json.JSONDecodeError, KeyError):
+                  # Not JSON or unexpected format - print as-is
+                  print(line, flush=True)
+          PYEOF
+
+          # Background heartbeat: tail the human-readable log and post progress every 60s
           if [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
             (
               PREV_HASH=""
               while true; do
                 sleep 60
                 [ -f .scratch/claude-output.log ] || continue
-                LAST_LINES=$(tail -20 .scratch/claude-output.log 2>/dev/null)
+                LAST_LINES=$(tail -30 .scratch/claude-output.log 2>/dev/null)
                 [ -z "$LAST_LINES" ] && continue
-                # Only post if content changed since last heartbeat
                 CURR_HASH=$(echo "$LAST_LINES" | md5sum | cut -d' ' -f1)
                 [ "$CURR_HASH" = "$PREV_HASH" ] && continue
                 PREV_HASH="$CURR_HASH"
@@ -416,7 +457,14 @@ jobs:
           fi
 
           PROMPT=$(cat .scratch/implementation-prompt.md)
-          claude --print --dangerously-skip-permissions --mcp-config .mcp.json "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+          # Use stream-json for real-time output (--print text mode buffers everything)
+          # Raw JSON -> tee to raw log -> filter to readable text -> tee to readable log + stdout
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$PROMPT" 2>&1 \
+            | tee .scratch/claude-raw.log \
+            | python3 .scratch/stream-filter.py \
+            | tee .scratch/claude-output.log
 
           # Stop heartbeat when Claude finishes
           [ -n "${HEARTBEAT_PID:-}" ] && kill $HEARTBEAT_PID 2>/dev/null || true
@@ -480,7 +528,11 @@ jobs:
           After fixing, commit with a message like 'fix: resolve PR check failures for ISSUE_ID'.
           Do NOT push."
 
-          claude --print --dangerously-skip-permissions --mcp-config .mcp.json "$FIX_PROMPT" 2>&1 | tee -a .scratch/claude-output.log
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$FIX_PROMPT" 2>&1 \
+            | tee -a .scratch/claude-raw.log \
+            | python3 .scratch/stream-filter.py \
+            | tee -a .scratch/claude-output.log
 
       - name: Re-verify after fix
         if: steps.verify.outputs.checks_failed == 'true'
@@ -731,6 +783,40 @@ jobs:
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Upload full agent log
+        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          LOG_FILE=".scratch/claude-output.log"
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "No output log found, skipping"
+            exit 0
+          fi
+
+          # Truncate to ~500KB to stay within reasonable API limits
+          LOG_CONTENT=$(head -c 512000 "$LOG_FILE")
+          FULL_SIZE=$(wc -c < "$LOG_FILE")
+          if [ "$FULL_SIZE" -gt 512000 ]; then
+            LOG_CONTENT="${LOG_CONTENT}
+
+... [truncated - full log was $(( FULL_SIZE / 1024 ))KB]"
+          fi
+
+          # Post the full log as an agent_full_log activity
+          jq -n \
+            --arg type "agent_full_log" \
+            --arg content "$LOG_CONTENT" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}' \
+            > .scratch/full-log-payload.json
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @.scratch/full-log-payload.json || echo "Warning: Failed to upload full log (non-fatal)"
+
+          echo "Full log uploaded ($(( FULL_SIZE / 1024 ))KB)"
 
       - name: Report failure
         if: failure() && steps.check-blocker.outputs.blocked != 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
