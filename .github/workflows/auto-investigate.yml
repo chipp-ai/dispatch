@@ -31,6 +31,10 @@ on:
         description: "Error fingerprint for dedup reference"
         required: false
         type: string
+      additional_context:
+        description: "Additional instructions from human retry (optional)"
+        required: false
+        type: string
 
 # Only one investigation per issue at a time
 concurrency:
@@ -61,6 +65,7 @@ jobs:
       INPUT_SOURCE: ${{ inputs.source }}
       INPUT_FEATURE: ${{ inputs.feature }}
       INPUT_ERROR_FINGERPRINT: ${{ inputs.error_fingerprint }}
+      INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
@@ -128,7 +133,10 @@ jobs:
           Source: ${INPUT_SOURCE}
           Feature: ${INPUT_FEATURE}
           Error Fingerprint: ${INPUT_ERROR_FINGERPRINT}
-
+          $([ -n "${INPUT_ADDITIONAL_CONTEXT}" ] && echo "
+          ADDITIONAL CONTEXT FROM HUMAN:
+          ${INPUT_ADDITIONAL_CONTEXT}
+          ")
           Instructions:
           1. Read CLAUDE.md first to understand the codebase
           2. Run a thorough autonomous investigation following the /autonomous-investigation methodology
@@ -142,6 +150,23 @@ jobs:
           6. If you cannot identify a confident fix, that is fine - just write the investigation report
           7. Do NOT attempt fixes you are not confident about
           8. Do NOT push any branches - just prepare the commit locally
+
+          MANDATORY - RUN RESULT DECLARATION:
+          Before exiting, you MUST write .scratch/run-result.json with:
+          {
+            "outcome": "completed|no_changes_needed|blocked|needs_human_decision|investigation_complete|failed",
+            "summary": "1-2 sentence explanation of your decision",
+            "changes_made": true/false,
+            "files_changed": ["list", "of", "paths"],
+            "pr_needed": true/false
+          }
+
+          - "completed": You identified and committed a fix. Set pr_needed=true, changes_made=true.
+          - "no_changes_needed": The error is already fixed or cannot reproduce. Set pr_needed=false.
+          - "investigation_complete": You wrote findings but no confident fix. Set pr_needed=false.
+          - "blocked": Missing info needed from a human. Set pr_needed=false.
+          - "needs_human_decision": Multiple valid approaches, human should pick. Set pr_needed=false.
+          - "failed": Could not investigate. Set pr_needed=false.
           PROMPT_BOUNDARY
           sed -i 's/^          //' .scratch/investigation-prompt.md
 
@@ -194,8 +219,19 @@ jobs:
             [ -f .scratch/claude-raw.log ] || continue
             CURR_LINES=$(wc -l < .scratch/claude-raw.log)
             if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
-              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
-                | python3 -u .scratch/stream-filter.py
+              CHUNK=$(sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$CHUNK"
+
+              # Stream to Dispatch terminal viewer
+              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 &
+              fi
+
               PREV_LINES=$CURR_LINES
             else
               echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines)"
@@ -207,8 +243,16 @@ jobs:
 
           FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
           if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
-            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
-              | python3 -u .scratch/stream-filter.py
+            FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py)
+            echo "$FINAL_CHUNK"
+            if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
+                curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                  -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  -H "Content-Type: application/json" \
+                  -d @- > /dev/null 2>&1 || true
+            fi
           fi
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
 
@@ -245,6 +289,37 @@ jobs:
             } > .scratch/investigation-report.md
           fi
 
+      - name: Parse run result
+        id: run-result
+        if: always()
+        run: |
+          if [ ! -f .scratch/run-result.json ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "Agent exited without declaring an outcome" > .scratch/outcome-summary.txt
+            echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+            echo "changes_made=false" >> "$GITHUB_OUTPUT"
+            echo "Run outcome: failed (no run-result.json)"
+            exit 0
+          fi
+
+          OUTCOME=$(jq -r '.outcome // "failed"' .scratch/run-result.json)
+          SUMMARY=$(jq -r '.summary // "No summary provided"' .scratch/run-result.json)
+          PR_NEEDED=$(jq -r '.pr_needed // false' .scratch/run-result.json)
+          CHANGES_MADE=$(jq -r '.changes_made // false' .scratch/run-result.json)
+
+          case "$OUTCOME" in
+            completed|no_changes_needed|blocked|needs_human_decision|investigation_complete|failed) ;;
+            *) OUTCOME="failed"; SUMMARY="Invalid outcome: $OUTCOME" ;;
+          esac
+
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" > .scratch/outcome-summary.txt
+          echo "pr_needed=$PR_NEEDED" >> "$GITHUB_OUTPUT"
+          echo "changes_made=$CHANGES_MADE" >> "$GITHUB_OUTPUT"
+
+          echo "Run outcome: $OUTCOME"
+          echo "Summary: $SUMMARY"
+
       - name: Check for fix
         id: check-fix
         run: |
@@ -265,7 +340,7 @@ jobs:
 
       - name: Push branch and create PR
         id: create-pr
-        if: steps.check-fix.outputs.fix_attempted == 'true'
+        if: steps.run-result.outputs.pr_needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -303,6 +378,7 @@ jobs:
           PR_URL: ${{ steps.create-pr.outputs.pr_url }}
           FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
           JOB_STATUS: ${{ job.status }}
+          OUTCOME: ${{ steps.run-result.outputs.outcome }}
         run: |
           # Determine spawn status based on job outcome
           if [ "$JOB_STATUS" = "success" ]; then
@@ -364,14 +440,22 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity to Chipp Issues (non-fatal)"
 
-          # Update spawn status with cost data
+          # Read outcome summary from file
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          # Update spawn status with cost data and outcome
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "$SPAWN_STATUS" \
             --arg spawn_completed_at "$TIMESTAMP" \
             --arg cost_usd "$COST_USD" \
             --arg num_turns "$NUM_TURNS" \
             --arg model "$MODEL" \
-            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model}')
+            --arg run_outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
 
           curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \

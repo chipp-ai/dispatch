@@ -65,7 +65,18 @@ export interface Issue {
   plan_approved_by: string | null;
   spawn_type: SpawnType | null;
   spawn_attempt_count: number;
+  spawn_status: string | null;
+  spawn_run_id: string | null;
+  spawn_started_at: Date | null;
+  spawn_completed_at: Date | null;
   blocked_reason: string | null;
+  // Cost tracking
+  cost_usd: number | null;
+  model: string | null;
+  num_turns: number | null;
+  // Run outcome tracking
+  run_outcome: string | null;
+  outcome_summary: string | null;
 }
 
 export interface IssueWithRelations extends Issue {
@@ -109,11 +120,16 @@ export interface UpdateIssueInput {
   plan_approved_by?: string | null;
   spawn_type?: SpawnType | null;
   spawn_attempt_count?: number;
+  spawn_status?: string | null;
+  spawn_run_id?: string | null;
   blocked_reason?: string | null;
   // Cost tracking fields
   cost_usd?: string | number | null;
   model?: string | null;
   num_turns?: string | number | null;
+  // Run outcome tracking
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 export async function createIssue(
@@ -328,6 +344,10 @@ export async function updateIssue(
         cost_usd = COALESCE(cost_usd, 0) + COALESCE($23, 0),
         model = COALESCE($24, model),
         num_turns = COALESCE(num_turns, 0) + COALESCE($25, 0),
+        run_outcome = COALESCE($26, run_outcome),
+        outcome_summary = COALESCE($27, outcome_summary),
+        spawn_status = COALESCE($28, spawn_status),
+        spawn_run_id = COALESCE($29, spawn_run_id),
         updated_at = NOW()
       WHERE id = $7
       RETURNING *`,
@@ -357,6 +377,10 @@ export async function updateIssue(
         costIncrement,
         input.model,
         turnsIncrement,
+        input.run_outcome,
+        input.outcome_summary,
+        input.spawn_status,
+        input.spawn_run_id,
       ]
     );
 
@@ -617,6 +641,8 @@ export interface BoardIssue {
   plan_status?: string | null;
   blocked_reason?: string | null;
   cost_usd?: number | null;
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 export async function getIssueForBoard(
@@ -636,11 +662,14 @@ export async function getIssueForBoard(
     plan_status: string | null;
     blocked_reason: string | null;
     cost_usd: number | null;
+    run_outcome: string | null;
+    outcome_summary: string | null;
   }>(
     `SELECT
       i.id, i.identifier, i.title, i.description, i.priority, i.status_id,
       i.assignee_id, a.name as assignee_name, i.created_at,
-      i.agent_status, i.plan_status, i.blocked_reason, i.cost_usd
+      i.agent_status, i.plan_status, i.blocked_reason, i.cost_usd,
+      i.run_outcome, i.outcome_summary
     FROM chipp_issue i
     LEFT JOIN chipp_agent a ON i.assignee_id = a.id
     WHERE i.id = $1 OR i.identifier = $1`,
@@ -678,6 +707,8 @@ export async function getIssueForBoard(
     plan_status: issue.plan_status,
     blocked_reason: issue.blocked_reason,
     cost_usd: issue.cost_usd ? parseFloat(String(issue.cost_usd)) : null,
+    run_outcome: issue.run_outcome,
+    outcome_summary: issue.outcome_summary,
   };
 }
 
@@ -700,6 +731,13 @@ export interface AgentActivityMetadata {
   file?: string;
   tokens?: number;
   duration_ms?: number;
+  run_url?: string;
+  run_id?: string;
+  workflow_type?: string;
+  pr_url?: string;
+  cancelled_run_id?: string | null;
+  gh_cancelled?: boolean;
+  [key: string]: unknown;
 }
 
 export interface AgentActivity {

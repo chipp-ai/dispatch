@@ -12,13 +12,15 @@ interface TerminalMessage {
 interface TerminalViewerProps {
   issueIdentifier: string;
   isAgentActive: boolean;
+  sseLines?: string[];
 }
 
 export default function TerminalViewer({
   issueIdentifier,
   isAgentActive,
+  sseLines = [],
 }: TerminalViewerProps) {
-  const [lines, setLines] = useState<string[]>([]);
+  const [wsLines, setWsLines] = useState<string[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "connected" | "disconnected" | "error"
@@ -28,12 +30,24 @@ export default function TerminalViewer({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Combine WebSocket lines and SSE lines
+  const allLines = [...wsLines, ...sseLines];
+
+  // Determine connection status: SSE lines mean CI is streaming even without WebSocket
+  const hasSSEData = sseLines.length > 0;
+  const effectiveStatus = hasSSEData && !isConnected ? "connected" : connectionStatus;
+
   // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
   }, []);
+
+  // Auto-scroll when new SSE lines arrive
+  useEffect(() => {
+    scrollToBottom();
+  }, [sseLines.length, scrollToBottom]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -53,10 +67,6 @@ export default function TerminalViewer({
     ws.onopen = () => {
       setIsConnected(true);
       setConnectionStatus("connected");
-      setLines((prev) => [
-        ...prev,
-        "\x1b[32m[Terminal] Connected to agent stream\x1b[0m\n",
-      ]);
     };
 
     ws.onmessage = (event) => {
@@ -64,22 +74,22 @@ export default function TerminalViewer({
         const message: TerminalMessage = JSON.parse(event.data);
 
         if (message.type === "output") {
-          setLines((prev) => [...prev, message.data]);
+          setWsLines((prev) => [...prev, message.data]);
           scrollToBottom();
         } else if (message.type === "status") {
-          setLines((prev) => [
+          setWsLines((prev) => [
             ...prev,
             `\x1b[33m[Status] ${message.data}\x1b[0m\n`,
           ]);
         } else if (message.type === "error") {
-          setLines((prev) => [
+          setWsLines((prev) => [
             ...prev,
             `\x1b[31m[Error] ${message.data}\x1b[0m\n`,
           ]);
         }
       } catch {
         // Raw text message
-        setLines((prev) => [...prev, event.data]);
+        setWsLines((prev) => [...prev, event.data]);
       }
       scrollToBottom();
     };
@@ -87,10 +97,6 @@ export default function TerminalViewer({
     ws.onclose = () => {
       setIsConnected(false);
       setConnectionStatus("disconnected");
-      setLines((prev) => [
-        ...prev,
-        "\x1b[33m[Terminal] Disconnected from agent stream\x1b[0m\n",
-      ]);
 
       // Auto-reconnect if agent is still active
       if (isAgentActive) {
@@ -132,7 +138,7 @@ export default function TerminalViewer({
 
   // Clear terminal
   const clearTerminal = () => {
-    setLines([]);
+    setWsLines([]);
   };
 
   // Parse ANSI codes for display (simplified)
@@ -194,7 +200,7 @@ export default function TerminalViewer({
   };
 
   // Don't render if agent is idle and no lines
-  if (!isAgentActive && lines.length === 0) {
+  if (!isAgentActive && allLines.length === 0) {
     return null;
   }
 
@@ -234,21 +240,21 @@ export default function TerminalViewer({
           <div className="flex items-center gap-1.5">
             <span
               className={`w-2 h-2 rounded-full ${
-                connectionStatus === "connected"
+                effectiveStatus === "connected"
                   ? "bg-[#4ade80]"
-                  : connectionStatus === "connecting"
+                  : effectiveStatus === "connecting"
                     ? "bg-[#facc15] animate-pulse"
-                    : connectionStatus === "error"
+                    : effectiveStatus === "error"
                       ? "bg-[#f87171]"
                       : "bg-[#6b7280]"
               }`}
             />
             <span className="text-[10px] text-[#606060]">
-              {connectionStatus === "connected"
+              {effectiveStatus === "connected"
                 ? "Live"
-                : connectionStatus === "connecting"
+                : effectiveStatus === "connecting"
                   ? "Connecting..."
-                  : connectionStatus === "error"
+                  : effectiveStatus === "error"
                     ? "Error"
                     : "Disconnected"}
             </span>
@@ -304,14 +310,14 @@ export default function TerminalViewer({
               "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', monospace",
           }}
         >
-          {lines.length === 0 ? (
+          {allLines.length === 0 ? (
             <div className="text-[#505050] italic">
               {isAgentActive
                 ? "Waiting for terminal output..."
                 : "No terminal output yet."}
             </div>
           ) : (
-            lines.map((line, index) => <div key={index}>{parseAnsi(line)}</div>)
+            allLines.map((line, index) => <div key={index}>{parseAnsi(line)}</div>)
           )}
         </div>
       )}

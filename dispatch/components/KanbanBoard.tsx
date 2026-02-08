@@ -25,6 +25,8 @@ interface Issue {
   plan_status?: string;
   blocked_reason?: string | null;
   cost_usd?: number | null;
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 interface KanbanBoardProps {
@@ -206,7 +208,7 @@ export default function KanbanBoard({
         </div>
       )}
 
-      <div className="flex gap-4 flex-1 overflow-x-auto pb-4 min-h-0">
+      <div className="flex gap-3 md:gap-4 flex-1 overflow-x-auto pb-4 min-h-0 snap-x snap-mandatory md:snap-none">
       {sortedStatuses.map((status) => {
         const columnIssues = filteredIssues.filter(
           (i) => i.status_id === status.id
@@ -216,7 +218,7 @@ export default function KanbanBoard({
         return (
           <div
             key={status.id}
-            className={`flex-shrink-0 w-[280px] flex flex-col rounded-lg transition-colors h-full ${
+            className={`flex-shrink-0 w-[85vw] sm:w-[300px] md:w-[280px] flex flex-col rounded-lg transition-colors h-full snap-start ${
               isDragOver ? "bg-[#5e6ad2]/5" : "bg-transparent"
             }`}
             onDragOver={(e) => handleDragOver(e, status.id)}

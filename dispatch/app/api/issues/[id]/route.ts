@@ -106,6 +106,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       cost_usd: body.cost_usd,
       model: body.model,
       num_turns: body.num_turns,
+      // Run outcome tracking
+      run_outcome: body.run_outcome,
+      outcome_summary: body.outcome_summary,
     });
 
     if (!issue) {

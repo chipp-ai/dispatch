@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import TerminalViewer from "@/components/TerminalViewer";
 import PRCard from "@/components/PRCard";
 import IssueTimeline from "@/components/IssueTimeline";
+import RetrySpawnDialog from "@/components/RetrySpawnDialog";
 
 interface Status {
   id: string;
@@ -127,6 +128,9 @@ interface Issue {
   cost_usd?: number | null;
   model?: string | null;
   num_turns?: number | null;
+  // Run outcome tracking
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 // Generate consistent color from string
@@ -185,6 +189,115 @@ const agentStatusConfig: Record<
     bgColor: "#facc1520",
   },
 };
+
+// Run outcome config
+const outcomeConfig: Record<
+  string,
+  { label: string; color: string; shortLabel: string }
+> = {
+  completed: { label: "Completed", color: "#4ade80", shortLabel: "Completed" },
+  no_changes_needed: {
+    label: "No Changes Needed",
+    color: "#60a5fa",
+    shortLabel: "No Changes",
+  },
+  blocked: { label: "Blocked", color: "#f87171", shortLabel: "Blocked" },
+  needs_human_decision: {
+    label: "Needs Decision",
+    color: "#facc15",
+    shortLabel: "Needs Decision",
+  },
+  investigation_complete: {
+    label: "Investigation Done",
+    color: "#a78bfa",
+    shortLabel: "Investigated",
+  },
+  failed: { label: "Failed", color: "#f87171", shortLabel: "Failed" },
+};
+
+function OutcomeIcon({
+  outcome,
+  className = "w-4 h-4",
+}: {
+  outcome: string;
+  className?: string;
+}) {
+  const color = outcomeConfig[outcome]?.color || "#6b7280";
+  switch (outcome) {
+    case "completed":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke={color} strokeWidth="1.5" />
+          <path
+            d="M5 8l2 2 4-4"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "no_changes_needed":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke={color} strokeWidth="1.5" />
+          <path
+            d="M8 5v4"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+          <circle cx="8" cy="11.5" r="0.75" fill={color} />
+        </svg>
+      );
+    case "blocked":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke={color} strokeWidth="1.5" />
+          <rect x="5.5" y="5.5" width="5" height="5" rx="0.5" fill={color} />
+        </svg>
+      );
+    case "needs_human_decision":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke={color} strokeWidth="1.5" />
+          <path
+            d="M6.5 6a1.5 1.5 0 0 1 3 0c0 1-1.5 1-1.5 2.5"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+          <circle cx="8" cy="11.5" r="0.75" fill={color} />
+        </svg>
+      );
+    case "investigation_complete":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="7" cy="7" r="4.5" stroke={color} strokeWidth="1.5" />
+          <path
+            d="M10.5 10.5L14 14"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    case "failed":
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke={color} strokeWidth="1.5" />
+          <path
+            d="M5.5 5.5l5 5M10.5 5.5l-5 5"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 // Agent activity type config
 const activityTypeConfig: Record<
@@ -579,12 +692,18 @@ export default function IssuePageClient() {
   const [showActivityFeed, setShowActivityFeed] = useState(true);
   const activityFeedRef = useRef<HTMLDivElement>(null);
 
+  // Live terminal output from CI
+  const [terminalLines, setTerminalLines] = useState<string[]>([]);
+
   // Plan review
   const [planRejectFeedback, setPlanRejectFeedback] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [planActionLoading, setPlanActionLoading] = useState(false);
   const [spawnLoading, setSpawnLoading] = useState(false);
   const [spawnError, setSpawnError] = useState<string | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [showRetryDialog, setShowRetryDialog] = useState(false);
+  const [autoSpawnOnApprove, setAutoSpawnOnApprove] = useState(true);
 
   // Dropdown states
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
@@ -782,6 +901,9 @@ export default function IssuePageClient() {
             }
             return updated;
           });
+        } else if (data.type === "terminal_output") {
+          // Live terminal output from CI - feed to TerminalViewer
+          setTerminalLines((prev) => [...prev, data.data.content]);
         } else if (data.type === "status_update") {
           // Agent status changed - refresh issue
           fetchIssue();
@@ -887,7 +1009,7 @@ export default function IssuePageClient() {
       const res = await fetch(`/api/issues/${issue.id}/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve" }),
+        body: JSON.stringify({ action: "approve", auto_spawn: autoSpawnOnApprove }),
       });
       if (res.ok) {
         await fetchIssue();
@@ -942,6 +1064,51 @@ export default function IssuePageClient() {
       }
     } catch (err) {
       setSpawnError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setSpawnLoading(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (!issue) return;
+    setCancelLoading(true);
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/spawn/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        await fetchIssue();
+      }
+    } catch (err) {
+      console.error("Cancel failed:", err);
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
+  async function handleRetrySpawn(data: {
+    type: "investigate" | "implement";
+    additional_context?: string;
+    force?: boolean;
+  }) {
+    if (!issue) return;
+    setSpawnLoading(true);
+    setSpawnError(null);
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/spawn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchIssue();
+      } else {
+        const respData = await res.json();
+        const msg = respData.reason || respData.error || "Spawn failed";
+        setSpawnError(msg);
+        throw new Error(msg);
+      }
     } finally {
       setSpawnLoading(false);
     }
@@ -1004,7 +1171,7 @@ export default function IssuePageClient() {
   return (
     <div className="min-h-screen bg-[#0d0d0d]">
       {/* Header */}
-      <header className="h-11 border-b border-[#1f1f1f] flex items-center px-4 bg-[#0d0d0d] sticky top-0 z-10">
+      <header className="h-11 border-b border-[#1f1f1f] flex items-center px-3 md:px-4 bg-[#0d0d0d] sticky top-0 z-10">
         <div className="flex items-center gap-2 text-[13px]">
           <Link
             href="/board"
@@ -1084,10 +1251,10 @@ export default function IssuePageClient() {
         </div>
       </header>
 
-      {/* Two-column layout */}
-      <div className="flex">
+      {/* Two-column layout - stacks on mobile */}
+      <div className="flex flex-col md:flex-row">
         {/* Main content */}
-        <div className="flex-1 max-w-3xl mx-auto px-8 py-8">
+        <div className="flex-1 max-w-3xl mx-auto px-4 py-6 md:px-8 md:py-8">
           {/* Title */}
           <div className="mb-6">
             {editingTitle ? (
@@ -1103,12 +1270,12 @@ export default function IssuePageClient() {
                     setEditingTitle(false);
                   }
                 }}
-                className="w-full text-[22px] font-semibold bg-transparent text-[#f0f0f0] outline-none"
+                className="w-full text-[18px] md:text-[22px] font-semibold bg-transparent text-[#f0f0f0] outline-none"
                 autoFocus
               />
             ) : (
               <h1
-                className="text-[22px] font-semibold text-[#f0f0f0] cursor-text hover:text-white transition-colors"
+                className="text-[18px] md:text-[22px] font-semibold text-[#f0f0f0] cursor-text hover:text-white transition-colors"
                 onClick={() => setEditingTitle(true)}
               >
                 {issue.title}
@@ -1361,6 +1528,19 @@ export default function IssuePageClient() {
                       )}
                       Approve Plan
                     </button>
+                    <label className="flex items-center gap-1.5 px-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoSpawnOnApprove}
+                        onChange={(e) =>
+                          setAutoSpawnOnApprove(e.target.checked)
+                        }
+                        className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0"
+                      />
+                      <span className="text-[11px] text-[#666]">
+                        Auto-implement
+                      </span>
+                    </label>
                     <button
                       onClick={() => setShowRejectForm(!showRejectForm)}
                       disabled={planActionLoading}
@@ -1564,13 +1744,14 @@ export default function IssuePageClient() {
             </div>
           )}
 
-          {/* Terminal Output - Real-time WebSocket stream */}
+          {/* Terminal Output - Real-time stream (SSE from CI + WebSocket local) */}
           <TerminalViewer
             issueIdentifier={issue.identifier}
             isAgentActive={
               issue.agent_status === "investigating" ||
               issue.agent_status === "implementing"
             }
+            sseLines={terminalLines}
           />
 
           {/* Agent Activity Feed - Real-time */}
@@ -1758,8 +1939,8 @@ export default function IssuePageClient() {
           </div>
         </div>
 
-        {/* Properties sidebar */}
-        <div className="w-[260px] border-l border-[#1f1f1f] p-4 bg-[#0a0a0a]">
+        {/* Properties sidebar - stacks below on mobile */}
+        <div className="w-full md:w-[260px] border-t md:border-t-0 md:border-l border-[#1f1f1f] p-4 bg-[#0a0a0a]">
           <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-3">
             Properties
           </div>
@@ -2061,6 +2242,40 @@ export default function IssuePageClient() {
               })()}
             </div>
 
+            {/* Last Run Outcome */}
+            {issue.run_outcome && (() => {
+              const oc = outcomeConfig[issue.run_outcome] || outcomeConfig.failed;
+              return (
+                <div className="mb-3">
+                  <div className="text-[11px] text-[#505050] mb-1.5">Last Run</div>
+                  <div
+                    className="flex items-center gap-2 px-2.5 py-2 rounded-lg"
+                    style={{
+                      backgroundColor: `${oc.color}15`,
+                      border: `1px solid ${oc.color}25`,
+                    }}
+                  >
+                    <span style={{ color: oc.color }} className="flex-shrink-0">
+                      <OutcomeIcon outcome={issue.run_outcome} />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div
+                        className="text-[12px] font-medium"
+                        style={{ color: oc.color }}
+                      >
+                        {oc.label}
+                      </div>
+                      {issue.outcome_summary && (
+                        <div className="text-[11px] text-[#888] mt-0.5 leading-relaxed">
+                          {issue.outcome_summary}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* View Workflow Logs link */}
             {(issue.agent_status === "investigating" ||
               issue.agent_status === "implementing") &&
@@ -2116,23 +2331,52 @@ export default function IssuePageClient() {
               <p className="text-[11px] text-red-400 mt-1 px-1">{spawnError}</p>
             )}
 
-            {/* Stop Agent Button */}
-            {(issue.agent_status === "investigating" ||
-              issue.agent_status === "implementing") && (
+            {/* Cancel Agent Button */}
+            {issue.spawn_status === "running" && (
               <button
-                onClick={() => updateIssue({ agent_status: "idle" })}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-[#303030] hover:bg-[#252525] text-[#808080] hover:text-[#e0e0e0] text-[13px] rounded-lg transition-colors"
+                onClick={handleCancel}
+                disabled={cancelLoading}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-red-900/30 hover:bg-red-950/20 hover:border-red-800/40 text-red-400/80 hover:text-red-400 text-[13px] rounded-lg transition-colors disabled:opacity-50"
               >
-                <svg
-                  className="w-4 h-4"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                >
-                  <rect x="4" y="4" width="8" height="8" rx="1" />
-                </svg>
-                Stop Agent
+                {cancelLoading ? (
+                  <div className="w-4 h-4 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                ) : (
+                  <svg
+                    className="w-4 h-4"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <rect x="4" y="4" width="8" height="8" rx="1" />
+                  </svg>
+                )}
+                {cancelLoading ? "Cancelling..." : "Cancel Agent"}
               </button>
             )}
+
+            {/* Retry Button */}
+            {issue.agent_status === "idle" &&
+              (issue.run_outcome || (issue.spawn_attempt_count != null &&
+              issue.spawn_attempt_count > 0)) && (
+                <button
+                  onClick={() => setShowRetryDialog(true)}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[12px] rounded-lg transition-colors"
+                >
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                  Retry with Context
+                </button>
+              )}
 
             {/* Agent Confidence */}
             {issue.agent_confidence !== null && (
@@ -2286,6 +2530,17 @@ export default function IssuePageClient() {
           </div>
         </div>
       </div>
+
+      {/* Retry Spawn Dialog */}
+      <RetrySpawnDialog
+        isOpen={showRetryDialog}
+        onClose={() => setShowRetryDialog(false)}
+        onSubmit={handleRetrySpawn}
+        issueIdentifier={issue.identifier}
+        hasApprovedPlan={issue.plan_status === "approved"}
+        lastOutcome={issue.run_outcome}
+        outcomeSummary={issue.outcome_summary}
+      />
     </div>
   );
 }

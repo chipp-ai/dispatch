@@ -24,6 +24,8 @@ interface Issue {
   plan_status?: string;
   blocked_reason?: string | null;
   cost_usd?: number | null;
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 interface IssueCardProps {
@@ -59,6 +61,15 @@ const agentBadgeConfig: Record<
     color: "#facc15",
     bgColor: "#facc1520",
   },
+};
+
+// Run outcome badge config (only non-completed outcomes shown on cards)
+const outcomeBadgeConfig: Record<string, { label: string; color: string }> = {
+  no_changes_needed: { label: "No Changes", color: "#60a5fa" },
+  blocked: { label: "Blocked", color: "#f87171" },
+  needs_human_decision: { label: "Needs Decision", color: "#facc15" },
+  investigation_complete: { label: "Investigated", color: "#a78bfa" },
+  failed: { label: "Failed", color: "#f87171" },
 };
 
 // Linear-style priority indicator (stacked bars)
@@ -219,6 +230,24 @@ export default function IssueCard({
             </span>
           </div>
         )}
+
+        {/* Run outcome badge (only show non-completed outcomes) */}
+        {issue.run_outcome &&
+          issue.run_outcome !== "completed" &&
+          outcomeBadgeConfig[issue.run_outcome] && (
+            <div className="flex items-center gap-1 mb-2">
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  color: outcomeBadgeConfig[issue.run_outcome].color,
+                  backgroundColor: `${outcomeBadgeConfig[issue.run_outcome].color}15`,
+                }}
+                title={issue.outcome_summary || ""}
+              >
+                {outcomeBadgeConfig[issue.run_outcome].label}
+              </span>
+            </div>
+          )}
 
         {/* Bottom row: Assignee */}
         {issue.assignee && (

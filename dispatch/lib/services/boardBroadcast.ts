@@ -18,6 +18,8 @@ export interface BoardIssue {
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
   cost_usd?: number | null;
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 export type BoardEvent =

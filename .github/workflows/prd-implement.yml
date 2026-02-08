@@ -23,6 +23,10 @@ on:
         description: "Approved implementation plan (markdown)"
         required: true
         type: string
+      additional_context:
+        description: "Additional instructions from human retry (optional)"
+        required: false
+        type: string
 
 # Only one implementation per issue at a time
 concurrency:
@@ -52,6 +56,7 @@ jobs:
       INPUT_TITLE: ${{ inputs.title }}
       INPUT_DESCRIPTION: ${{ inputs.description }}
       INPUT_PLAN_CONTENT: ${{ inputs.plan_content }}
+      INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     services:
@@ -236,7 +241,8 @@ jobs:
             --arg title "$INPUT_TITLE" \
             --arg description "$INPUT_DESCRIPTION" \
             --arg plan "$INPUT_PLAN_CONTENT" \
-            '{identifier: $identifier, title: $title, description: $description, plan: $plan}' \
+            --arg additional_context "$INPUT_ADDITIONAL_CONTEXT" \
+            '{identifier: $identifier, title: $title, description: $description, plan: $plan, additional_context: $additional_context}' \
             > .scratch/prompt-data.json
 
           # Use heredoc with single-quoted delimiter to prevent bash expansion of backticks
@@ -255,6 +261,10 @@ jobs:
 
           APPROVED IMPLEMENTATION PLAN:
           {d['plan']}
+          """ + (f"""
+          ADDITIONAL CONTEXT FROM HUMAN:
+          {d['additional_context']}
+          """ if d.get('additional_context') else "") + """
 
           RUNNING ENVIRONMENT:
           A full-stack dev environment is running and available:
@@ -359,6 +369,25 @@ jobs:
           IMPORTANT: Working around blockers instead of reporting them is a FAILURE.
           It is better to stop and ask for help than to produce incorrect or incomplete work.
 
+          MANDATORY - RUN RESULT DECLARATION:
+          Before exiting, you MUST write .scratch/run-result.json with:
+          {{
+            "outcome": "completed|no_changes_needed|blocked|needs_human_decision|investigation_complete|failed",
+            "summary": "1-2 sentence explanation of your decision",
+            "changes_made": true/false,
+            "files_changed": ["list", "of", "paths"],
+            "pr_needed": true/false
+          }}
+
+          Outcome values:
+          - "completed": You made code changes and committed them. Set pr_needed=true.
+          - "no_changes_needed": The feature/fix already exists or is not applicable. Set pr_needed=false.
+          - "blocked": You hit a stop condition and wrote .scratch/blocker.md. Set pr_needed=false.
+          - "needs_human_decision": The situation is ambiguous and a human should decide. Set pr_needed=false.
+          - "failed": You could not complete the task. Set pr_needed=false.
+
+          You MUST write this file even if you also wrote a blocker file.
+
           OFF-LIMITS FILES (do NOT modify):
           - .github/ (workflow files - CI/CD config)
           - .mcp.json (MCP server config - managed by CI)
@@ -437,14 +466,26 @@ jobs:
           echo "Claude started (PID: $CLAUDE_PID)"
 
           # Stream new output lines through the human-readable filter every 10s
+          # Also POST chunks to Dispatch for live terminal viewing
           PREV_LINES=0
           while kill -0 $CLAUDE_PID 2>/dev/null; do
             sleep 10
             [ -f .scratch/claude-raw.log ] || continue
             CURR_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
             if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
-              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
-                | python3 -u .scratch/stream-filter.py
+              CHUNK=$(sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$CHUNK"
+
+              # Stream to Dispatch terminal viewer (non-blocking, fire-and-forget)
+              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 &
+              fi
+
               PREV_LINES=$CURR_LINES
             fi
           done
@@ -455,8 +496,16 @@ jobs:
           [ -f .scratch/claude-raw.log ] && {
             FINAL_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
             if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
-              sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
-                | python3 -u .scratch/stream-filter.py
+              FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$FINAL_CHUNK"
+              if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 || true
+              fi
             fi
           }
 
@@ -487,9 +536,41 @@ jobs:
 
           exit $CLAUDE_EXIT
 
+      - name: Parse run result
+        id: run-result
+        if: always()
+        run: |
+          if [ ! -f .scratch/run-result.json ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "Agent exited without declaring an outcome" > .scratch/outcome-summary.txt
+            echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+            echo "changes_made=false" >> "$GITHUB_OUTPUT"
+            echo "Run outcome: failed (no run-result.json)"
+            exit 0
+          fi
+
+          OUTCOME=$(jq -r '.outcome // "failed"' .scratch/run-result.json)
+          SUMMARY=$(jq -r '.summary // "No summary provided"' .scratch/run-result.json)
+          PR_NEEDED=$(jq -r '.pr_needed // false' .scratch/run-result.json)
+          CHANGES_MADE=$(jq -r '.changes_made // false' .scratch/run-result.json)
+
+          # Validate outcome
+          case "$OUTCOME" in
+            completed|no_changes_needed|blocked|needs_human_decision|investigation_complete|failed) ;;
+            *) OUTCOME="failed"; SUMMARY="Invalid outcome: $OUTCOME" ;;
+          esac
+
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" > .scratch/outcome-summary.txt
+          echo "pr_needed=$PR_NEEDED" >> "$GITHUB_OUTPUT"
+          echo "changes_made=$CHANGES_MADE" >> "$GITHUB_OUTPUT"
+
+          echo "Run outcome: $OUTCOME"
+          echo "Summary: $SUMMARY"
+
       - name: Verify PR checks pass
         id: verify
-        if: success()
+        if: steps.run-result.outputs.changes_made == 'true'
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
         run: |
@@ -528,7 +609,7 @@ jobs:
           fi
 
       - name: Fix failing checks
-        if: steps.verify.outputs.checks_failed == 'true'
+        if: steps.verify.outputs.checks_failed == 'true' && steps.run-result.outputs.changes_made == 'true'
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
         run: |
@@ -579,7 +660,7 @@ jobs:
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
 
       - name: Re-verify after fix
-        if: steps.verify.outputs.checks_failed == 'true'
+        if: steps.verify.outputs.checks_failed == 'true' && steps.run-result.outputs.changes_made == 'true'
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
         run: |
@@ -664,7 +745,7 @@ jobs:
 
       - name: Push branch and create PR
         id: create-pr
-        if: steps.check-fix.outputs.fix_attempted == 'true'
+        if: steps.run-result.outputs.pr_needed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
@@ -791,6 +872,8 @@ jobs:
           PR_URL: ${{ steps.create-pr.outputs.pr_url }}
           FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
           JOB_STATUS: ${{ job.status }}
+          OUTCOME: ${{ steps.run-result.outputs.outcome }}
+          PR_NEEDED: ${{ steps.run-result.outputs.pr_needed }}
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
             SPAWN_STATUS="completed"
@@ -854,13 +937,21 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity (non-fatal)"
 
+          # Read outcome summary from file (avoids quoting issues)
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "$SPAWN_STATUS" \
             --arg spawn_completed_at "$TIMESTAMP" \
             --arg cost_usd "$COST_USD" \
             --arg num_turns "$NUM_TURNS" \
             --arg model "$MODEL" \
-            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model}')
+            --arg run_outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
 
           curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
             -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
