@@ -1249,6 +1249,246 @@ export function createMcpServer(): McpServer {
     }
   );
 
+  // Tool 16: Post Plan
+  server.tool(
+    "post_plan",
+    "Post a structured implementation plan for human review. Sets the issue status to awaiting_review. The plan should include: Summary, Files to Create/Modify, DB Changes, API Changes, UI Changes, Dependencies, Testing Strategy, Risks, Stop Conditions.",
+    {
+      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      content: z
+        .string()
+        .describe("Full plan content in markdown format"),
+    },
+    async ({ identifier, content }) => {
+      try {
+        const issue = await getIssue(identifier.toUpperCase());
+        if (!issue) {
+          return {
+            content: [
+              { type: "text" as const, text: `Issue ${identifier} not found` },
+            ],
+            isError: true,
+          };
+        }
+
+        await updateIssue(issue.id, {
+          plan_status: "awaiting_review",
+          plan_content: content,
+          agent_status: "awaiting_review",
+        });
+
+        // Post activity
+        const activity = await createAgentActivity(
+          issue.id,
+          "complete",
+          "Plan submitted for review"
+        );
+        broadcastActivity(issue.id, {
+          type: "activity",
+          data: {
+            id: activity.id,
+            timestamp: activity.created_at.toISOString(),
+            type: activity.type,
+            content: activity.content,
+            metadata: activity.metadata,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  success: true,
+                  identifier: issue.identifier,
+                  plan_status: "awaiting_review",
+                  message:
+                    "Plan posted. Waiting for human review. Do NOT proceed with implementation until the plan is approved.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : "Unknown"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool 17: Report Blocker
+  server.tool(
+    "report_blocker",
+    "Report that you are blocked and cannot proceed. This is the correct action when you encounter an obstacle you cannot resolve. Working around blockers instead of reporting them is a FAILURE.",
+    {
+      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      reason: z
+        .string()
+        .describe("Detailed description of what is blocking you"),
+      category: z
+        .enum([
+          "missing_env",
+          "unclear_requirement",
+          "missing_dependency",
+          "test_failure",
+          "design_decision",
+          "out_of_scope",
+        ])
+        .describe("Category of the blocker"),
+    },
+    async ({ identifier, reason, category }) => {
+      try {
+        const issue = await getIssue(identifier.toUpperCase());
+        if (!issue) {
+          return {
+            content: [
+              { type: "text" as const, text: `Issue ${identifier} not found` },
+            ],
+            isError: true,
+          };
+        }
+
+        await updateIssue(issue.id, {
+          agent_status: "blocked",
+          blocked_reason: `[${category}] ${reason}`,
+        });
+
+        // Post activity
+        const activity = await createAgentActivity(
+          issue.id,
+          "error",
+          `Blocked: [${category}] ${reason}`
+        );
+        broadcastActivity(issue.id, {
+          type: "activity",
+          data: {
+            id: activity.id,
+            timestamp: activity.created_at.toISOString(),
+            type: activity.type,
+            content: activity.content,
+            metadata: activity.metadata,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  success: true,
+                  identifier: issue.identifier,
+                  agent_status: "blocked",
+                  category,
+                  message:
+                    "Blocker reported. A human will review and unblock you. You should STOP working now.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : "Unknown"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool 18: Get Approved Plan
+  server.tool(
+    "get_approved_plan",
+    "Retrieve the approved plan for an issue. Use this at the start of an implementation session to get the plan you should follow.",
+    {
+      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+    },
+    async ({ identifier }) => {
+      try {
+        const issue = await getIssue(identifier.toUpperCase());
+        if (!issue) {
+          return {
+            content: [
+              { type: "text" as const, text: `Issue ${identifier} not found` },
+            ],
+            isError: true,
+          };
+        }
+
+        if (issue.plan_status !== "approved") {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    error: "Plan not approved",
+                    current_status: issue.plan_status,
+                    message:
+                      issue.plan_status === "awaiting_review"
+                        ? "Plan is awaiting human review. Do not proceed."
+                        : "No approved plan exists for this issue.",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  identifier: issue.identifier,
+                  title: issue.title,
+                  plan_status: issue.plan_status,
+                  plan_content: issue.plan_content,
+                  plan_approved_at: issue.plan_approved_at,
+                  plan_approved_by: issue.plan_approved_by,
+                  plan_feedback: issue.plan_feedback,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : "Unknown"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   return server;
 }
 
