@@ -27,6 +27,10 @@ on:
         description: "Additional instructions from human retry (optional)"
         required: false
         type: string
+      callback_url:
+        description: "Override API callback URL (for local dev tunnels)"
+        required: false
+        type: string
 
 # Only one investigation per issue at a time
 concurrency:
@@ -47,7 +51,7 @@ jobs:
     # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      CHIPP_ISSUES_API_URL: ${{ secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_URL: ${{ inputs.callback_url || secrets.CHIPP_ISSUES_API_URL }}
       CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
       DENO_NO_PACKAGE_JSON: "1"
       INPUT_ISSUE_ID: ${{ inputs.issue_id }}
