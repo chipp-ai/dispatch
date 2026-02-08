@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 
 interface TerminalMessage {
   type: "output" | "status" | "error";
@@ -14,6 +16,117 @@ interface TerminalViewerProps {
   isAgentActive: boolean;
   sseLines?: string[];
 }
+
+// Strip ANSI escape codes
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+// Custom markdown components for terminal aesthetic
+const terminalComponents: Partial<Components> = {
+  // Headings get a green terminal prefix
+  h1: ({ children }) => (
+    <div className="mt-4 mb-2 flex items-center gap-2">
+      <span className="text-[#4ade80] text-[10px] font-mono select-none shrink-0">{">>"}</span>
+      <span className="text-[#e0e0e0] text-[13px] font-bold font-mono">{children}</span>
+    </div>
+  ),
+  h2: ({ children }) => (
+    <div className="mt-3 mb-1.5 flex items-center gap-2">
+      <span className="text-[#4ade80] text-[10px] font-mono select-none shrink-0">{">"}</span>
+      <span className="text-[#e0e0e0] text-[13px] font-semibold font-mono">{children}</span>
+    </div>
+  ),
+  h3: ({ children }) => (
+    <div className="mt-2.5 mb-1 text-[#c0c0c0] text-[12px] font-semibold font-mono">{children}</div>
+  ),
+  // Paragraphs - check for [TOOL] and [RESULT] prefixes
+  p: ({ children }) => {
+    const text = String(children);
+    if (text.startsWith("[TOOL]")) {
+      const rest = text.slice(6).trim();
+      return (
+        <div className="flex items-start gap-1.5 my-0.5 font-mono">
+          <span className="text-[#60a5fa] text-[11px] shrink-0 select-none">[TOOL]</span>
+          <span className="text-[#93c5fd] text-[11px] break-all">{rest}</span>
+        </div>
+      );
+    }
+    if (text.startsWith("[RESULT]")) {
+      const rest = text.slice(8).trim();
+      return (
+        <div className="flex items-start gap-1.5 my-0.5 font-mono">
+          <span className="text-[#6b7280] text-[11px] shrink-0 select-none">[RESULT]</span>
+          <span className="text-[#6b7280] text-[11px] break-all">{rest}</span>
+        </div>
+      );
+    }
+    if (text.startsWith("[COMPLETED]")) {
+      const rest = text.slice(11).trim();
+      return (
+        <div className="flex items-center gap-1.5 mt-3 mb-1 py-1.5 px-2 bg-[#4ade80]/5 border border-[#4ade80]/20 rounded font-mono">
+          <span className="text-[#4ade80] text-[11px] shrink-0">[COMPLETED]</span>
+          <span className="text-[#4ade80] text-[11px]">{rest}</span>
+        </div>
+      );
+    }
+    return <p className="text-[#b0b0b0] text-[12px] leading-relaxed my-1 font-mono">{children}</p>;
+  },
+  // Strong text
+  strong: ({ children }) => (
+    <strong className="text-[#e0e0e0] font-semibold">{children}</strong>
+  ),
+  // Emphasis
+  em: ({ children }) => (
+    <em className="text-[#a0a0a0] italic">{children}</em>
+  ),
+  // Inline code - purple on dark bg
+  code: ({ className, children }) => {
+    const isBlock = className?.includes("language-");
+    if (isBlock) {
+      return (
+        <code className={`${className || ""} text-[11px]`}>{children}</code>
+      );
+    }
+    return (
+      <code className="text-[#c4b5fd] bg-[#1a1a2e] px-1 py-0.5 rounded text-[11px] font-mono">
+        {children}
+      </code>
+    );
+  },
+  // Code blocks - deep dark with green border accent
+  pre: ({ children }) => (
+    <pre className="my-2 bg-[#050510] border border-[#1a2a1a] rounded-md p-3 overflow-x-auto text-[11px] leading-relaxed font-mono">
+      {children}
+    </pre>
+  ),
+  // Lists
+  ul: ({ children }) => (
+    <ul className="my-1 pl-4 space-y-0.5">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="my-1 pl-4 space-y-0.5 list-decimal">{children}</ol>
+  ),
+  li: ({ children }) => (
+    <li className="text-[#b0b0b0] text-[12px] font-mono marker:text-[#4ade80]">{children}</li>
+  ),
+  // Horizontal rules
+  hr: () => (
+    <div className="my-3 border-t border-dashed border-[#252525]" />
+  ),
+  // Links
+  a: ({ href, children }) => (
+    <a href={href} className="text-[#60a5fa] hover:text-[#93c5fd] underline underline-offset-2" target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  // Blockquotes
+  blockquote: ({ children }) => (
+    <blockquote className="my-1.5 pl-3 border-l-2 border-[#4ade80]/30 text-[#808080]">
+      {children}
+    </blockquote>
+  ),
+};
 
 export default function TerminalViewer({
   issueIdentifier,
@@ -57,7 +170,6 @@ export default function TerminalViewer({
 
     setConnectionStatus("connecting");
 
-    // Determine WebSocket URL based on environment
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/api/terminal?issue=${encodeURIComponent(issueIdentifier)}`;
 
@@ -72,23 +184,15 @@ export default function TerminalViewer({
     ws.onmessage = (event) => {
       try {
         const message: TerminalMessage = JSON.parse(event.data);
-
         if (message.type === "output") {
           setWsLines((prev) => [...prev, message.data]);
           scrollToBottom();
         } else if (message.type === "status") {
-          setWsLines((prev) => [
-            ...prev,
-            `\x1b[33m[Status] ${message.data}\x1b[0m\n`,
-          ]);
+          setWsLines((prev) => [...prev, `[Status] ${message.data}\n`]);
         } else if (message.type === "error") {
-          setWsLines((prev) => [
-            ...prev,
-            `\x1b[31m[Error] ${message.data}\x1b[0m\n`,
-          ]);
+          setWsLines((prev) => [...prev, `[Error] ${message.data}\n`]);
         }
       } catch {
-        // Raw text message
         setWsLines((prev) => [...prev, event.data]);
       }
       scrollToBottom();
@@ -97,12 +201,8 @@ export default function TerminalViewer({
     ws.onclose = () => {
       setIsConnected(false);
       setConnectionStatus("disconnected");
-
-      // Auto-reconnect if agent is still active
       if (isAgentActive) {
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, 3000);
+        reconnectTimeoutRef.current = setTimeout(() => connect(), 3000);
       }
     };
 
@@ -111,7 +211,6 @@ export default function TerminalViewer({
     };
   }, [issueIdentifier, isAgentActive, scrollToBottom]);
 
-  // Disconnect from WebSocket
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -123,204 +222,130 @@ export default function TerminalViewer({
     }
   }, []);
 
-  // Connect when agent becomes active
   useEffect(() => {
     if (isAgentActive) {
       connect();
     } else {
       disconnect();
     }
-
-    return () => {
-      disconnect();
-    };
+    return () => disconnect();
   }, [isAgentActive, connect, disconnect]);
 
-  // Clear terminal
-  const clearTerminal = () => {
-    setWsLines([]);
-  };
+  const clearTerminal = () => setWsLines([]);
 
-  // Parse ANSI codes for display (simplified)
-  const parseAnsi = (text: string): React.ReactNode[] => {
-    const parts: React.ReactNode[] = [];
-    let currentIndex = 0;
-
-    // Simple ANSI color regex
-    const ansiRegex = /\x1b\[(\d+)m/g;
-    let match;
-    let currentColor = "";
-
-    const colorMap: Record<string, string> = {
-      "0": "", // Reset
-      "30": "#1e1e1e", // Black
-      "31": "#f87171", // Red
-      "32": "#4ade80", // Green
-      "33": "#facc15", // Yellow
-      "34": "#60a5fa", // Blue
-      "35": "#a78bfa", // Magenta
-      "36": "#22d3d3", // Cyan
-      "37": "#e0e0e0", // White
-      "90": "#6b7280", // Bright black (gray)
-      "91": "#fca5a5", // Bright red
-      "92": "#86efac", // Bright green
-      "93": "#fde047", // Bright yellow
-      "94": "#93c5fd", // Bright blue
-      "95": "#c4b5fd", // Bright magenta
-      "96": "#67e8f9", // Bright cyan
-      "97": "#ffffff", // Bright white
-    };
-
-    while ((match = ansiRegex.exec(text)) !== null) {
-      // Add text before the code
-      if (match.index > currentIndex) {
-        const segment = text.slice(currentIndex, match.index);
-        parts.push(
-          <span key={parts.length} style={{ color: currentColor || "#c0c0c0" }}>
-            {segment}
-          </span>
-        );
-      }
-
-      // Update color
-      currentColor = colorMap[match[1]] || "";
-      currentIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (currentIndex < text.length) {
-      parts.push(
-        <span key={parts.length} style={{ color: currentColor || "#c0c0c0" }}>
-          {text.slice(currentIndex)}
-        </span>
-      );
-    }
-
-    return parts.length > 0 ? parts : [<span key="0">{text}</span>];
-  };
+  // Combine all lines into markdown, stripping ANSI codes
+  const terminalMarkdown = useMemo(() => {
+    if (allLines.length === 0) return "";
+    return allLines.map(stripAnsi).join("\n");
+  }, [allLines]);
 
   // Don't render if agent is idle and no lines
   if (!isAgentActive && allLines.length === 0) {
     return null;
   }
 
+  const statusColor =
+    effectiveStatus === "connected"
+      ? "#4ade80"
+      : effectiveStatus === "connecting"
+        ? "#facc15"
+        : effectiveStatus === "error"
+          ? "#f87171"
+          : "#6b7280";
+
+  const statusLabel =
+    effectiveStatus === "connected"
+      ? "Live"
+      : effectiveStatus === "connecting"
+        ? "Connecting..."
+        : effectiveStatus === "error"
+          ? "Error"
+          : "Disconnected";
+
   return (
     <div className="mb-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {/* Terminal icon */}
-          <svg
-            className="w-4 h-4 text-[#4ade80]"
-            viewBox="0 0 16 16"
-            fill="none"
-          >
-            <rect
-              x="1"
-              y="2"
-              width="14"
-              height="12"
-              rx="2"
-              stroke="currentColor"
-              strokeWidth="1.25"
-            />
-            <path
-              d="M4 6l2 2-2 2M7 10h4"
-              stroke="currentColor"
-              strokeWidth="1.25"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <h3 className="text-[13px] font-medium text-[#e0e0e0]">
-            Terminal Output
-          </h3>
+      {/* Terminal window */}
+      <div className="rounded-lg border border-[#1f1f1f] overflow-hidden bg-[#0a0a0a]">
+        {/* Title bar - macOS terminal style */}
+        <div className="flex items-center justify-between px-3 py-2 bg-[#141414] border-b border-[#1f1f1f]">
+          <div className="flex items-center gap-3">
+            {/* Traffic light dots */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={clearTerminal}
+                className="w-3 h-3 rounded-full bg-[#ff5f57] hover:brightness-110 transition-all"
+                title="Clear"
+              />
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-3 h-3 rounded-full bg-[#febc2e] hover:brightness-110 transition-all"
+                title={isExpanded ? "Minimize" : "Expand"}
+              />
+              <div className="w-3 h-3 rounded-full bg-[#28c840]" />
+            </div>
 
-          {/* Connection status indicator */}
+            {/* Terminal title */}
+            <div className="flex items-center gap-2">
+              <svg
+                className="w-3.5 h-3.5 text-[#606060]"
+                viewBox="0 0 16 16"
+                fill="none"
+              >
+                <path
+                  d="M4 6l2 2-2 2M7 10h4"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="text-[11px] font-mono text-[#606060]">
+                agent@dispatch ~ {issueIdentifier.toLowerCase()}
+              </span>
+            </div>
+          </div>
+
+          {/* Status */}
           <div className="flex items-center gap-1.5">
             <span
-              className={`w-2 h-2 rounded-full ${
-                effectiveStatus === "connected"
-                  ? "bg-[#4ade80]"
-                  : effectiveStatus === "connecting"
-                    ? "bg-[#facc15] animate-pulse"
-                    : effectiveStatus === "error"
-                      ? "bg-[#f87171]"
-                      : "bg-[#6b7280]"
-              }`}
+              className={`w-1.5 h-1.5 rounded-full ${effectiveStatus === "connecting" ? "animate-pulse" : ""}`}
+              style={{ backgroundColor: statusColor }}
             />
-            <span className="text-[10px] text-[#606060]">
-              {effectiveStatus === "connected"
-                ? "Live"
-                : effectiveStatus === "connecting"
-                  ? "Connecting..."
-                  : effectiveStatus === "error"
-                    ? "Error"
-                    : "Disconnected"}
+            <span className="text-[10px] font-mono text-[#505050]">
+              {statusLabel}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Clear button */}
-          <button
-            onClick={clearTerminal}
-            className="p-1 text-[#505050] hover:text-[#808080] transition-colors"
-            title="Clear terminal"
+        {/* Terminal body */}
+        {isExpanded && (
+          <div
+            ref={terminalRef}
+            className="p-4 overflow-auto max-h-[500px] min-h-[60px]"
+            style={{
+              fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', 'Courier New', monospace",
+            }}
           >
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M4 4l8 8M12 4l-8 8"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-
-          {/* Expand/collapse button */}
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1 text-[#505050] hover:text-[#808080] transition-colors"
-          >
-            <svg
-              className={`w-4 h-4 transition-transform ${isExpanded ? "" : "-rotate-90"}`}
-              viewBox="0 0 16 16"
-              fill="none"
-            >
-              <path
-                d="M4 6l4 4 4-4"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
+            {allLines.length === 0 ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[#4ade80] text-[12px]">$</span>
+                <span className="text-[#505050] text-[12px] italic font-mono">
+                  {isAgentActive
+                    ? "Waiting for terminal output..."
+                    : "No terminal output."}
+                </span>
+                {isAgentActive && (
+                  <span className="w-2 h-4 bg-[#4ade80] animate-pulse" />
+                )}
+              </div>
+            ) : (
+              <ReactMarkdown components={terminalComponents}>
+                {terminalMarkdown}
+              </ReactMarkdown>
+            )}
+          </div>
+        )}
       </div>
-
-      {/* Terminal content */}
-      {isExpanded && (
-        <div
-          ref={terminalRef}
-          className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-3 font-mono text-[12px] leading-relaxed overflow-auto max-h-[500px] whitespace-pre-wrap"
-          style={{
-            fontFamily:
-              "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', monospace",
-          }}
-        >
-          {allLines.length === 0 ? (
-            <div className="text-[#505050] italic">
-              {isAgentActive
-                ? "Waiting for terminal output..."
-                : "No terminal output yet."}
-            </div>
-          ) : (
-            allLines.map((line, index) => <div key={index}>{parseAnsi(line)}</div>)
-          )}
-        </div>
-      )}
     </div>
   );
 }
