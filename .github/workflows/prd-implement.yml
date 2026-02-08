@@ -427,58 +427,93 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          # Quick MCP readiness check (should complete in <30s now that server init is fixed)
-          echo "=== MCP readiness check ==="
-          timeout 60 claude --print --dangerously-skip-permissions --mcp-config .mcp.json \
-            "Respond with exactly: MCP_READY" 2>&1 && echo "MCP check PASSED" || {
-            echo "MCP check FAILED (exit: $?)"
-            echo "Proceeding anyway - MCP tools may not be available"
+          # =============================================================
+          # DIAGNOSTIC: Test each MCP server individually to find the hang
+          # =============================================================
+
+          # Test 1: Database MCP server only
+          echo "=== TEST 1: Database MCP server only ==="
+          cat > .scratch/mcp-db-only.json << 'DBEOF'
+          {
+            "mcpServers": {
+              "chipp-database": {
+                "type": "stdio",
+                "command": "deno",
+                "args": ["run", "--allow-net", "--allow-env", "--allow-read", "tools/mcp-database/index.ts"],
+                "env": { "DATABASE_URL": "postgresql://postgres:postgres@localhost:5436/chipp_deno" }
+              }
+            }
           }
+          DBEOF
+          timeout 60 claude --print --dangerously-skip-permissions \
+            --mcp-config .scratch/mcp-db-only.json \
+            "Respond with exactly: DB_MCP_OK" 2>&1 && echo "DB MCP: PASS" || echo "DB MCP: FAIL (exit: $?)"
+
+          # Test 2: Browser MCP server only
+          echo ""
+          echo "=== TEST 2: Browser MCP server only ==="
+          cat > .scratch/mcp-browser-only.json << 'BREOF'
+          {
+            "mcpServers": {
+              "browser-devtools": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["tools/mcp-browser-devtools/index.js"],
+                "env": { "CDP_HOST": "localhost", "CDP_PORT": "9222" }
+              }
+            }
+          }
+          BREOF
+          timeout 60 claude --print --dangerously-skip-permissions \
+            --mcp-config .scratch/mcp-browser-only.json \
+            "Respond with exactly: BROWSER_MCP_OK" 2>&1 && echo "Browser MCP: PASS" || echo "Browser MCP: FAIL (exit: $?)"
+
+          # Test 3: Both MCP servers together
+          echo ""
+          echo "=== TEST 3: Both MCP servers ==="
+          timeout 60 claude --print --dangerously-skip-permissions \
+            --mcp-config .mcp.json \
+            "Respond with exactly: BOTH_MCP_OK" 2>&1 && echo "Both MCP: PASS" || echo "Both MCP: FAIL (exit: $?)"
+
+          # Test 4: No MCP (baseline)
+          echo ""
+          echo "=== TEST 4: No MCP (baseline) ==="
+          timeout 30 claude --print --dangerously-skip-permissions \
+            "Respond with exactly: NO_MCP_OK" 2>&1 && echo "No MCP: PASS" || echo "No MCP: FAIL (exit: $?)"
 
           echo ""
-          echo "=== Starting Implementation ==="
+          echo "=== DIAGNOSTIC COMPLETE - Starting Implementation ==="
           PROMPT=$(cat .scratch/implementation-prompt.md)
 
-          # Use script(1) to create a pseudo-TTY so Claude's Node.js flushes stdout
-          # in real-time instead of buffering until exit.
-          cat > .scratch/run-claude.sh << 'RUNEOF'
-          #!/bin/bash
-          PROMPT=$(cat .scratch/implementation-prompt.md)
-          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT"
-          RUNEOF
-          chmod +x .scratch/run-claude.sh
-
-          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
+          # Run Claude directly in foreground. Output is buffered by Node.js
+          # (no TTY in CI), so we monitor the output file in a background loop.
+          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$PROMPT" \
+            > .scratch/claude-raw.log 2>&1 &
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
 
-          # Stream new output lines to GitHub Actions log as they appear
-          PREV_LINES=0
+          # Monitor file growth (bytes AND lines) in foreground
+          PREV_SIZE=0
           while kill -0 $CLAUDE_PID 2>/dev/null; do
             sleep 15
-            [ -f .scratch/claude-raw.log ] || continue
-            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
-            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
-              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
-                | python3 -u .scratch/stream-filter.py
-              PREV_LINES=$CURR_LINES
-            else
-              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines)"
-            fi
+            CURR_SIZE=$(stat -c%s .scratch/claude-raw.log 2>/dev/null || echo 0)
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            echo "[$(date -u +%H:%M:%S)] Claude running... (${CURR_SIZE} bytes, ${CURR_LINES} lines)"
+            PREV_SIZE=$CURR_SIZE
           done
           wait $CLAUDE_PID
           CLAUDE_EXIT=$?
 
-          # Flush any remaining lines
-          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
-          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
-            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
-              | python3 -u .scratch/stream-filter.py
-          fi
-
           echo ""
           echo "=== Claude exited with code $CLAUDE_EXIT ==="
+          FINAL_SIZE=$(stat -c%s .scratch/claude-raw.log 2>/dev/null || echo 0)
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+          echo "Output: ${FINAL_SIZE} bytes, ${FINAL_LINES} lines"
+          echo "=== First 50 lines ==="
+          head -50 .scratch/claude-raw.log
+          echo "=== Last 50 lines ==="
+          tail -50 .scratch/claude-raw.log
 
           # Generate readable log from raw JSON
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
