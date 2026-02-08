@@ -102,6 +102,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       spawn_type: body.spawn_type,
       spawn_attempt_count: body.spawn_attempt_count,
       blocked_reason: body.blocked_reason,
+      // Cost tracking fields
+      cost_usd: body.cost_usd,
+      model: body.model,
+      num_turns: body.num_turns,
     });
 
     if (!issue) {

@@ -17,6 +17,7 @@ export interface BoardIssue {
   assignee: { name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
+  cost_usd?: number | null;
 }
 
 export type BoardEvent =
