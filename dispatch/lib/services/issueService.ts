@@ -110,6 +110,10 @@ export interface UpdateIssueInput {
   spawn_type?: SpawnType | null;
   spawn_attempt_count?: number;
   blocked_reason?: string | null;
+  // Cost tracking fields
+  cost_usd?: string | number | null;
+  model?: string | null;
+  num_turns?: string | number | null;
 }
 
 export async function createIssue(
@@ -291,6 +295,12 @@ export async function updateIssue(
       }
     }
 
+    // Parse cost as a number for accumulation
+    const costIncrement =
+      input.cost_usd != null ? parseFloat(String(input.cost_usd)) : null;
+    const turnsIncrement =
+      input.num_turns != null ? parseInt(String(input.num_turns), 10) : null;
+
     // Update issue
     const updateResult = await client.query(
       `UPDATE chipp_issue SET
@@ -315,6 +325,9 @@ export async function updateIssue(
         spawn_type = COALESCE($20, spawn_type),
         spawn_attempt_count = COALESCE($21, spawn_attempt_count),
         blocked_reason = COALESCE($22, blocked_reason),
+        cost_usd = COALESCE(cost_usd, 0) + COALESCE($23, 0),
+        model = COALESCE($24, model),
+        num_turns = COALESCE(num_turns, 0) + COALESCE($25, 0),
         updated_at = NOW()
       WHERE id = $7
       RETURNING *`,
@@ -341,6 +354,9 @@ export async function updateIssue(
         input.spawn_type,
         input.spawn_attempt_count,
         input.blocked_reason,
+        costIncrement,
+        input.model,
+        turnsIncrement,
       ]
     );
 
@@ -600,6 +616,7 @@ export interface BoardIssue {
   agent_status?: string;
   plan_status?: string | null;
   blocked_reason?: string | null;
+  cost_usd?: number | null;
 }
 
 export async function getIssueForBoard(
@@ -618,11 +635,12 @@ export async function getIssueForBoard(
     agent_status: string;
     plan_status: string | null;
     blocked_reason: string | null;
+    cost_usd: number | null;
   }>(
     `SELECT
       i.id, i.identifier, i.title, i.description, i.priority, i.status_id,
       i.assignee_id, a.name as assignee_name, i.created_at,
-      i.agent_status, i.plan_status, i.blocked_reason
+      i.agent_status, i.plan_status, i.blocked_reason, i.cost_usd
     FROM chipp_issue i
     LEFT JOIN chipp_agent a ON i.assignee_id = a.id
     WHERE i.id = $1 OR i.identifier = $1`,
@@ -659,6 +677,7 @@ export async function getIssueForBoard(
     agent_status: issue.agent_status,
     plan_status: issue.plan_status,
     blocked_reason: issue.blocked_reason,
+    cost_usd: issue.cost_usd ? parseFloat(String(issue.cost_usd)) : null,
   };
 }
 

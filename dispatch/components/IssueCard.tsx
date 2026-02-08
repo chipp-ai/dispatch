@@ -23,6 +23,7 @@ interface Issue {
   agent_status?: string;
   plan_status?: string;
   blocked_reason?: string | null;
+  cost_usd?: number | null;
 }
 
 interface IssueCardProps {
@@ -203,6 +204,21 @@ export default function IssueCard({
               </div>
             </div>
           )}
+
+        {/* Cost badge */}
+        {issue.cost_usd != null && issue.cost_usd > 0 && (
+          <div className="flex items-center gap-1 mb-2">
+            <span
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
+              style={{
+                backgroundColor: "#22d3d310",
+                color: "#22d3d3",
+              }}
+            >
+              ${issue.cost_usd < 0.01 ? "<0.01" : issue.cost_usd.toFixed(2)}
+            </span>
+          </div>
+        )}
 
         {/* Bottom row: Assignee */}
         {issue.assignee && (

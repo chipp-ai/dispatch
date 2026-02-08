@@ -123,6 +123,10 @@ interface Issue {
   spawn_attempt_count?: number | null;
   spawn_run_id?: string | null;
   spawn_status?: string | null;
+  // Cost tracking
+  cost_usd?: number | null;
+  model?: string | null;
+  num_turns?: number | null;
 }
 
 // Generate consistent color from string
@@ -2163,6 +2167,35 @@ export default function IssuePageClient() {
                   {issue.agent_tokens_used.toLocaleString()}
                 </span>{" "}
                 tokens used
+              </div>
+            )}
+
+            {/* Cost Tracking */}
+            {issue.cost_usd != null && issue.cost_usd > 0 && (
+              <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
+                  Cost
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-[18px] font-mono font-semibold text-[#22d3d3]">
+                    ${issue.cost_usd < 0.01 ? "<0.01" : issue.cost_usd.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mt-1.5 text-[11px] text-[#505050]">
+                  {issue.num_turns != null && issue.num_turns > 0 && (
+                    <span>{issue.num_turns} turns</span>
+                  )}
+                  {issue.model && (
+                    <span className="font-mono text-[10px] text-[#404040]">
+                      {issue.model.replace("claude-", "").replace(/-/g, " ")}
+                    </span>
+                  )}
+                </div>
+                {issue.spawn_attempt_count != null && issue.spawn_attempt_count > 1 && (
+                  <div className="mt-1 text-[10px] text-[#404040]">
+                    across {issue.spawn_attempt_count} spawns
+                  </div>
+                )}
               </div>
             )}
           </div>
