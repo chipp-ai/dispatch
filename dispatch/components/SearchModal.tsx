@@ -81,11 +81,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 modal-backdrop flex items-start justify-center pt-[15vh]"
+      className="fixed inset-0 z-50 modal-backdrop flex items-start justify-center pt-[5vh] md:pt-[15vh] px-3 md:px-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl overflow-hidden animate-fade-in"
+        className="w-full max-w-xl bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl overflow-hidden animate-fade-in max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Search input */}
