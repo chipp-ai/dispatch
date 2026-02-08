@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import crypto from "crypto";
 
 const SESSION_COOKIE_NAME = "chipp_issues_session";
@@ -40,6 +40,18 @@ export async function clearSession(): Promise<void> {
 }
 
 export async function requireAuth(): Promise<boolean> {
+  // Check session cookie (browser UI)
   const session = await getSession();
-  return session !== null;
+  if (session !== null) return true;
+
+  // Check Bearer token (CI/API access)
+  const headerStore = await headers();
+  const authHeader = headerStore.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    const apiKey = process.env.CHIPP_ISSUES_API_KEY;
+    if (apiKey && token === apiKey) return true;
+  }
+
+  return false;
 }

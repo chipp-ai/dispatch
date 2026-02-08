@@ -36,6 +36,8 @@ interface Issue {
   plan_status?: string;
   blocked_reason?: string | null;
   cost_usd?: number | null;
+  run_outcome?: string | null;
+  outcome_summary?: string | null;
 }
 
 interface BoardEvent {
@@ -67,6 +69,7 @@ export default function BoardPage() {
     prsProcessed: number;
     issuesUpdated: number;
   } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -335,18 +338,32 @@ export default function BoardPage() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar onCreateIssue={() => setShowCreateModal(true)} />
+      <Sidebar
+        onCreateIssue={() => setShowCreateModal(true)}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="h-12 border-b border-[#252525] flex items-center justify-between px-4">
-          <div className="flex items-center gap-6">
-            <h1 className="text-[14px] font-semibold text-[#f5f5f5]">Issues</h1>
+        <header className="h-12 border-b border-[#252525] flex items-center justify-between px-3 md:px-4">
+          <div className="flex items-center gap-3 md:gap-6 min-w-0">
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-1.5 -ml-1 text-[#888] hover:text-[#e0e0e0] hover:bg-[#1a1a1a] rounded transition-colors md:hidden"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+
+            <h1 className="text-[14px] font-semibold text-[#f5f5f5] hidden md:block">Issues</h1>
 
             {/* View tabs */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 md:gap-1 overflow-x-auto">
               <ViewTab
-                label="All issues"
+                label="All"
                 count={counts.all}
                 active={viewMode === "all"}
                 onClick={() => setViewMode("all")}
@@ -366,10 +383,10 @@ export default function BoardPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
             {/* Reconcile result toast */}
             {reconcileResult && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#4ade80] bg-[#4ade8015] rounded">
+              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#4ade80] bg-[#4ade8015] rounded">
                 <svg
                   className="w-3.5 h-3.5"
                   fill="none"
@@ -389,45 +406,57 @@ export default function BoardPage() {
             )}
 
             {/* Live indicator */}
-            <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[#666]">
+            <div className="flex items-center gap-1.5 px-1.5 md:px-2 py-1 text-[11px] text-[#666]">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   isConnected ? "bg-green-500" : "bg-[#555]"
                 }`}
               />
-              {isConnected ? "Live" : "Offline"}
+              <span className="hidden sm:inline">{isConnected ? "Live" : "Offline"}</span>
             </div>
 
             {/* Reconcile button */}
             <button
               onClick={handleReconcile}
               disabled={isReconciling}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded transition-colors ${
+              className={`flex items-center gap-1.5 p-1.5 md:px-2.5 md:py-1 text-[12px] rounded transition-colors ${
                 isReconciling
                   ? "text-[#555] cursor-not-allowed"
                   : "text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215]"
               }`}
+              title="Reconcile"
             >
               <ReconcileIcon spinning={isReconciling} />
-              {isReconciling ? "Syncing..." : "Reconcile"}
+              <span className="hidden md:inline">{isReconciling ? "Syncing..." : "Reconcile"}</span>
             </button>
 
             {/* Filter button */}
-            <button className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
+            <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
               <FilterIcon />
               Filter
             </button>
 
             {/* Display button */}
-            <button className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
+            <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
               <DisplayIcon />
               Display
+            </button>
+
+            {/* Mobile create button */}
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="p-1.5 text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215] rounded transition-colors md:hidden"
+              title="New Issue"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
             </button>
           </div>
         </header>
 
         {/* Main content - overflow-hidden so columns scroll independently */}
-        <main className="flex-1 overflow-hidden p-4">
+        <main className="flex-1 overflow-hidden p-2 md:p-4">
           {issues.length === 0 ? (
             <ImportEmptyState onImportComplete={fetchData} />
           ) : (
@@ -468,7 +497,7 @@ function ViewTab({ label, count, active, onClick }: ViewTabProps) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded transition-colors ${
+      className={`flex items-center gap-1 md:gap-1.5 px-2 md:px-2.5 py-1.5 md:py-1 text-[12px] rounded transition-colors whitespace-nowrap ${
         active
           ? "bg-[#1f1f1f] text-[#f5f5f5]"
           : "text-[#666] hover:text-[#888] hover:bg-[#1a1a1a]"

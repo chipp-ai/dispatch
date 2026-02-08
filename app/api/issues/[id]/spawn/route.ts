@@ -22,9 +22,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { type = "investigate", force = false } = body as {
+    const {
+      type = "investigate",
+      force = false,
+      additional_context,
+    } = body as {
       type?: "investigate" | "implement";
       force?: boolean;
+      additional_context?: string;
     };
 
     const issue = await getIssue(id);
@@ -69,6 +74,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       feature: extractField(issue.description, "feature"),
       plan_content: issue.plan_content,
       plan_feedback: issue.plan_feedback,
+      additional_context: additional_context || undefined,
     };
 
     const spawnType = type === "implement" ? "implement" : "investigate";

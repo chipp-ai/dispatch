@@ -6,6 +6,12 @@ import {
   createAgentActivity,
 } from "@/lib/services/issueService";
 import { broadcastActivity } from "@/lib/services/activityBroadcast";
+import {
+  canSpawn,
+  dispatchWorkflow,
+  recordSpawn,
+  type SpawnableIssue,
+} from "@/lib/services/spawnService";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -81,7 +87,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
 
       case "approve": {
-        const { approvedBy = "human" } = body as { approvedBy?: string };
+        const { approvedBy = "human", auto_spawn = false } = body as {
+          approvedBy?: string;
+          auto_spawn?: boolean;
+        };
 
         if (issue.plan_status !== "awaiting_review" && issue.plan_status !== "posted") {
           return NextResponse.json(
@@ -114,10 +123,65 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           },
         });
 
+        // Auto-spawn implementation if requested
+        let spawnResult = null;
+        if (auto_spawn) {
+          try {
+            const allowed = await canSpawn("prd_implement");
+            if (allowed) {
+              const spawnable: SpawnableIssue = {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                description: issue.description,
+                plan_content: issue.plan_content,
+              };
+              const dispatchId = await dispatchWorkflow(
+                spawnable,
+                "prd_implement"
+              );
+              await recordSpawn(issue.id, dispatchId, "implement");
+
+              const spawnActivity = await createAgentActivity(
+                issue.id,
+                "action",
+                "Auto-spawned implementation after plan approval"
+              );
+              broadcastActivity(issue.id, {
+                type: "activity",
+                data: {
+                  id: spawnActivity.id,
+                  timestamp: spawnActivity.created_at.toISOString(),
+                  type: spawnActivity.type,
+                  content: spawnActivity.content,
+                  metadata: spawnActivity.metadata,
+                },
+              });
+
+              spawnResult = { spawned: true, dispatchId };
+            } else {
+              spawnResult = {
+                spawned: false,
+                reason: "Budget or concurrency limit reached",
+              };
+            }
+          } catch (spawnErr) {
+            console.error("Auto-spawn failed:", spawnErr);
+            spawnResult = {
+              spawned: false,
+              reason:
+                spawnErr instanceof Error
+                  ? spawnErr.message
+                  : "Spawn failed",
+            };
+          }
+        }
+
         return NextResponse.json({
           success: true,
           identifier: issue.identifier,
           plan_status: "approved",
+          ...(spawnResult && { spawn: spawnResult }),
         });
       }
 

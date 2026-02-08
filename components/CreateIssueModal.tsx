@@ -89,11 +89,11 @@ export default function CreateIssueModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 modal-backdrop flex items-start justify-center pt-[10vh]"
+      className="fixed inset-0 z-50 modal-backdrop flex items-end md:items-start justify-center md:pt-[10vh] p-0 md:px-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl overflow-hidden animate-fade-in"
+        className="w-full max-w-2xl bg-[#1a1a1a] border border-[#333] rounded-t-xl md:rounded-xl shadow-2xl overflow-hidden animate-fade-in max-h-[90vh] md:max-h-[80vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

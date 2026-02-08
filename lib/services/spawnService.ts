@@ -72,6 +72,7 @@ export interface SpawnableIssue {
   feature?: string | null;
   plan_content?: string | null;
   plan_feedback?: string | null;
+  additional_context?: string;
 }
 
 // --- Safety Gates ---
@@ -236,6 +237,11 @@ export async function dispatchWorkflow(
     inputs.plan_content = issue.plan_content
       ? issue.plan_content.slice(0, 5000)
       : "";
+  }
+
+  // Pass additional context from retry dialog (all workflow types)
+  if (issue.additional_context) {
+    inputs.additional_context = issue.additional_context.slice(0, 2000);
   }
 
   const response = await fetch(url, {
