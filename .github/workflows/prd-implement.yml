@@ -420,41 +420,58 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          # Debug: verify setup
           echo "=== Debug Info ==="
           echo "which claude: $(which claude)"
           echo "claude --version: $(claude --version 2>&1 || echo 'failed')"
-          echo "which script: $(which script)"
-          echo "script --version: $(script --version 2>&1 | head -1)"
           echo "prompt size: $(wc -c < .scratch/implementation-prompt.md) bytes"
           echo "=================="
 
-          # Wrapper script reads prompt from file (avoids arg length issues)
-          cat > .scratch/run-claude.sh << 'RUNEOF'
-          #!/bin/bash
-          echo ">>> run-claude.sh: starting" >&2
-          echo ">>> run-claude.sh: PATH=$PATH" >&2
-          echo ">>> run-claude.sh: which claude=$(which claude 2>&1)" >&2
-          PROMPT=$(cat .scratch/implementation-prompt.md)
-          echo ">>> run-claude.sh: prompt length=${#PROMPT}" >&2
-          echo ">>> run-claude.sh: exec claude..." >&2
-          exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT"
-          RUNEOF
-          chmod +x .scratch/run-claude.sh
+          # DIAGNOSTIC: Test if Claude CLI works at all (no MCP, simple prompt)
+          echo ""
+          echo "=== SANITY CHECK 1: Claude without MCP ==="
+          timeout 60 claude --print --dangerously-skip-permissions "Respond with exactly: SANITY_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
 
-          # Run Claude in FOREGROUND via script PTY.
-          # Raw JSON output goes directly to GitHub Actions log.
-          # We'll process it into readable format afterward.
-          # script -q: no header, -e: return child exit, -f: flush after each write
-          script -qef -c "bash .scratch/run-claude.sh" .scratch/claude-raw.log
+          echo ""
+          echo "=== SANITY CHECK 2: Claude with MCP ==="
+          timeout 90 claude --print --dangerously-skip-permissions --mcp-config .mcp.json "Respond with exactly: MCP_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
+
+          echo ""
+          echo "=== SANITY CHECK 3: Claude stream-json mode ==="
+          timeout 60 claude --print --output-format stream-json --dangerously-skip-permissions "Respond with exactly: STREAM_CHECK_OK" 2>&1 && echo "PASS" || echo "FAIL (exit: $?)"
+
+          echo ""
+          echo "=== REAL RUN: Implementation ==="
+          PROMPT=$(cat .scratch/implementation-prompt.md)
+
+          # Run Claude directly - accept buffered output, no PTY tricks
+          claude --print --output-format stream-json --verbose --dangerously-skip-permissions \
+            --mcp-config .mcp.json "$PROMPT" \
+            > .scratch/claude-raw.log 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude started (PID: $CLAUDE_PID)"
+
+          # Monitor file growth in foreground
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 30
+            SIZE=$(wc -c < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            echo "[$(date -u +%H:%M:%S)] Claude running... (${SIZE} bytes, ${LINES} lines)"
+          done
+          wait $CLAUDE_PID
           CLAUDE_EXIT=$?
+
           echo ""
           echo "=== Claude exited with code $CLAUDE_EXIT ==="
-          echo "=== Raw log size: $(wc -c < .scratch/claude-raw.log) bytes, $(wc -l < .scratch/claude-raw.log) lines ==="
+          SIZE=$(wc -c < .scratch/claude-raw.log)
+          LINES=$(wc -l < .scratch/claude-raw.log)
+          echo "=== Raw log: ${SIZE} bytes, ${LINES} lines ==="
+          echo "=== First 20 lines ==="
+          head -20 .scratch/claude-raw.log
+          echo "=== Last 20 lines ==="
+          tail -20 .scratch/claude-raw.log
 
           # Generate readable log from raw JSON
-          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || true
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
 
           exit $CLAUDE_EXIT
 
