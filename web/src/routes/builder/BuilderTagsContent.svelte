@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Input, Button, toasts } from "$lib/design-system";
   import { Tag, Plus, Edit2, Trash2, X, Check, MessageSquare, BarChart3 } from "lucide-svelte";
 
@@ -52,7 +53,7 @@
         tags = result.data || [];
       }
     } catch (e) {
-      console.error("Failed to load tags:", e);
+      captureException(e, { tags: { feature: "builder-tags" }, extra: { action: "load-tags", appId } });
     }
   }
 
@@ -76,7 +77,7 @@
         toasts.success("Created", "Tag created successfully");
       }
     } catch (e) {
-      console.error("Failed to create tag:", e);
+      captureException(e, { tags: { feature: "builder-tags" }, extra: { action: "create-tag", appId } });
       toasts.error("Error", "Failed to create tag");
     }
   }
@@ -112,7 +113,7 @@
         toasts.success("Updated", "Tag updated successfully");
       }
     } catch (e) {
-      console.error("Failed to update tag:", e);
+      captureException(e, { tags: { feature: "builder-tags" }, extra: { action: "update-tag", tagId: editingTagId, appId } });
       toasts.error("Error", "Failed to update tag");
     }
   }
@@ -133,7 +134,7 @@
         toasts.success("Deleted", "Tag deleted");
       }
     } catch (e) {
-      console.error("Failed to delete tag:", e);
+      captureException(e, { tags: { feature: "builder-tags" }, extra: { action: "delete-tag", tagId, appId } });
       toasts.error("Error", "Failed to delete tag");
     }
   }

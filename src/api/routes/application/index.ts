@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { applicationService } from "../../../services/application.service.ts";
 import { knowledgeSourceService } from "../../../services/knowledge-source.service.ts";
@@ -109,6 +109,10 @@ applicationRoutes.post(
       organizationId: user.organizationId,
       modelId: body.modelId,
       isPublic: body.isPublic,
+      brandStyles: body.brandStyles,
+      suggestedMessages: body.suggestedMessages,
+      welcomeMessages: body.welcomeMessages,
+      creationSource: body.creationSource,
     });
 
     return c.json({ data: application }, 201);
@@ -632,11 +636,7 @@ applicationRoutes.get("/:id/voice/config", async (c) => {
       tools: [], // TODO: Load tools when implementing tool execution
     });
   } catch (error) {
-    console.error("[Voice Config] Error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "application-api", feature: "voice-config" },
-      extra: { appId: id, userId: user.id },
-    });
+    log.error("Failed to fetch voice config", { source: "application-api", feature: "voice-config", appId: id, userId: user.id }, error);
     return c.json({ error: "Failed to fetch voice config" }, 500);
   }
 });
@@ -667,11 +667,7 @@ applicationRoutes.post(
         return c.json({ error: "Voice not enabled for this application" }, 403);
       }
 
-      console.log("[Voice Tool Execute] Executing tool:", {
-        toolName,
-        parameters,
-        applicationId: id,
-      });
+      log.info("Executing voice tool", { source: "application-api", feature: "voice-tool-execute", toolName, parameters, applicationId: id });
 
       // TODO: Implement tool loading and execution
       // For now, return a placeholder response
@@ -680,11 +676,7 @@ applicationRoutes.post(
         success: false,
       });
     } catch (error) {
-      console.error("[Voice Tool Execute] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "application-api", feature: "voice-tool-execute" },
-        extra: { appId: id, userId: user.id, toolName, parameters },
-      });
+      log.error("Failed to execute voice tool", { source: "application-api", feature: "voice-tool-execute", appId: id, userId: user.id, toolName, parameters }, error);
       return c.json(
         {
           error: "Failed to execute tool",
@@ -771,10 +763,7 @@ applicationRoutes.post(
         return c.json({ error: "Voice not enabled for this application" }, 403);
       }
 
-      console.log("[Outbound Call] Initiating call:", {
-        applicationId: id,
-        phoneNumber: body.phoneNumber,
-      });
+      log.info("Initiating outbound call", { source: "application-api", feature: "outbound-call", applicationId: id, phoneNumber: body.phoneNumber });
 
       const service = await getOutboundCallService();
       const result = await service.initiateCall({
@@ -798,11 +787,7 @@ applicationRoutes.post(
         },
       });
     } catch (error) {
-      console.error("[Outbound Call] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "application-api", feature: "outbound-call" },
-        extra: { appId: id, userId: user.id },
-      });
+      log.error("Failed to initiate outbound call", { source: "application-api", feature: "outbound-call", appId: id, userId: user.id }, error);
       return c.json(
         {
           error: "Failed to initiate call",
@@ -840,10 +825,7 @@ applicationRoutes.post(
         return c.json({ error: "Voice not enabled for this application" }, 403);
       }
 
-      console.log("[Outbound Batch] Initiating batch calls:", {
-        applicationId: id,
-        recipientCount: body.recipients.length,
-      });
+      log.info("Initiating batch outbound calls", { source: "application-api", feature: "outbound-batch", applicationId: id, recipientCount: body.recipients.length });
 
       const service = await getOutboundCallService();
       const result = await service.initiateBatchCalls({
@@ -866,11 +848,7 @@ applicationRoutes.post(
         },
       });
     } catch (error) {
-      console.error("[Outbound Batch] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "application-api", feature: "outbound-batch" },
-        extra: { appId: id, userId: user.id },
-      });
+      log.error("Failed to initiate batch calls", { source: "application-api", feature: "outbound-batch", appId: id, userId: user.id }, error);
       return c.json(
         {
           error: "Failed to initiate batch calls",
@@ -930,10 +908,7 @@ applicationRoutes.post(
         return c.json({ error: "No valid recipients found in CSV" }, 400);
       }
 
-      console.log("[Outbound Campaign] Creating campaign:", {
-        applicationId: id,
-        recipientCount: recipients.length,
-      });
+      log.info("Creating outbound campaign", { source: "application-api", feature: "outbound-campaign", applicationId: id, recipientCount: recipients.length });
 
       const result = await service.initiateBatchCalls({
         applicationId: id,
@@ -952,11 +927,7 @@ applicationRoutes.post(
         },
       });
     } catch (error) {
-      console.error("[Outbound Campaign] Error:", error);
-      Sentry.captureException(error, {
-        tags: { source: "application-api", feature: "outbound-campaign" },
-        extra: { appId: id, userId: user.id },
-      });
+      log.error("Failed to create campaign", { source: "application-api", feature: "outbound-campaign", appId: id, userId: user.id }, error);
       return c.json(
         {
           error: "Failed to create campaign",
@@ -1003,11 +974,7 @@ applicationRoutes.get("/:id/voice/campaigns", async (c) => {
       })),
     });
   } catch (error) {
-    console.error("[Campaigns List] Error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "application-api", feature: "campaigns-list" },
-      extra: { appId: id, userId: user.id },
-    });
+    log.error("Failed to list campaigns", { source: "application-api", feature: "campaigns-list", appId: id, userId: user.id }, error);
     return c.json({ error: "Failed to list campaigns" }, 500);
   }
 });
@@ -1068,11 +1035,7 @@ applicationRoutes.get("/:id/voice/campaigns/:campaignId", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[Campaign Details] Error:", error);
-    Sentry.captureException(error, {
-      tags: { source: "application-api", feature: "campaign-details" },
-      extra: { appId: id, userId: user.id, campaignId },
-    });
+    log.error("Failed to get campaign details", { source: "application-api", feature: "campaign-details", appId: id, userId: user.id, campaignId }, error);
     return c.json({ error: "Failed to get campaign" }, 500);
   }
 });
@@ -1093,7 +1056,7 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/start", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[Campaign Start] Error:", error);
+    log.error("Failed to start campaign", { source: "application-api", feature: "campaign-start", appId: id, userId: user.id, campaignId }, error);
     return c.json({ error: "Failed to start campaign" }, 500);
   }
 });
@@ -1114,7 +1077,7 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/pause", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[Campaign Pause] Error:", error);
+    log.error("Failed to pause campaign", { source: "application-api", feature: "campaign-pause", appId: id, userId: user.id, campaignId }, error);
     return c.json({ error: "Failed to pause campaign" }, 500);
   }
 });
@@ -1135,7 +1098,7 @@ applicationRoutes.post("/:id/voice/campaigns/:campaignId/cancel", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[Campaign Cancel] Error:", error);
+    log.error("Failed to cancel campaign", { source: "application-api", feature: "campaign-cancel", appId: id, userId: user.id, campaignId }, error);
     return c.json({ error: "Failed to cancel campaign" }, 500);
   }
 });

@@ -28,7 +28,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 import {
   optionalConsumerAuthMiddleware,
@@ -66,6 +66,101 @@ import { modelSupportsVideoInput } from "../../../llm/utils/video-capabilities.t
 import { normalizeHistoryForModel } from "../../../llm/utils/normalize-history.ts";
 import { reconstructHistory } from "../../../llm/utils/reconstruct-history.ts";
 import { transcribeAudio } from "../../../services/transcription.service.ts";
+
+// ========================================
+// Live Chat Notification Helpers
+// ========================================
+
+import { db } from "../../../db/client.ts";
+import { notificationService } from "../../../services/notifications/notification.service.ts";
+import { publishToUsers, publishToSession, publishToUser } from "../../../websocket/pubsub.ts";
+import type { ConversationActivityEvent } from "../../../websocket/types.ts";
+import { multiplayerService } from "../../../services/multiplayer.service.ts";
+
+/**
+ * Get unique user IDs for all members in an organization.
+ * Cached in-memory for 30s to avoid hammering DB on every message.
+ */
+const orgMemberCache = new Map<string, { userIds: string[]; expiresAt: number }>();
+
+async function getOrgMemberUserIds(organizationId: string): Promise<string[]> {
+  const cached = orgMemberCache.get(organizationId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.userIds;
+  }
+
+  try {
+    const members = await db
+      .selectFrom("app.workspace_members as wm")
+      .innerJoin("app.workspaces as w", "w.id", "wm.workspaceId")
+      .select("wm.userId")
+      .where("w.organizationId", "=", organizationId)
+      .distinct()
+      .execute();
+
+    const userIds = members.map((m) => m.userId);
+    orgMemberCache.set(organizationId, {
+      userIds,
+      expiresAt: Date.now() + 30_000,
+    });
+    return userIds;
+  } catch (err) {
+    log.error("Failed to get org members", { source: "consumer-chat", feature: "org-members", organizationId }, err);
+    return [];
+  }
+}
+
+/**
+ * Fire a conversation activity event to all org members (fire-and-forget).
+ */
+function fireConversationEvent(
+  organizationId: string | null,
+  event: ConversationActivityEvent
+): void {
+  if (!organizationId) return;
+
+  getOrgMemberUserIds(organizationId)
+    .then((userIds) => {
+      if (userIds.length > 0) {
+        publishToUsers(userIds, event).catch(() => {});
+      }
+    })
+    .catch(() => {});
+}
+
+/**
+ * Fire a notification:push toast to all org members (fire-and-forget).
+ */
+function fireNotificationPush(
+  organizationId: string | null,
+  opts: {
+    title: string;
+    body: string;
+    actionUrl?: string;
+    actionLabel?: string;
+    notificationType?: string;
+  }
+): void {
+  if (!organizationId) return;
+
+  getOrgMemberUserIds(organizationId)
+    .then((userIds) => {
+      if (userIds.length > 0) {
+        publishToUsers(userIds, {
+          type: "notification:push",
+          notificationType: opts.notificationType || "live_chat_started",
+          category: "engagement",
+          title: opts.title,
+          body: opts.body,
+          data: {},
+          actionUrl: opts.actionUrl,
+          actionLabel: opts.actionLabel,
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    })
+    .catch(() => {});
+}
 
 // ========================================
 // Title Generation
@@ -122,11 +217,11 @@ async function generateTitleIfNeeded(
 
     if (title) {
       await chatService.updateSessionTitle(sessionId, title);
-      console.log("[chat] Generated title for session", { sessionId, title });
+      log.info("Generated title for session", { source: "consumer-chat", feature: "title-generation", sessionId, title });
     }
   } catch (err) {
     // Non-critical - log but don't fail the request
-    console.error("[chat] Failed to generate title:", err);
+    log.error("Failed to generate title", { source: "consumer-chat", feature: "title-generation", sessionId }, err);
   }
 }
 
@@ -283,29 +378,45 @@ consumerChatRoutes.get("/sessions/:sessionId", async (c) => {
   const app = c.get("app");
   const { sessionId } = c.req.param();
 
-  if (!consumer) {
-    throw new UnauthorizedError("Authentication required to view sessions");
-  }
-
   const session = await chatService.getSession(sessionId);
 
-  // Verify the session belongs to this consumer and app
+  // Verify the session belongs to this app
   if (session.applicationId !== app.id) {
     return c.json({ error: "Session not found" }, 404);
   }
-  if (session.consumerId !== consumer.id) {
-    return c.json({ error: "Session not found" }, 404);
+
+  if (session.isMultiplayer) {
+    // Multiplayer: verify requester is an active participant
+    const anonymousToken = c.req.header("X-Anonymous-Token");
+    const participant = await multiplayerService.isSessionParticipant(
+      sessionId,
+      consumer?.id,
+      anonymousToken
+    );
+    if (!participant) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+  } else {
+    // Single-player: require auth and ownership
+    if (!consumer) {
+      throw new UnauthorizedError("Authentication required to view sessions");
+    }
+    if (session.consumerId !== consumer.id) {
+      return c.json({ error: "Session not found" }, 404);
+    }
   }
 
   // Transform for consumer view
   const transformedSession = {
     id: session.id,
     title: session.title,
+    isMultiplayer: session.isMultiplayer,
     createdAt: session.startedAt,
     messages: session.messages.map((msg) => ({
       id: msg.id,
       role: msg.role,
       content: msg.content,
+      senderParticipantId: msg.senderParticipantId,
       createdAt: msg.createdAt,
       audioUrl: msg.audioUrl,
       audioDurationMs: msg.audioDurationMs,
@@ -373,24 +484,43 @@ consumerChatRoutes.post(
       let session = null;
       let isNewSession = false;
 
+      // Track multiplayer participant for broadcasting
+      let senderParticipantId: string | undefined;
+
       if (sessionId) {
         session = await chatService.validateSession(sessionId, app.id);
-        // SECURITY: Prevent unauthenticated users from accessing authenticated sessions
-        if (!consumer && session.consumerId) {
-          return c.json({ error: "Session not found" }, 404);
-        }
-        // Verify consumer owns this session (if they're authenticated)
-        // Anonymous sessions have null consumerId, so only validate if consumer exists
-        if (
-          consumer &&
-          session.consumerId &&
-          session.consumerId !== consumer.id
-        ) {
-          return c.json({ error: "Session not found" }, 404);
-        }
-        // Don't allow authenticated user to use anonymous session
-        if (consumer && !session.consumerId) {
-          return c.json({ error: "Session not found" }, 404);
+
+        if (session.isMultiplayer) {
+          // Multiplayer: verify sender is an active participant
+          const anonymousToken = c.req.header("X-Anonymous-Token");
+          const participant = await multiplayerService.isSessionParticipant(
+            sessionId,
+            consumer?.id,
+            anonymousToken
+          );
+          if (!participant) {
+            return c.json({ error: "Not a participant in this session" }, 403);
+          }
+          senderParticipantId = participant.id;
+        } else {
+          // Single-player ownership checks
+          // SECURITY: Prevent unauthenticated users from accessing authenticated sessions
+          if (!consumer && session.consumerId) {
+            return c.json({ error: "Session not found" }, 404);
+          }
+          // Verify consumer owns this session (if they're authenticated)
+          // Anonymous sessions have null consumerId, so only validate if consumer exists
+          if (
+            consumer &&
+            session.consumerId &&
+            session.consumerId !== consumer.id
+          ) {
+            return c.json({ error: "Session not found" }, 404);
+          }
+          // Don't allow authenticated user to use anonymous session
+          if (consumer && !session.consumerId) {
+            return c.json({ error: "Session not found" }, 404);
+          }
         }
       } else {
         session = await chatService.createSession({
@@ -400,6 +530,41 @@ consumerChatRoutes.post(
         });
         sessionId = session.id;
         isNewSession = true;
+
+        // Fire live chat notifications to all org members
+        chatService.updateSessionActivity(sessionId).catch(() => {});
+        fireConversationEvent(appConfig.organizationId, {
+          type: "conversation:started",
+          sessionId,
+          applicationId: app.id,
+          consumerEmail: consumer?.email ?? undefined,
+          consumerName: consumer?.name ?? undefined,
+          timestamp: new Date().toISOString(),
+        });
+        fireNotificationPush(appConfig.organizationId, {
+          title: "New Chat Started",
+          body: consumer?.name || consumer?.email || "Anonymous user",
+          actionUrl: `/#/apps/${app.id}/chats`,
+          actionLabel: "View Chat",
+        });
+
+        // Send email notification (fire-and-forget)
+        if (appConfig.organizationId) {
+          notificationService.send({
+            type: "new_chat",
+            organizationId: appConfig.organizationId,
+            data: {
+              appName: appConfig.name || "your app",
+              appId: app.id,
+              sessionId,
+              consumerName: consumer?.name ?? undefined,
+              consumerEmail: consumer?.email ?? undefined,
+              messagePreview: body.message?.slice(0, 200),
+              source: "APP",
+              timestamp: new Date().toISOString(),
+            },
+          }).catch(() => {});
+        }
       }
 
       // Parallel context gathering (including billing context for Stripe Token Billing)
@@ -433,7 +598,18 @@ consumerChatRoutes.post(
         );
       }
 
-      const modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      // Determine model to use - check for dev override header first
+      const devModelOverride = c.req.header("X-Dev-Model-Override");
+      const environment = Deno.env.get("ENVIRONMENT") || "development";
+      const isDevOrStaging = ["development", "local", "staging"].includes(
+        environment
+      );
+
+      let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      if (isDevOrStaging && devModelOverride) {
+        log.debug("Using dev model override", { source: "consumer-chat", feature: "model-override", devModelOverride, appDefault: modelId });
+        modelId = devModelOverride;
+      }
 
       // Handle audio input: send natively to audio-capable models, else transcribe via Whisper
       let messageText = body.message;
@@ -465,21 +641,11 @@ consumerChatRoutes.post(
           if (!messageText.trim()) {
             messageText = "[Voice message]";
           }
-          console.log(
-            "[consumer-chat] Audio: native input_audio for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: native input_audio", { source: "consumer-chat", feature: "audio-input", modelId, audioFormat });
         } else {
           // Transcribe via Whisper (model doesn't support audio, or format not compatible)
           audioWasTranscribed = true;
-          console.log(
-            "[consumer-chat] Audio: transcribing via Whisper for",
-            modelId,
-            "format:",
-            audioFormat
-          );
+          log.debug("Audio: transcribing via Whisper", { source: "consumer-chat", feature: "audio-input", modelId, audioFormat });
           const { text } = await transcribeAudio(
             body.audio.data,
             body.audio.mimeType
@@ -490,10 +656,7 @@ consumerChatRoutes.post(
             messageText =
               messageText.trim() || "[Voice message - no speech detected]";
           }
-          console.log(
-            "[consumer-chat] Whisper transcript:",
-            messageText.slice(0, 100)
-          );
+          log.debug("Whisper transcript", { source: "consumer-chat", feature: "audio-input", transcript: messageText.slice(0, 100) });
         }
       }
 
@@ -512,17 +675,13 @@ consumerChatRoutes.post(
           if (!messageText.trim()) {
             messageText = "Please watch and respond to this video.";
           }
-          console.log("[consumer-chat] Video: native input_video for", modelId);
+          log.debug("Video: native input_video", { source: "consumer-chat", feature: "video-input", modelId });
         } else {
           // Model doesn't support video - add text placeholder
           if (!messageText.trim()) {
             messageText = "[User attached a video]";
           }
-          console.log(
-            "[consumer-chat] Video: model",
-            modelId,
-            "does not support video input, using text placeholder"
-          );
+          log.debug("Video: model does not support video input, using text placeholder", { source: "consumer-chat", feature: "video-input", modelId });
         }
       }
 
@@ -550,13 +709,10 @@ consumerChatRoutes.post(
               storagePath,
               body.audio!.mimeType.split(";")[0]
             );
-            console.log("[consumer-chat] Audio uploaded to GCS:", url);
+            log.debug("Audio uploaded to GCS", { source: "consumer-chat", feature: "audio-upload", sessionId, url });
             return url;
           } catch (err) {
-            console.error(
-              "[consumer-chat] Failed to upload audio to GCS:",
-              err
-            );
+            log.error("Failed to upload audio to GCS", { source: "consumer-chat", feature: "audio-upload", sessionId, appId: app.id }, err);
             return null;
           }
         })();
@@ -573,8 +729,70 @@ consumerChatRoutes.post(
             : undefined,
           videoUrl: body.video?.url,
           videoMimeType: body.video?.mimeType,
+          senderParticipantId,
         }
       );
+
+      // Broadcast user message to other multiplayer participants
+      if (session.isMultiplayer && senderParticipantId) {
+        publishToSession(
+          sessionId,
+          {
+            type: "multiplayer:user_message",
+            sessionId,
+            message: {
+              id: userMessage.id,
+              role: "user",
+              content: messageText,
+              senderParticipantId,
+              createdAt: userMessage.createdAt,
+            },
+          },
+          senderParticipantId
+        ).catch(() => {});
+      }
+
+      // Fire activity event for user message (fire-and-forget)
+      chatService.updateSessionActivity(sessionId).catch(() => {});
+      fireConversationEvent(appConfig.organizationId, {
+        type: "conversation:activity",
+        sessionId,
+        applicationId: app.id,
+        consumerEmail: consumer?.email ?? undefined,
+        consumerName: consumer?.name ?? undefined,
+        messagePreview: messageText.slice(0, 120),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Check if session is in human takeover mode -- skip AI
+      if (session && session.mode === "human") {
+        // Notify the builder who took over about the new consumer message
+        if (session.takenOverBy) {
+          publishToUser(session.takenOverBy, {
+            type: "consumer:message",
+            sessionId,
+            content: messageText,
+            timestamp: new Date().toISOString(),
+          }).catch(() => {});
+        }
+
+        // Return minimal SSE response (no AI invocation)
+        return streamSSE(c, async (stream) => {
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: "start",
+              messageId: crypto.randomUUID().slice(0, 16),
+              sessionId,
+            }),
+          });
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: "done",
+              finishReason: "human_takeover",
+            }),
+          });
+        });
+      }
 
       // Build system prompt with knowledge base hint and current time
       let systemPrompt = appConfig.systemPrompt || "";
@@ -670,11 +888,16 @@ consumerChatRoutes.post(
         }
       } catch (err) {
         // Log but don't fail - custom tools are optional
-        console.warn("[consumer-chat] Failed to load custom tools:", err);
+        log.warn("Failed to load custom tools", { source: "consumer-chat", feature: "custom-tools", appId: app.id });
       }
 
       // Create abort controller for stopping the stream
       const abortController = new AbortController();
+
+      // Register abort controller for multiplayer stop/interrupt
+      if (session.isMultiplayer) {
+        multiplayerService.registerActiveStream(sessionId, abortController);
+      }
 
       // Wrap agent stream with onComplete callback for centralized persistence
       // This fires ONCE when the stream fully completes, avoiding duplicate saves
@@ -687,19 +910,20 @@ consumerChatRoutes.post(
         {
           abortSignal: abortController.signal,
           onComplete: async (result) => {
+            // Unregister multiplayer stream
+            if (session!.isMultiplayer) {
+              multiplayerService.unregisterActiveStream(sessionId);
+            }
+
             // Skip if nothing to save or aborted
             if (!result.text || result.aborted) {
               if (result.aborted) {
-                console.log(
-                  "[consumer-chat] onComplete: Stream aborted, skipping persistence"
-                );
+                log.debug("onComplete: Stream aborted, skipping persistence", { source: "consumer-chat", feature: "persistence", sessionId });
               }
               return;
             }
 
-            console.log(
-              `[consumer-chat] onComplete: Persisting message - ${result.text.length} chars`
-            );
+            log.debug("onComplete: Persisting message", { source: "consumer-chat", feature: "persistence", sessionId, textLength: result.text.length });
 
             // Save bot response with tool calls/results if present
             await chatService.addMessage(sessionId, "assistant", result.text, {
@@ -717,9 +941,9 @@ consumerChatRoutes.post(
               messageText,
               result.text,
               billingContext
-            ).catch((err) =>
-              console.error("[consumer-chat] Title generation error:", err)
-            );
+            ).catch((err) => {
+              log.error("Title generation error", { source: "consumer-chat", feature: "title-generation", sessionId, appId: app.id }, err);
+            });
 
             // Record token usage
             const { inputTokens, outputTokens } = result.usage;
@@ -734,11 +958,7 @@ consumerChatRoutes.post(
                   outputTokens,
                 })
                 .catch((err) => {
-                  console.error(
-                    "[consumer-chat] Failed to record token usage:",
-                    err
-                  );
-                  Sentry.captureException(err);
+                  log.error("Failed to record token usage", { source: "consumer-chat", feature: "token-usage", appId: app.id, sessionId, model: modelId, consumerId: consumer?.id }, err);
                 });
             }
 
@@ -759,7 +979,7 @@ consumerChatRoutes.post(
       return streamSSE(c, async (stream) => {
         // Handle client disconnect - abort the agent loop
         stream.onAbort(() => {
-          console.log("[consumer-chat] Client disconnected, aborting stream");
+          log.debug("Client disconnected, aborting stream", { source: "consumer-chat", feature: "stream", sessionId });
           abortController.abort();
         });
 
@@ -769,6 +989,15 @@ consumerChatRoutes.post(
         await stream.writeSSE({
           data: JSON.stringify({ type: "start", messageId, sessionId }),
         });
+
+        // Broadcast AI start to other multiplayer participants
+        if (session.isMultiplayer && senderParticipantId) {
+          publishToSession(
+            sessionId,
+            { type: "multiplayer:ai_start", sessionId },
+            senderParticipantId
+          ).catch(() => {});
+        }
 
         // When audio was transcribed via Whisper, tell the frontend to show
         // the transcript text instead of the audio player
@@ -801,10 +1030,7 @@ consumerChatRoutes.post(
                 .where("id", "=", userMessage.id)
                 .execute();
             } catch (err) {
-              console.error(
-                "[consumer-chat] Failed to send/patch audio URL:",
-                err
-              );
+              log.error("Failed to send/patch audio URL", { source: "consumer-chat", feature: "audio-url-patch", sessionId, messageId: userMessage.id, appId: app.id }, err);
             }
           });
         }
@@ -828,6 +1054,18 @@ consumerChatRoutes.post(
                     delta: chunk.delta,
                   }),
                 });
+                // Broadcast AI text chunk to other multiplayer participants
+                if (session.isMultiplayer && senderParticipantId) {
+                  publishToSession(
+                    sessionId,
+                    {
+                      type: "multiplayer:ai_chunk",
+                      sessionId,
+                      delta: chunk.delta,
+                    },
+                    senderParticipantId
+                  ).catch(() => {});
+                }
                 break;
               }
 
@@ -858,21 +1096,52 @@ consumerChatRoutes.post(
                     input: call.arguments,
                   }),
                 });
+
+                // Broadcast tool call to other multiplayer participants
+                if (session.isMultiplayer && senderParticipantId) {
+                  publishToSession(
+                    sessionId,
+                    {
+                      type: "multiplayer:ai_tool_call",
+                      sessionId,
+                      toolCallId: call.id,
+                      toolName: call.name,
+                      input: call.arguments,
+                    },
+                    senderParticipantId
+                  ).catch(() => {});
+                }
                 break;
               }
 
               case "tool_result": {
                 const toolCall = pendingToolCalls.get(chunk.callId);
+                const toolName = toolCall?.name || "unknown";
 
                 // Send tool-output-available with result
                 await stream.writeSSE({
                   data: JSON.stringify({
                     type: "tool-output-available",
                     toolCallId: chunk.callId,
-                    toolName: toolCall?.name || "unknown",
+                    toolName,
                     output: chunk.result,
                   }),
                 });
+
+                // Broadcast tool result to other multiplayer participants
+                if (session.isMultiplayer && senderParticipantId) {
+                  publishToSession(
+                    sessionId,
+                    {
+                      type: "multiplayer:ai_tool_result",
+                      sessionId,
+                      toolCallId: chunk.callId,
+                      toolName,
+                      output: chunk.result,
+                    },
+                    senderParticipantId
+                  ).catch(() => {});
+                }
 
                 pendingToolCalls.delete(chunk.callId);
                 break;
@@ -880,16 +1149,32 @@ consumerChatRoutes.post(
 
               case "tool_error": {
                 const toolCall = pendingToolCalls.get(chunk.callId);
+                const toolName = toolCall?.name || "unknown";
 
                 // Send tool-output-available with error
                 await stream.writeSSE({
                   data: JSON.stringify({
                     type: "tool-output-available",
                     toolCallId: chunk.callId,
-                    toolName: toolCall?.name || "unknown",
+                    toolName,
                     output: { error: chunk.error },
                   }),
                 });
+
+                // Broadcast tool error to other multiplayer participants
+                if (session.isMultiplayer && senderParticipantId) {
+                  publishToSession(
+                    sessionId,
+                    {
+                      type: "multiplayer:ai_tool_result",
+                      sessionId,
+                      toolCallId: chunk.callId,
+                      toolName,
+                      output: { error: chunk.error },
+                    },
+                    senderParticipantId
+                  ).catch(() => {});
+                }
 
                 pendingToolCalls.delete(chunk.callId);
                 break;
@@ -903,6 +1188,18 @@ consumerChatRoutes.post(
                     finishReason: chunk.finishReason || "stop",
                   }),
                 });
+                // Broadcast AI finish to other multiplayer participants
+                if (session.isMultiplayer && senderParticipantId) {
+                  publishToSession(
+                    sessionId,
+                    {
+                      type: "multiplayer:ai_finish",
+                      sessionId,
+                      finishReason: chunk.finishReason || "stop",
+                    },
+                    senderParticipantId
+                  ).catch(() => {});
+                }
                 break;
               }
             }
@@ -912,15 +1209,7 @@ consumerChatRoutes.post(
 
           await stream.writeSSE({ data: "[DONE]" });
         } catch (error) {
-          console.error("[consumer-chat] Stream error:", error);
-          Sentry.captureException(error, {
-            extra: {
-              requestId,
-              appId: app.id,
-              sessionId,
-              consumerId: consumer?.id,
-            },
-          });
+          log.error("Stream error", { source: "consumer-chat", feature: "stream", requestId, appId: app.id, sessionId, consumerId: consumer?.id, model: modelId }, error);
 
           await stream.writeSSE({
             data: JSON.stringify({
@@ -931,10 +1220,7 @@ consumerChatRoutes.post(
         }
       });
     } catch (error) {
-      console.error("[consumer-chat] Setup error:", error);
-      Sentry.captureException(error, {
-        extra: { requestId, appId: app.id, consumerId: consumer?.id },
-      });
+      log.error("Setup error", { source: "consumer-chat", feature: "setup", requestId, appId: app.id, consumerId: consumer?.id }, error);
       throw error;
     }
   }
@@ -964,23 +1250,42 @@ consumerChatRoutes.post(
       let session = null;
       let isNewSession = false;
 
+      // Track multiplayer participant
+      let sendParticipantId: string | undefined;
+
       if (sessionId) {
         session = await chatService.validateSession(sessionId, app.id);
-        // SECURITY: Prevent unauthenticated users from accessing authenticated sessions
-        if (!consumer && session.consumerId) {
-          return c.json({ error: "Session not found" }, 404);
-        }
-        // Verify consumer owns this session (if they're authenticated)
-        if (
-          consumer &&
-          session.consumerId &&
-          session.consumerId !== consumer.id
-        ) {
-          return c.json({ error: "Session not found" }, 404);
-        }
-        // Don't allow authenticated user to use anonymous session
-        if (consumer && !session.consumerId) {
-          return c.json({ error: "Session not found" }, 404);
+
+        if (session.isMultiplayer) {
+          // Multiplayer: verify sender is an active participant
+          const anonymousToken = c.req.header("X-Anonymous-Token");
+          const participant = await multiplayerService.isSessionParticipant(
+            sessionId,
+            consumer?.id,
+            anonymousToken
+          );
+          if (!participant) {
+            return c.json({ error: "Not a participant in this session" }, 403);
+          }
+          sendParticipantId = participant.id;
+        } else {
+          // Single-player ownership checks
+          // SECURITY: Prevent unauthenticated users from accessing authenticated sessions
+          if (!consumer && session.consumerId) {
+            return c.json({ error: "Session not found" }, 404);
+          }
+          // Verify consumer owns this session (if they're authenticated)
+          if (
+            consumer &&
+            session.consumerId &&
+            session.consumerId !== consumer.id
+          ) {
+            return c.json({ error: "Session not found" }, 404);
+          }
+          // Don't allow authenticated user to use anonymous session
+          if (consumer && !session.consumerId) {
+            return c.json({ error: "Session not found" }, 404);
+          }
         }
       } else {
         session = await chatService.createSession({
@@ -990,6 +1295,41 @@ consumerChatRoutes.post(
         });
         sessionId = session.id;
         isNewSession = true;
+
+        // Fire live chat notifications to all org members
+        chatService.updateSessionActivity(sessionId).catch(() => {});
+        fireConversationEvent(appConfig.organizationId, {
+          type: "conversation:started",
+          sessionId,
+          applicationId: app.id,
+          consumerEmail: consumer?.email ?? undefined,
+          consumerName: consumer?.name ?? undefined,
+          timestamp: new Date().toISOString(),
+        });
+        fireNotificationPush(appConfig.organizationId, {
+          title: "New Chat Started",
+          body: consumer?.name || consumer?.email || "Anonymous user",
+          actionUrl: `/#/apps/${app.id}/chats`,
+          actionLabel: "View Chat",
+        });
+
+        // Send email notification (fire-and-forget)
+        if (appConfig.organizationId) {
+          notificationService.send({
+            type: "new_chat",
+            organizationId: appConfig.organizationId,
+            data: {
+              appName: appConfig.name || "your app",
+              appId: app.id,
+              sessionId,
+              consumerName: consumer?.name ?? undefined,
+              consumerEmail: consumer?.email ?? undefined,
+              messagePreview: body.message?.slice(0, 200),
+              source: "APP",
+              timestamp: new Date().toISOString(),
+            },
+          }).catch(() => {});
+        }
       }
 
       // Context gathering (including billing context for Stripe Token Billing)
@@ -1002,9 +1342,34 @@ consumerChatRoutes.post(
       ]);
 
       // Save user message
-      await chatService.addMessage(sessionId, "user", body.message);
+      await chatService.addMessage(sessionId, "user", body.message, {
+        senderParticipantId: sendParticipantId,
+      });
 
-      const modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      // Fire activity event for user message (fire-and-forget)
+      chatService.updateSessionActivity(sessionId).catch(() => {});
+      fireConversationEvent(appConfig.organizationId, {
+        type: "conversation:activity",
+        sessionId,
+        applicationId: app.id,
+        consumerEmail: consumer?.email ?? undefined,
+        consumerName: consumer?.name ?? undefined,
+        messagePreview: body.message.slice(0, 120),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Determine model to use - check for dev override header first
+      const devModelOverride = c.req.header("X-Dev-Model-Override");
+      const environment = Deno.env.get("ENVIRONMENT") || "development";
+      const isDevOrStaging = ["development", "local", "staging"].includes(
+        environment
+      );
+
+      let modelId = appConfig.model ?? DEFAULT_MODEL_ID;
+      if (isDevOrStaging && devModelOverride) {
+        log.debug("Using dev model override", { source: "consumer-chat", feature: "model-override-nonstream", devModelOverride, appDefault: modelId });
+        modelId = devModelOverride;
+      }
 
       // Build system prompt with knowledge base hint and current time
       let systemPrompt = appConfig.systemPrompt || "";
@@ -1086,7 +1451,7 @@ consumerChatRoutes.post(
           });
         }
       } catch (err) {
-        console.warn("[consumer-chat] Failed to load custom tools:", err);
+        log.warn("Failed to load custom tools", { source: "consumer-chat", feature: "custom-tools-nonstream", appId: app.id });
       }
 
       let responseContent = "";
@@ -1112,18 +1477,57 @@ consumerChatRoutes.post(
         body.message,
         responseContent,
         billingContext
-      ).catch((err) =>
-        console.error("[consumer-chat] Title generation error:", err)
-      );
+      ).catch((err) => {
+        log.error("Title generation error", { source: "consumer-chat", feature: "title-generation", sessionId, appId: app.id }, err);
+      });
 
       return c.json({
         sessionId,
         message: responseContent,
       });
     } catch (error) {
-      console.error("[consumer-chat] Error:", error);
-      Sentry.captureException(error);
+      log.error("Non-streaming chat error", { source: "consumer-chat", feature: "non-streaming", appId: app.id, consumerId: consumer?.id, sessionId: body.sessionId }, error);
       throw error;
     }
+  }
+);
+
+// ========================================
+// Session End (Beacon)
+// ========================================
+
+/**
+ * POST /session-end
+ * Called via navigator.sendBeacon() when the consumer leaves the page.
+ * Marks the session as ended and notifies builders.
+ */
+consumerChatRoutes.post(
+  "/session-end",
+  zValidator(
+    "json",
+    z.object({
+      sessionId: z.string().uuid(),
+    })
+  ),
+  async (c) => {
+    const app = c.get("app");
+    const body = c.req.valid("json");
+
+    try {
+      const appConfig = await chatService.getAppConfig(app.id);
+
+      await chatService.endSession(body.sessionId);
+
+      fireConversationEvent(appConfig.organizationId, {
+        type: "conversation:ended",
+        sessionId: body.sessionId,
+        applicationId: app.id,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      log.error("Session end error", { source: "consumer-chat", feature: "session-end", sessionId: body.sessionId, appId: app.id }, err);
+    }
+
+    return c.json({ ok: true });
   }
 );

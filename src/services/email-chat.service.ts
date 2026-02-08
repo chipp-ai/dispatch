@@ -10,7 +10,7 @@
 import { db } from "../db/client.ts";
 import { emailService, type PostmarkInboundEmail } from "./email.service.ts";
 import { chatService } from "./chat.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 // Agent framework imports
 import { DEFAULT_MODEL_ID } from "../config/models.ts";
@@ -141,7 +141,9 @@ export async function handleEmailMessage(
 ): Promise<void> {
   const { applicationId, configId, email, correlationId } = params;
 
-  console.log("[EmailChat] Processing message", {
+  log.info("Processing message", {
+    source: "email-chat",
+    feature: "message-processing",
     correlationId,
     from: email.FromFull?.Email || email.From,
     subject: email.Subject,
@@ -151,13 +153,18 @@ export async function handleEmailMessage(
   try {
     // Get app config
     const appConfig = await chatService.getAppConfig(applicationId);
-    const language = appConfig.language || "EN";
+    const language = "EN";
 
     // Get email config
     const emailConfig =
       await emailService.getConfigByApplicationId(applicationId);
     if (!emailConfig) {
-      console.error("[EmailChat] Email config not found");
+      log.error("Email config not found", {
+        source: "email-chat",
+        feature: "config",
+        correlationId,
+        applicationId,
+      });
       return;
     }
 
@@ -177,7 +184,9 @@ export async function handleEmailMessage(
       senderEmail,
     });
 
-    console.log("[EmailChat] Thread resolved", {
+    log.info("Thread resolved", {
+      source: "email-chat",
+      feature: "thread-management",
       correlationId,
       threadId: thread.threadId,
       chatSessionId: thread.chatSessionId,
@@ -189,15 +198,16 @@ export async function handleEmailMessage(
       email.StrippedTextReply || cleanEmailBody(email.TextBody || "");
 
     if (!cleanedBody.trim()) {
-      console.log("[EmailChat] Empty message after cleaning, skipping");
+      log.info("Empty message after cleaning, skipping", {
+        source: "email-chat",
+        feature: "message-processing",
+        correlationId,
+      });
       return;
     }
 
     // Get previous messages (last 10)
-    const history = await chatService.getSessionMessages(
-      thread.chatSessionId,
-      10
-    );
+    const history = await chatService.getSessionMessages(thread.chatSessionId);
     const hasKnowledge = await hasKnowledgeSources(applicationId);
 
     // Save user message
@@ -265,26 +275,31 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
 
     // Create LLM adapter with billing
     const modelId = appConfig.model || DEFAULT_MODEL_ID;
-    const adapter = await createAdapterWithBilling(modelId, {
-      organizationId: billingContext.organizationId,
-      applicationId,
-      sessionId: thread.chatSessionId,
-      subscriptionTier: billingContext.subscriptionTier,
-      usageBasedBillingEnabled: billingContext.usageBasedBillingEnabled,
-    });
+    const adapter = await createAdapterWithBilling(modelId, billingContext);
 
     // Create tool registry
     const registry = createRegistry();
 
     // Register tools
-    registerCoreTools(registry);
+    registerCoreTools(registry, { appId: applicationId });
 
     if (hasKnowledge) {
-      registerRAGTools(registry, applicationId);
+      registerRAGTools(registry, {
+        appId: applicationId,
+        searchKnowledge: async (
+          appId: string,
+          query: string,
+          limit: number
+        ) => {
+          const { getRelevantChunks } = await import("./rag.service.ts");
+          const chunks = await getRelevantChunks(appId, query);
+          return chunks.slice(0, limit);
+        },
+      });
     }
 
     // Register custom actions
-    const customActions = await customActionService.list(applicationId);
+    const customActions = await customActionService.listForApp(applicationId);
     if (customActions.length > 0) {
       const execContext: ExecutionContext = {
         applicationId,
@@ -298,28 +313,22 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     registerWebTools(registry);
 
     // Run agent loop
-    console.log("[EmailChat] Running agent loop", { correlationId });
-    const response = await agentLoop({
-      adapter,
-      registry,
+    log.info("Running agent loop", { source: "email-chat", feature: "agent-loop", correlationId });
+    let responseText = "";
+    for await (const chunk of agentLoop(messages, registry, adapter, {
+      model: modelId,
+      temperature: appConfig.temperature ?? 0.7,
       systemPrompt,
-      messages,
       maxIterations: 10,
-    });
+    })) {
+      if (chunk.type === "text") {
+        responseText += chunk.delta;
+      }
+    }
 
-    // Extract text response
-    const responseText =
-      typeof response.content === "string"
-        ? response.content
-        : response.content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                part.type === "text"
-            )
-            .map((part) => part.text)
-            .join("\n");
-
-    console.log("[EmailChat] Got response", {
+    log.info("Got response", {
+      source: "email-chat",
+      feature: "agent-loop",
       correlationId,
       length: responseText.length,
     });
@@ -337,7 +346,14 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     // Get server token
     const serverToken = await emailService.getServerToken(emailConfig);
     if (!serverToken) {
-      console.error("[EmailChat] No Postmark server token available");
+      log.error("No Postmark server token available", {
+        source: "email-chat",
+        feature: "send-reply",
+        provider: "postmark",
+        correlationId,
+        applicationId,
+        configId,
+      });
       return;
     }
 
@@ -368,47 +384,30 @@ Example: Instead of '[Read more](https://example.com)', write 'Read more at http
     });
 
     if (sendResult.ErrorCode !== 0) {
-      const error = new Error(`Postmark error: ${sendResult.Message}`);
-      Sentry.captureException(error, {
-        tags: {
-          source: "email-chat",
-          feature: "send-reply",
-        },
-        extra: {
-          correlationId,
-          applicationId,
-          errorCode: sendResult.ErrorCode,
-          errorMessage: sendResult.Message,
-        },
-      });
-      console.error("[EmailChat] Failed to send reply", {
+      log.error("Failed to send reply", {
+        source: "email-chat",
+        feature: "send-reply",
         correlationId,
+        applicationId,
         errorCode: sendResult.ErrorCode,
         errorMessage: sendResult.Message,
-      });
+      }, new Error(`Postmark error: ${sendResult.Message}`));
     } else {
-      console.log("[EmailChat] Reply sent successfully", {
+      log.info("Reply sent successfully", {
+        source: "email-chat",
+        feature: "send-reply",
         correlationId,
         messageId: sendResult.MessageID,
       });
     }
   } catch (error) {
-    console.error("[EmailChat] Error processing email", {
+    log.error("Error processing email", {
+      source: "email-chat",
+      feature: "message-processing",
       correlationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    Sentry.captureException(error, {
-      tags: {
-        source: "email-chat",
-        feature: "message-processing",
-      },
-      extra: {
-        correlationId,
-        applicationId,
-        messageId: email.MessageID,
-      },
-    });
+      applicationId,
+      messageId: email.MessageID,
+    }, error);
 
     // Note: Unlike WhatsApp, we don't send error messages back to the user
     // to avoid potential email loops

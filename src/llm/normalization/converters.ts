@@ -16,6 +16,7 @@
  * - toolName?: string
  */
 
+import { log } from "@/lib/logger.ts";
 import type {
   Message,
   ContentPart,
@@ -123,9 +124,11 @@ function convertContentPartToUnified(
     case "tool_use":
       return convertToolUsePart(part as ToolUseContentPart);
     default:
-      console.warn(
-        `[converters] Unknown content part type: ${(part as ContentPart).type}`
-      );
+      log.warn("Unknown content part type", {
+        source: "llm",
+        feature: "converters",
+        partType: (part as ContentPart).type,
+      });
       return null;
   }
 }
@@ -304,9 +307,11 @@ function convertContentPartFromUnified(
       };
 
     default:
-      console.warn(
-        `[converters] Unknown unified part type: ${(part as UnifiedContentPart).type}`
-      );
+      log.warn("Unknown unified part type", {
+        source: "llm",
+        feature: "converters",
+        partType: (part as UnifiedContentPart).type,
+      });
       return null;
   }
 }

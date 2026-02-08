@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { push } from "svelte-spa-router";
+  import { captureException } from "$lib/sentry";
   import { toasts, Button, Switch, Input, Textarea, Select, SelectItem, Slider, Card, Skeleton } from "$lib/design-system";
   import { Phone, Save, AlertCircle, Mic, Volume2, Clock, MessageCircle } from "lucide-svelte";
 
@@ -153,7 +154,7 @@
         config = { ...config, ...voiceConfig };
       }
     } catch (error) {
-      console.error("Error loading config:", error);
+      captureException(error, { tags: { feature: "builder-voice" }, extra: { action: "load-config", appId } });
       toasts.error("Failed to load voice settings");
     } finally {
       isLoading = false;
@@ -184,7 +185,7 @@
 
       toasts.success("Voice settings saved");
     } catch (error) {
-      console.error("Error saving config:", error);
+      captureException(error, { tags: { feature: "builder-voice" }, extra: { action: "save-config", appId } });
       toasts.error("Failed to save voice settings");
     } finally {
       isSaving = false;

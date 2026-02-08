@@ -5,6 +5,7 @@
   import BuilderHeader from "../lib/design-system/components/builder/BuilderHeader.svelte";
   import { Card, toasts } from "$lib/design-system";
   import { MessageSquare, Users, Clock, TrendingUp, BarChart3 } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -81,7 +82,7 @@
       const result = await response.json();
       app = result.data;
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-metrics", feature: "load-app" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load application");
     }
   }
@@ -104,7 +105,7 @@
       const result = await response.json();
       sessions = result.data;
     } catch (e) {
-      console.error("Failed to load sessions:", e);
+      captureException(e, { tags: { page: "app-builder-metrics", feature: "load-sessions" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load metrics data");
     } finally {
       isLoading = false;

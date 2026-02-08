@@ -5,6 +5,7 @@
  */
 
 import { writable } from "svelte/store";
+import { captureException } from "$lib/sentry";
 
 export type ToastVariant =
   | "default"
@@ -66,8 +67,10 @@ function createToastStore() {
     // Convenience methods
     success: (title: string, description?: string, duration = 5000) =>
       add({ title, description, variant: "success", duration }),
-    error: (title: string, description?: string, duration = 5000) =>
-      add({ title, description, variant: "error", duration }),
+    error: (title: string, description?: string, duration = 15000) => {
+      captureException(new Error(`[TOAST_ERROR] ${title}${description ? `: ${description}` : ""}`), { tags: { source: "toast" }, extra: { title, description } });
+      return add({ title, description, variant: "error", duration });
+    },
     warning: (title: string, description?: string, duration = 5000) =>
       add({ title, description, variant: "warning", duration }),
     info: (title: string, description?: string, duration = 5000) =>

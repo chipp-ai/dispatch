@@ -2,6 +2,25 @@
 
 Consumer-facing application for Chipp AI chatbots. Built with Deno + Hono API, Svelte 5 SPA, and Cloudflare Worker edge serving.
 
+## Claude Code Setup
+
+Start Claude Code with pre-configured auth and MCP tools:
+
+```bash
+# First time setup (run once)
+./scripts/setup-service-account.sh  # Creates non-expiring GCloud key
+./scripts/setup-shell-aliases.sh    # Adds cc/ccyolo aliases
+source ~/.zshrc
+
+# Daily usage
+cc           # Start Claude Code (normal mode)
+ccyolo       # Start Claude Code (autonomous mode, no prompts)
+ccc          # Continue previous session
+cccyolo      # Continue in autonomous mode
+```
+
+See `CLAUDE.md` for full documentation on commands, skills, and MCP tools.
+
 ## Quick Start
 
 ```bash

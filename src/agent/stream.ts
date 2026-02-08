@@ -5,6 +5,7 @@
  * ~150 LOC as per migration plan.
  */
 
+import { log } from "@/lib/logger.ts";
 import type { StreamChunk } from "../llm/types.ts";
 
 // ========================================
@@ -132,8 +133,8 @@ export async function* parseSSEStream(
         try {
           const chunk = JSON.parse(data) as StreamChunk;
           yield chunk;
-        } catch {
-          console.error("Failed to parse SSE data:", data);
+        } catch (parseError) {
+          log.error("Failed to parse SSE data", { source: "agent", feature: "stream", data: data.slice(0, 200) }, parseError);
         }
       }
     }

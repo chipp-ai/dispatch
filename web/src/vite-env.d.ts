@@ -19,3 +19,6 @@ declare module "$stores/*" {
   const value: unknown;
   export default value;
 }
+
+// Build-time version constant injected by vite-version-plugin
+declare const __APP_VERSION__: string;

@@ -206,7 +206,7 @@ function createMockPublishingStore() {
       const versions = Array.from(versionHistory.values())
         .filter((v) => v.applicationId === applicationId)
         .filter((v) => !options?.launchedOnly || v.isLaunched)
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.version - a.version)
         .slice(0, options?.limit ?? 50);
 
       return versions;

@@ -11,6 +11,7 @@ import {
   ValidationError,
 } from "../utils/errors.ts";
 import type { WorkspaceMemberRole, HQAccessMode } from "../db/schema.ts";
+import { notificationService } from "./notifications/notification.service.ts";
 
 // ========================================
 // Types
@@ -404,7 +405,7 @@ export const workspaceService = {
       .returning(["id", "userId", "role", "joinedAt", "latestActivity"])
       .executeTakeFirstOrThrow();
 
-    return {
+    const member: WorkspaceMember = {
       id: result.id,
       userId: result.userId,
       email: targetUser.email,
@@ -414,6 +415,30 @@ export const workspaceService = {
       joinedAt: result.joinedAt,
       latestActivity: result.latestActivity,
     };
+
+    // Fire-and-forget workspace_member_joined notification
+    try {
+      const ws = await db
+        .selectFrom("app.workspaces")
+        .select(["name", "organizationId"])
+        .where("id", "=", workspaceId)
+        .executeTakeFirst();
+
+      if (ws) {
+        notificationService.send({
+          type: "workspace_member_joined",
+          organizationId: ws.organizationId,
+          data: {
+            memberEmail: targetUser.email,
+            memberName: targetUser.name,
+            workspaceName: ws.name || "Workspace",
+            role: params.role,
+          },
+        }).catch(() => {});
+      }
+    } catch { /* fire-and-forget */ }
+
+    return member;
   },
 
   /**

@@ -8,6 +8,7 @@
 import { db } from "@/src/db/client.ts";
 import { encrypt, decrypt } from "@/src/services/crypto.service.ts";
 import type { WhatsAppConfig } from "@/src/db/schema.ts";
+import { log } from "@/lib/logger.ts";
 
 // ========================================
 // Types
@@ -186,6 +187,27 @@ export async function upsertConfig(data: {
 }
 
 /**
+ * Check if a phone number is already in use by another application.
+ * Returns the conflicting applicationId if found, null otherwise.
+ */
+export async function checkDuplicatePhoneNumber(
+  phoneNumberId: string,
+  excludeApplicationId: string
+): Promise<string | null> {
+  const encryptedPhoneNumberId = await encrypt(phoneNumberId);
+
+  const existing = await db
+    .selectFrom("app.whatsapp_configs")
+    .select("applicationId")
+    .where("phoneNumberId", "=", encryptedPhoneNumberId)
+    .where("applicationId", "!=", excludeApplicationId)
+    .where("isDeleted", "=", false)
+    .executeTakeFirst();
+
+  return existing?.applicationId ?? null;
+}
+
+/**
  * Soft delete a WhatsApp config
  */
 export async function softDeleteConfig(applicationId: string): Promise<void> {
@@ -280,7 +302,9 @@ export async function downloadMedia(
     });
 
     if (!mediaInfoResponse.ok) {
-      console.error("[WhatsApp] Failed to get media info", {
+      log.error("Failed to get media info", {
+        source: "whatsapp",
+        feature: "media-download",
         mediaId,
         status: mediaInfoResponse.status,
       });
@@ -292,7 +316,11 @@ export async function downloadMedia(
     const mimeType = mediaInfo.mime_type || "application/octet-stream";
 
     if (!downloadUrl) {
-      console.error("[WhatsApp] No download URL in media info", { mediaId });
+      log.error("No download URL in media info", {
+        source: "whatsapp",
+        feature: "media-download",
+        mediaId,
+      });
       return null;
     }
 
@@ -304,7 +332,9 @@ export async function downloadMedia(
     });
 
     if (!downloadResponse.ok) {
-      console.error("[WhatsApp] Failed to download media", {
+      log.error("Failed to download media", {
+        source: "whatsapp",
+        feature: "media-download",
         mediaId,
         status: downloadResponse.status,
       });
@@ -313,7 +343,9 @@ export async function downloadMedia(
 
     const buffer = new Uint8Array(await downloadResponse.arrayBuffer());
 
-    console.log("[WhatsApp] Downloaded media successfully", {
+    log.info("Downloaded media successfully", {
+      source: "whatsapp",
+      feature: "media-download",
       mediaId,
       mimeType,
       sizeBytes: buffer.length,
@@ -321,10 +353,11 @@ export async function downloadMedia(
 
     return { buffer, mimeType };
   } catch (error) {
-    console.error("[WhatsApp] Error downloading media", {
+    log.error("Error downloading media", {
+      source: "whatsapp",
+      feature: "media-download",
       mediaId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    }, error);
     return null;
   }
 }
@@ -375,6 +408,7 @@ export const whatsappService = {
   upsertConfig,
   softDeleteConfig,
   getDecryptedCredentials,
+  checkDuplicatePhoneNumber,
 
   // WhatsApp API
   sendTextMessage,

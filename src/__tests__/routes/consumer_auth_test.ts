@@ -417,12 +417,12 @@ describe("Consumer Auth API", () => {
       }
 
       const responses = await Promise.all(requests);
-      const statuses = responses.map((r) => r.status);
+      const statuses = responses.map((r: Response) => r.status);
 
       // At least some should succeed, possibly one 429
       assert(
-        statuses.some((s) => [200, 202, 404].includes(s)) ||
-          statuses.some((s) => s === 429)
+        statuses.some((s: number) => [200, 202, 404].includes(s)) ||
+          statuses.some((s: number) => s === 429)
       );
     });
 
@@ -660,12 +660,12 @@ describe("Consumer Auth API", () => {
       }
 
       const responses = await Promise.all(requests);
-      const statuses = responses.map((r) => r.status);
+      const statuses = responses.map((r: Response) => r.status);
 
       // Should either succeed or eventually hit rate limit
       assert(
-        statuses.some((s) => [200, 202, 404].includes(s)) ||
-          statuses.some((s) => s === 429)
+        statuses.some((s: number) => [200, 202, 404].includes(s)) ||
+          statuses.some((s: number) => s === 429)
       );
     });
   });
@@ -817,12 +817,12 @@ describe("Consumer Auth API", () => {
       }
 
       const responses = await Promise.all(requests);
-      const statuses = responses.map((r) => r.status);
+      const statuses = responses.map((r: Response) => r.status);
 
       // Should either succeed or eventually hit rate limit
       assert(
-        statuses.some((s) => [200, 202, 404].includes(s)) ||
-          statuses.some((s) => s === 429)
+        statuses.some((s: number) => [200, 202, 404].includes(s)) ||
+          statuses.some((s: number) => s === 429)
       );
     });
   });

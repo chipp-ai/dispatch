@@ -266,8 +266,11 @@ export interface ChatSessionTable {
   isBookmarked: boolean;
   externalId: string | null;
   metadata: unknown | null; // JSONB
+  isMultiplayer: boolean;
+  shareToken: string | null;
   startedAt: Generated<Date>;
   endedAt: Date | null;
+  lastActivityAt: ColumnType<Date | null, Date | null, Date | null>;
 }
 
 export interface MessageTable {
@@ -285,7 +288,22 @@ export interface MessageTable {
   audioDurationMs: number | null;
   videoUrl: string | null;
   videoMimeType: string | null;
+  senderParticipantId: string | null;
   createdAt: Generated<Date>;
+}
+
+export interface SessionParticipantTable {
+  id: Generated<string>;
+  sessionId: string;
+  consumerId: string | null;
+  displayName: string;
+  avatarColor: string;
+  isActive: boolean;
+  isAnonymous: boolean;
+  anonymousToken: string | null;
+  joinedAt: Generated<Date>;
+  leftAt: Date | null;
+  lastSeenAt: Date | null;
 }
 
 export interface UserMemoryTable {
@@ -817,7 +835,7 @@ export interface SlackUserTable {
 // ========================================
 
 export interface WhatsAppConfigTable {
-  id: Generated<number>;
+  id: Generated<string>;
   applicationId: string; // UUID reference to Application
   phoneNumberId: string; // Encrypted - WhatsApp Phone Number ID
   businessAccountId: string; // Encrypted - WhatsApp Business Account ID
@@ -886,6 +904,7 @@ export interface Database {
   // Chat schema
   "chat.sessions": ChatSessionTable;
   "chat.messages": MessageTable;
+  "chat.session_participants": SessionParticipantTable;
   "chat.user_memories": UserMemoryTable;
   "chat.viewed_sessions": ViewedSessionTable;
   "chat.tags": TagTable;
@@ -973,6 +992,7 @@ export type ApplicationCredential = Selectable<ApplicationCredentialTable>;
 export type Session = Selectable<SessionTable>;
 export type ChatSession = Selectable<ChatSessionTable>;
 export type Message = Selectable<MessageTable>;
+export type SessionParticipant = Selectable<SessionParticipantTable>;
 export type UserMemory = Selectable<UserMemoryTable>;
 export type ViewedSession = Selectable<ViewedSessionTable>;
 export type Tag = Selectable<TagTable>;

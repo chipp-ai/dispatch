@@ -8,13 +8,28 @@
   import { initWorkspace } from "./stores/workspace";
   import { initOrganization } from "./stores/organization";
   import { appBooted, markAppBooted } from "./stores/app";
-  import { Toaster, ErrorBoundary } from "./lib/design-system";
+  import { Toaster, ErrorBoundary, DevPanel, NotificationToaster } from "./lib/design-system";
+  import { startNotificationListener } from "./lib/notifications/useNotificationListener";
+  import MobileBottomNav from "./lib/design-system/components/MobileBottomNav.svelte";
   import SplashScreen from "./lib/design-system/components/SplashScreen.svelte";
   import { initDevConsoleCapture } from "./lib/debug/devConsoleCapture";
+  import { initAppStateTracking } from "./stores/appState";
   import ConsumerChat from "./routes/consumer/ConsumerChat.svelte";
+  import BuilderPWA from "./lib/design-system/components/BuilderPWA.svelte";
+  import { setSentryUser, setSentryContext } from "./lib/sentry";
+  import { user } from "./stores/auth";
+  import { organizationStore } from "./stores/organization";
+  import { preloadAllRoutes } from "./lib/preloadRoutes";
+  import { startVersionCheck } from "./lib/versionCheck";
 
   // Dev console capture cleanup
   let cleanupConsoleCapture: (() => void) | null = null;
+
+  // Notification listener cleanup
+  let cleanupNotificationListener: (() => void) | null = null;
+
+  // Version check cleanup
+  let cleanupVersionCheck: (() => void) | null = null;
 
   // Import design system styles
   import "./lib/design-system/base.css";
@@ -51,6 +66,10 @@
   // Track splash animation completion
   let splashAnimationComplete = false;
 
+  // Tracks when all route chunks are downloaded and browser is idle.
+  // Splash holds the static B&W logo until this is true, then plays the animation.
+  let preloadComplete = false;
+
   function handleSplashComplete() {
     splashAnimationComplete = true;
     // If auth is also done (or skipped for vanity), mark app as booted
@@ -59,9 +78,21 @@
     }
   }
 
+  // Start version polling after boot (not during splash)
+  $: if ($appBooted && !vanitySlug) {
+    cleanupVersionCheck = startVersionCheck();
+  }
+
   // When auth loading finishes and splash animation is complete, boot the app
   $: if (!$isAuthLoading && splashAnimationComplete && !$appBooted) {
     markAppBooted();
+  }
+
+  // Keep Sentry context in sync with auth and org stores
+  $: setSentryUser($user);
+  $: {
+    const org = $organizationStore.organization;
+    setSentryContext("organization", org ? { id: org.id, name: org.name, tier: org.subscriptionTier } : null);
   }
 
   // Initialize on mount
@@ -73,6 +104,9 @@
         batchSize: 5,
         flushInterval: 300,
       });
+
+      // Initialize app state tracking for MCP tools
+      initAppStateTracking();
     }
 
     // Skip all admin initialization for vanity subdomain - consumer auth/theming
@@ -85,12 +119,32 @@
     initTheme();
     initWhitelabel();
 
+    // Preload all route chunks while the splash shows a static logo.
+    // Once downloaded, wait for requestIdleCallback so the browser is
+    // truly idle before we trigger the splash animation (zero jank).
+    preloadAllRoutes()
+      .then(
+        () =>
+          new Promise<void>((resolve) => {
+            if ("requestIdleCallback" in window) {
+              requestIdleCallback(() => resolve());
+            } else {
+              setTimeout(resolve, 50);
+            }
+          })
+      )
+      .then(() => {
+        preloadComplete = true;
+      });
+
+    // Auth runs in parallel with preloading
     const user = await checkAuth();
 
     // Initialize workspace and organization stores after auth (non-blocking for instant feel)
     if (user) {
       initWorkspace(); // Fire and forget - uses cache for instant display
       initOrganization(); // Fire and forget - uses cache for instant display
+      cleanupNotificationListener = startNotificationListener();
     }
 
     // Add constellation background to body
@@ -99,6 +153,8 @@
 
   onDestroy(() => {
     cleanupConsoleCapture?.();
+    cleanupNotificationListener?.();
+    cleanupVersionCheck?.();
   });
 
   // Redirect to login if not authenticated
@@ -109,14 +165,20 @@
 
 <ErrorBoundary>
   <Toaster />
+  <NotificationToaster />
+  <DevPanel />
+  <MobileBottomNav />
 
   {#if vanitySlug}
     <!-- Vanity subdomain: render consumer chat directly, skip developer auth -->
     <ConsumerChat />
   {:else}
+    <!-- Builder PWA setup (service worker, manifest, meta tags) -->
+    <BuilderPWA />
+
     <!-- Splash screen overlay - only shows on cold start, never again -->
     {#if !$appBooted}
-      <SplashScreen onComplete={handleSplashComplete} />
+      <SplashScreen ready={preloadComplete} onComplete={handleSplashComplete} />
     {/if}
 
     <!-- Router always renders, splash overlays it during initial load -->

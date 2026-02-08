@@ -10,6 +10,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { log } from "@/lib/logger.ts";
 import type { AuthContext } from "../../middleware/auth.ts";
 import { whatsappService } from "../../../services/whatsapp.service.ts";
 import { applicationService } from "../../../services/application.service.ts";
@@ -20,9 +21,9 @@ import { applicationService } from "../../../services/application.service.ts";
 
 const saveConfigSchema = z.object({
   applicationId: z.string().uuid(),
-  phoneNumberId: z.string().min(1, "Phone Number ID is required"),
-  businessAccountId: z.string().min(1, "Business Account ID is required"),
-  accessToken: z.string().min(1, "Access Token is required"),
+  phoneNumberId: z.string().regex(/^\d{15}$/, "Phone Number ID must be exactly 15 digits"),
+  businessAccountId: z.string().regex(/^\d{15,16}$/, "Business Account ID must be 15-16 digits"),
+  accessToken: z.string().min(32, "Access Token must be at least 32 characters"),
 });
 
 // ========================================
@@ -135,6 +136,18 @@ export const whatsappRoutes = new Hono<AuthContext>()
       return c.json({ error: "Not found" }, 404);
     }
 
+    // Check for duplicate phone number across other apps
+    const duplicate = await whatsappService.checkDuplicatePhoneNumber(
+      body.phoneNumberId,
+      body.applicationId
+    );
+    if (duplicate) {
+      return c.json({
+        error:
+          "These WhatsApp credentials are already in use with another application. Each WhatsApp phone number can only be connected to one app.",
+      }, 400);
+    }
+
     try {
       const config = await whatsappService.upsertConfig({
         applicationId: body.applicationId,
@@ -151,7 +164,7 @@ export const whatsappRoutes = new Hono<AuthContext>()
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save config";
-      console.error("[WhatsApp] Save config error:", err);
+      log.error("Failed to save WhatsApp config", { source: "whatsapp-api", feature: "save-config", appId: body.applicationId, phoneNumberId: body.phoneNumberId }, err);
       return c.json({ error: message }, 500);
     }
   })
@@ -181,7 +194,7 @@ export const whatsappRoutes = new Hono<AuthContext>()
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to disconnect";
-      console.error("[WhatsApp] Disconnect error:", err);
+      log.error("Failed to disconnect WhatsApp", { source: "whatsapp-api", feature: "disconnect", appId: applicationId }, err);
       return c.json({ error: message }, 500);
     }
   });

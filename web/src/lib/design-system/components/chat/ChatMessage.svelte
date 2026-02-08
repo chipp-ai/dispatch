@@ -15,6 +15,7 @@
    * - RAG debug panel (builder mode only)
    */
   import { createEventDispatcher } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { StreamingMarkdown } from "$lib/design-system";
   import { ToolInvocationCard, RagDebugPanel, WebSourceBricks, GeneratedImageCard, VoiceMessageCard, VideoPlayer } from "$lib/design-system/components/chat";
   import type {
@@ -53,6 +54,8 @@
   export let animationConfig: Partial<AnimationConfig> | undefined = undefined;
   /** Hide copy/bookmark action buttons (used in builder preview) */
   export let hideActions: boolean = false;
+  /** Whether to show sender attribution (multiplayer mode) */
+  export let showSenderAttribution: boolean = false;
 
   // Resolve theme config from name or use directly if already a config object
   $: themeConfig = typeof theme === "string" ? getChatTheme(theme) : theme;
@@ -83,6 +86,7 @@
 
   $: isUser = message.role === "user";
   $: isAssistant = message.role === "assistant";
+  $: isSystemMessage = message.isSystemMessage === true;
   $: showStreamingCursor = isStreaming && isLast && isAssistant;
   $: textContent = getTextContent(message);
 
@@ -115,7 +119,12 @@
   }
 
   function handleCopy(): void {
-    navigator.clipboard.writeText(textContent).catch(console.error);
+    navigator.clipboard.writeText(textContent).catch((err) => {
+      captureException(err, {
+        tags: { feature: "chat-message" },
+        extra: { action: "copy-message" },
+      });
+    });
     dispatch("copy", { content: textContent });
   }
 
@@ -124,6 +133,12 @@
   }
 </script>
 
+{#if isSystemMessage}
+  <!-- System message (join/leave) -->
+  <div class="system-message" class:dark={forceDarkMode}>
+    <span class="system-text">{message.content}</span>
+  </div>
+{:else}
 <div
   class="message"
   class:user={isUser}
@@ -142,7 +157,18 @@
       class:assistant-avatar={isAssistant}
       class:has-border={themeConfig.avatarBorder}
     >
-      {#if isAssistant}
+      {#if isAssistant && message.operatorName}
+        <!-- Human operator avatar -->
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      {:else if isAssistant}
         <!-- Assistant avatar: always show app logo or default app image -->
         <img
           src={appLogoUrl || "/assets/default-app-image.png"}
@@ -165,6 +191,20 @@
   {/if}
 
   <div class="message-body">
+    <!-- Sender attribution (multiplayer) -->
+    {#if showSenderAttribution && isUser && message.senderName}
+      <div class="sender-attribution">
+        <span class="sender-dot" style="background-color: {message.senderAvatarColor || 'hsl(var(--muted-foreground))'}"></span>
+        <span class="sender-name">{message.senderName}</span>
+      </div>
+    {/if}
+    <!-- Operator attribution (human takeover) -->
+    {#if isAssistant && message.operatorName}
+      <div class="operator-attribution">
+        <span class="operator-name">{message.operatorName}</span>
+      </div>
+    {/if}
+
     {#if isUser}
       <!-- User message images -->
       {#if message.images && message.images.length > 0}
@@ -319,6 +359,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   /* ============================================
@@ -731,6 +772,84 @@
   .rag-debug-wrapper {
     margin-top: var(--space-3, 12px);
     width: 100%;
+  }
+
+  /* === SYSTEM MESSAGES (join/leave) === */
+  .system-message {
+    display: flex;
+    justify-content: center;
+    padding: var(--space-2) var(--space-4);
+    align-self: center;
+    max-width: 100%;
+  }
+
+  .system-text {
+    font-size: var(--text-xs);
+    color: hsl(var(--muted-foreground));
+    font-style: italic;
+  }
+
+  .dark .system-text {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  /* === SENDER ATTRIBUTION (multiplayer) === */
+  .sender-attribution {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding-bottom: 3px;
+  }
+
+  .message.user .sender-attribution {
+    justify-content: flex-end;
+  }
+
+  .message.user.user-left .sender-attribution {
+    justify-content: flex-start;
+  }
+
+  .sender-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .sender-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+  }
+
+  .dark .sender-name {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  /* === OPERATOR ATTRIBUTION (human takeover) === */
+  .operator-attribution {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding-bottom: 3px;
+  }
+
+  .operator-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: hsl(25, 95%, 45%);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
+
+  .dark .operator-name {
+    color: hsl(25, 95%, 65%);
   }
 
   /* === MOBILE ADJUSTMENTS === */

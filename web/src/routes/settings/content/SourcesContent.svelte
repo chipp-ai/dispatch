@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { user } from "../../../stores/auth";
   import { currentWorkspace } from "../../../stores/workspace";
+  import { toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { formatDistanceToNow } from "date-fns";
 
   interface Source {
@@ -100,7 +102,10 @@
       sources = data.data || [];
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to load sources";
-      console.error("Error loading sources:", err);
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { action: "loadSources", workspaceId: $currentWorkspace?.id },
+      });
     } finally {
       isLoading = false;
     }
@@ -130,8 +135,11 @@
         s.id === sourceId ? { ...s, status: "pending" } : s
       );
     } catch (err) {
-      console.error("Error refreshing source:", err);
-      alert("Failed to refresh source");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { action: "handleRefresh", sourceId },
+      });
+      toasts.error("Error", "Failed to refresh source");
     } finally {
       refreshingIds.delete(sourceId);
       refreshingIds = refreshingIds;
@@ -169,8 +177,11 @@
       deleteSourceId = null;
       deleteSourceName = null;
     } catch (err) {
-      console.error("Error deleting source:", err);
-      alert("Failed to delete source");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { action: "confirmDelete", sourceId: deleteSourceId },
+      });
+      toasts.error("Error", "Failed to delete source");
     } finally {
       isDeleting = false;
     }
@@ -197,8 +208,11 @@
       selectAll = false;
       showBulkDeleteModal = false;
     } catch (err) {
-      console.error("Error deleting sources:", err);
-      alert("Failed to delete some sources");
+      captureException(err, {
+        tags: { feature: "settings-sources" },
+        extra: { action: "confirmBulkDelete", selectedCount: selectedIds.size },
+      });
+      toasts.error("Error", "Failed to delete some sources");
     } finally {
       isBulkDeleting = false;
     }

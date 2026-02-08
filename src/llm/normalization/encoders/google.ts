@@ -12,6 +12,7 @@
  * - JSON Schema 7 must be converted to OpenAPI Schema 3.0 format
  */
 
+import { log } from "@/lib/logger.ts";
 import type {
   Content,
   FunctionDeclaration,
@@ -48,9 +49,7 @@ async function defaultFetchImageAsBase64(
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      console.error(
-        `[google-encoder] Failed to fetch image: ${response.status}`
-      );
+      log.error("Failed to fetch image", { source: "llm", feature: "google-encoder", imageUrl: url, statusCode: response.status });
       return null;
     }
 
@@ -66,7 +65,7 @@ async function defaultFetchImageAsBase64(
 
     return { base64, mimeType: contentType };
   } catch (error) {
-    console.error(`[google-encoder] Error fetching image:`, error);
+    log.error("Error fetching image", { source: "llm", feature: "google-encoder", imageUrl: url }, error);
     return null;
   }
 }
@@ -150,7 +149,7 @@ export class GoogleEncoder
       case "tool":
         return this.encodeFunctionResponseMessage(msg);
       default:
-        console.warn(`[google-encoder] Skipping role: ${msg.role}`);
+        log.debug("Skipping unsupported role", { source: "llm", feature: "google-encoder", role: msg.role });
         return null;
     }
   }

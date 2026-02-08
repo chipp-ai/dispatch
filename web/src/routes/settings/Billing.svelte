@@ -4,6 +4,7 @@
   import SettingsSidebar from "../../lib/design-system/components/settings/SettingsSidebar.svelte";
   import PlanCard from "../../lib/design-system/components/PlanCard.svelte";
   import { Card, Button, Badge, Skeleton, Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Input, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentOrganization } from "../../stores/organization";
   import { ArrowLeft, BadgeCheck, ExternalLink, CreditCard, Wallet, Receipt, TrendingUp, Info, CheckCircle, Sparkles, Shield, Zap, ArrowRight, Loader2 } from "lucide-svelte";
 
@@ -179,12 +180,18 @@
         window.location.href = url;
       } else {
         const errorData = await response.json();
-        console.error("Failed to create billing portal session:", errorData);
+        captureException(new Error("Failed to create billing portal session"), {
+          tags: { feature: "settings-billing" },
+          extra: { errorData, action: "createBillingPortalSession" },
+        });
         toasts.error("Error", "Failed to open billing portal");
         isLoadingPortal = false;
       }
     } catch (error) {
-      console.error("Error opening billing portal:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing" },
+        extra: { action: "openBillingPortal" },
+      });
       toasts.error("Error", "Failed to open billing portal");
       isLoadingPortal = false;
     }
@@ -224,7 +231,10 @@
       const data = await response.json();
       window.location.href = data.url;
     } catch (error) {
-      console.error("Error generating payment URL:", error);
+      captureException(error, {
+        tags: { feature: "settings-billing" },
+        extra: { tier, action: "generatePaymentURL" },
+      });
       toasts.error("Error", "Failed to generate payment URL. Please try again.");
       loadingTier = null;
     }

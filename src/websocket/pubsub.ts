@@ -7,7 +7,7 @@
  */
 
 import { connect, type Redis } from "redis";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { WebSocketEvent, EventPayload } from "./types.ts";
 
 // Separate Redis connection for pub/sub (required by Redis)
@@ -30,7 +30,10 @@ export async function initPubSub(): Promise<boolean> {
   const redisUrl = Deno.env.get("REDIS_URL");
 
   if (!redisUrl) {
-    console.log("[pubsub] No REDIS_URL configured, skipping initialization");
+    log.info("No REDIS_URL configured, skipping pub/sub initialization", {
+      source: "pubsub",
+      feature: "init",
+    });
     return false;
   }
 
@@ -47,13 +50,13 @@ export async function initPubSub(): Promise<boolean> {
     pubClient = await connect(config);
     subClient = await connect(config);
 
-    console.log("[pubsub] Connected");
+    log.info("Pub/sub connected", { source: "pubsub", feature: "init" });
     return true;
   } catch (error) {
-    console.error("[pubsub] Failed to initialize:", error);
-    Sentry.captureException(error, {
-      tags: { source: "websocket-pubsub", feature: "init" },
-    });
+    log.error("Failed to initialize pub/sub", {
+      source: "pubsub",
+      feature: "init",
+    }, error);
     return false;
   }
 }
@@ -66,7 +69,10 @@ export async function startSubscription(
   onBroadcast: BroadcastHandler
 ): Promise<void> {
   if (!subClient) {
-    console.warn("[pubsub] Not initialized, cannot start subscription");
+    log.warn("Pub/sub not initialized, cannot start subscription", {
+      source: "pubsub",
+      feature: "subscription",
+    });
     return;
   }
 
@@ -76,7 +82,7 @@ export async function startSubscription(
   // Subscribe to channels
   const sub = await subClient.subscribe(EVENTS_CHANNEL, BROADCAST_CHANNEL);
 
-  console.log("[pubsub] Subscribed to event channels");
+  log.info("Subscribed to event channels", { source: "pubsub", feature: "subscription" });
 
   // Process incoming messages using .receive() async iterator
   (async () => {
@@ -90,11 +96,11 @@ export async function startSubscription(
           broadcastHandler(event);
         }
       } catch (error) {
-        console.error("[pubsub] Error processing message:", error);
-        Sentry.captureException(error, {
-          tags: { source: "websocket-pubsub", feature: "message-processing" },
-          extra: { channel },
-        });
+        log.error("Error processing pub/sub message", {
+          source: "pubsub",
+          feature: "message-processing",
+          channel,
+        }, error);
       }
     }
   })();
@@ -107,21 +113,35 @@ export async function publishToUser(
   userId: string,
   event: WebSocketEvent
 ): Promise<boolean> {
-  if (!pubClient) {
-    console.warn("[pubsub] Not initialized, cannot publish");
-    return false;
+  // If Redis is available, publish through it (cross-pod delivery)
+  if (pubClient) {
+    try {
+      const payload: EventPayload = { userId, event };
+      await pubClient.publish(EVENTS_CHANNEL, JSON.stringify(payload));
+      return true;
+    } catch (error) {
+      log.error("Error publishing event to Redis", {
+        source: "pubsub",
+        feature: "publish-event",
+        userId,
+        eventType: event.type,
+      }, error);
+      // Fall through to local delivery
+    }
   }
 
+  // Local delivery fallback (no Redis or Redis publish failed)
   try {
-    const payload: EventPayload = { userId, event };
-    await pubClient.publish(EVENTS_CHANNEL, JSON.stringify(payload));
-    return true;
+    const { localSendToUser } = await import("./handler.ts");
+    const sent = localSendToUser(userId, event);
+    return sent > 0;
   } catch (error) {
-    console.error("[pubsub] Error publishing event:", error);
-    Sentry.captureException(error, {
-      tags: { source: "websocket-pubsub", feature: "publish-event" },
-      extra: { userId, eventType: event.type },
-    });
+    log.error("Local delivery fallback failed", {
+      source: "pubsub",
+      feature: "local-delivery-fallback",
+      userId,
+      eventType: event.type,
+    }, error);
     return false;
   }
 }
@@ -133,7 +153,10 @@ export async function publishBroadcast(
   event: WebSocketEvent
 ): Promise<boolean> {
   if (!pubClient) {
-    console.warn("[pubsub] Not initialized, cannot broadcast");
+    log.warn("Pub/sub not initialized, cannot broadcast", {
+      source: "pubsub",
+      feature: "broadcast",
+    });
     return false;
   }
 
@@ -141,11 +164,36 @@ export async function publishBroadcast(
     await pubClient.publish(BROADCAST_CHANNEL, JSON.stringify(event));
     return true;
   } catch (error) {
-    console.error("[pubsub] Error broadcasting event:", error);
-    Sentry.captureException(error, {
-      tags: { source: "websocket-pubsub", feature: "broadcast" },
-      extra: { eventType: event.type },
-    });
+    log.error("Error broadcasting event", {
+      source: "pubsub",
+      feature: "broadcast",
+      eventType: event.type,
+    }, error);
+    return false;
+  }
+}
+
+/**
+ * Publish an event to all WebSocket clients in a multiplayer session.
+ * Uses local delivery (consumer-handler's sendToSession).
+ * For multi-pod, would route through Redis.
+ */
+export async function publishToSession(
+  sessionId: string,
+  event: unknown,
+  excludeParticipantId?: string
+): Promise<boolean> {
+  try {
+    const { sendToSession } = await import("./consumer-handler.ts");
+    // deno-lint-ignore no-explicit-any
+    const sent = sendToSession(sessionId, event as any, excludeParticipantId);
+    return sent > 0;
+  } catch (error) {
+    log.error("Error publishing to session", {
+      source: "pubsub",
+      feature: "publish-session",
+      sessionId,
+    }, error);
     return false;
   }
 }
@@ -175,9 +223,12 @@ export async function closePubSub(): Promise<void> {
     }
     eventHandler = null;
     broadcastHandler = null;
-    console.log("[pubsub] Disconnected");
+    log.info("Pub/sub disconnected", { source: "pubsub", feature: "close" });
   } catch (error) {
-    console.error("[pubsub] Error closing connections:", error);
+    log.error("Error closing pub/sub connections", {
+      source: "pubsub",
+      feature: "close",
+    }, error);
   }
 }
 

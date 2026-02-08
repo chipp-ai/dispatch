@@ -11,6 +11,7 @@
 
 import type { Message as LLMMessage, ContentPart } from "../types.ts";
 import type { Message as DBMessage } from "../../services/chat.service.ts";
+import { log } from "@/lib/logger.ts";
 
 /**
  * Parse a JSON column from Kysely, which may be a string or already parsed.
@@ -98,17 +99,24 @@ export function reconstructHistory(
             toolResults.length > maxToolResults ||
             toolCalls.length > HARD_LIMIT
           ) {
-            console.error(
-              `${prefix} CORRUPTED DATA: ${toolResults.length} toolResults, ${toolCalls.length} toolCalls in msg ${msg.id?.slice(0, 8)}. Limiting to ${maxToolResults}.`
-            );
+            log.error("Corrupted tool call data detected", {
+              source: "llm",
+              feature: "reconstruct-history",
+              messageId: msg.id?.slice(0, 8),
+              toolResultsCount: toolResults.length,
+              toolCallsCount: toolCalls.length,
+              maxToolResults,
+            });
           }
 
           for (let i = 0; i < maxToolResults; i++) {
             const result = toolResults[i];
             if (!result.callId) {
-              console.warn(
-                `${prefix} Skipping tool result without callId: ${result.name}`
-              );
+              log.warn("Skipping tool result without callId", {
+                source: "llm",
+                feature: "reconstruct-history",
+                toolName: result.name,
+              });
               continue;
             }
             messages.push({
@@ -129,9 +137,12 @@ export function reconstructHistory(
     }
   }
 
-  console.log(
-    `${prefix} Reconstructed ${messages.length} LLM messages from ${history.length} DB records`
-  );
+  log.debug("Reconstructed LLM messages from DB records", {
+    source: "llm",
+    feature: "reconstruct-history",
+    outputMessages: messages.length,
+    inputRecords: history.length,
+  });
 
   return messages;
 }

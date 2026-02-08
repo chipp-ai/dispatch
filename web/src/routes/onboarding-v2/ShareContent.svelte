@@ -13,6 +13,7 @@
     ExternalLink,
     Slack,
   } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Button, Input } from "$lib/design-system";
   import { computeShareUrl, computeEmbedCode } from "$lib/onboarding-v2/flow";
   import {
@@ -46,7 +47,7 @@
         copiedField = null;
       }, 2000);
     } catch (error) {
-      console.error("Failed to copy:", error);
+      captureException(error, { tags: { feature: "onboarding-share" }, extra: { action: "copy-to-clipboard", field } });
     }
   }
 

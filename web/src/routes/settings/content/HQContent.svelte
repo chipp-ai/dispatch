@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Card, Button, Label, toasts } from "$lib/design-system";
+  import { captureException } from "$lib/sentry";
   import { currentWorkspace } from "../../../stores/workspace";
   import { user } from "../../../stores/auth";
   import { Globe, Lock, CreditCard, Copy, ExternalLink, Upload, X, Image as ImageIcon } from "lucide-svelte";
@@ -85,7 +86,10 @@
         enableDuplication = data.enableDuplication || false;
       }
     } catch (e) {
-      console.error("Failed to load HQ data:", e);
+      captureException(e, {
+        tags: { feature: "settings-hq" },
+        extra: { action: "loadHQData", workspaceId: $currentWorkspace?.id },
+      });
     } finally {
       isLoading = false;
     }
@@ -260,7 +264,10 @@
 
       toasts.success("Success", "HQ updated successfully");
     } catch (e) {
-      console.error("Failed to update HQ:", e);
+      captureException(e, {
+        tags: { feature: "settings-hq" },
+        extra: { action: "handleSubmit", workspaceId: $currentWorkspace?.id },
+      });
       toasts.error("Error", "Failed to update HQ");
     } finally {
       isSaving = false;

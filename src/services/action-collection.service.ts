@@ -110,7 +110,7 @@ async function create(
     )
     VALUES (
       ${name},
-      ${description || null},
+      ${description || ""},
       ${userId},
       ${isPublic}
     )

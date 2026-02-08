@@ -13,7 +13,7 @@
  * /brands/{slug}/og.png       - Social share image
  */
 
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 export interface BrandConfig {
   slug: string;
@@ -232,9 +232,10 @@ class BrandSyncService {
       const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
 
       if (!endpoint || !accessKeyId || !secretAccessKey) {
-        console.warn(
-          "[BrandSync] R2 credentials not configured, brand sync disabled"
-        );
+        log.warn("R2 credentials not configured, brand sync disabled", {
+          source: "brand-sync-service",
+          feature: "r2-init",
+        });
         this.enabled = false;
         return null;
       }
@@ -257,7 +258,7 @@ class BrandSyncService {
   async syncAppBranding(app: SyncAppBrandingParams): Promise<void> {
     const client = this.getClient();
     if (!client) {
-      console.log("[BrandSync] Skipping sync - R2 not configured");
+      log.info("Skipping sync - R2 not configured", { source: "brand-sync-service", feature: "sync-branding" });
       return;
     }
 
@@ -295,17 +296,15 @@ class BrandSyncService {
         await this.syncLogoFromUrl(app.slug, app.brandStyles.logoUrl);
       }
 
-      console.log(`[BrandSync] Synced branding for ${app.slug}`);
+      log.info("Synced branding", { source: "brand-sync-service", feature: "sync-branding", slug: app.slug });
     } catch (error) {
       // Don't fail the app save if R2 sync fails
-      console.error(
-        `[BrandSync] Failed to sync branding for ${app.slug}:`,
-        error
-      );
-      Sentry.captureException(error, {
-        tags: { source: "brand-sync-service", feature: "sync-branding" },
-        extra: { slug: app.slug, name: app.name },
-      });
+      log.error("Failed to sync branding", {
+        source: "brand-sync-service",
+        feature: "sync-branding",
+        slug: app.slug,
+        name: app.name,
+      }, error);
     }
   }
 
@@ -319,7 +318,7 @@ class BrandSyncService {
     try {
       const response = await fetch(logoUrl);
       if (!response.ok) {
-        console.warn(`[BrandSync] Failed to fetch logo from ${logoUrl}`);
+        log.warn("Failed to fetch logo", { source: "brand-sync-service", feature: "sync-logo", logoUrl });
         return;
       }
 
@@ -336,13 +335,13 @@ class BrandSyncService {
         "public, max-age=31536000, immutable" // 1 year
       );
 
-      console.log(`[BrandSync] Synced logo for ${slug}`);
+      log.info("Synced logo", { source: "brand-sync-service", feature: "sync-logo", slug });
     } catch (error) {
-      console.error(`[BrandSync] Failed to sync logo for ${slug}:`, error);
-      Sentry.captureException(error, {
-        tags: { source: "brand-sync-service", feature: "sync-logo" },
-        extra: { slug },
-      });
+      log.error("Failed to sync logo", {
+        source: "brand-sync-service",
+        feature: "sync-logo",
+        slug,
+      }, error);
     }
   }
 
@@ -370,7 +369,43 @@ class BrandSyncService {
       }
     }
 
-    console.log(`[BrandSync] Deleted branding for ${slug}`);
+    log.info("Deleted branding", { source: "brand-sync-service", feature: "delete-branding", slug });
+  }
+
+  /**
+   * Upload a tenant branding asset (logo or favicon) to R2.
+   * Stores at tenants/{slug}/{type}.{ext} and returns the public URL.
+   */
+  async uploadTenantAsset(
+    slug: string,
+    type: "logo" | "favicon",
+    body: Uint8Array,
+    contentType: string
+  ): Promise<string> {
+    const client = this.getClient();
+    if (!client) {
+      throw new Error("R2 not configured - cannot upload assets");
+    }
+
+    // Determine file extension from content type
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/svg+xml": "svg",
+      "image/x-icon": "ico",
+      "image/vnd.microsoft.icon": "ico",
+    };
+    const ext = extMap[contentType] || "png";
+    const key = `tenants/${slug}/${type}.${ext}`;
+
+    await client.putObject(
+      key,
+      body,
+      contentType,
+      "public, max-age=31536000, immutable"
+    );
+
+    return `${this.publicUrl}/${key}`;
   }
 
   /**

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { captureException } from "$lib/sentry";
   import ChatMessage from "../chat/ChatMessage.svelte";
   import ChatInput from "../chat/ChatInput.svelte";
   import CreditExhaustedModal from "../consumer/CreditExhaustedModal.svelte";
@@ -305,7 +306,10 @@
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Chat API error:", response.status, errorText);
+        captureException(new Error(`Chat request failed: ${response.status}`), {
+          tags: { feature: "builder-chat-preview" },
+          extra: { status: response.status, errorText },
+        });
         throw new Error(`Chat request failed: ${response.status}`);
       }
 
@@ -405,7 +409,10 @@
 
               // Handle error event
               if (parsed.error) {
-                console.error("Chat error:", parsed.error);
+                captureException(parsed.error instanceof Error ? parsed.error : new Error(String(parsed.error)), {
+                  tags: { feature: "builder-chat-preview" },
+                  extra: { parsedError: parsed.error },
+                });
                 const errorMsg = typeof parsed.error === "string"
                   ? parsed.error
                   : parsed.error?.message || "Something went wrong. Please try again.";
@@ -442,7 +449,10 @@
         // Request was cancelled, remove empty assistant message
         messages = messages.filter((m) => m.id !== assistantMessage.id);
       } else {
-        console.error("Chat error:", error);
+        captureException(error, {
+          tags: { feature: "builder-chat-preview" },
+          extra: { context: "chat-stream" },
+        });
         messages = messages.map((m) =>
           m.id === assistantMessage.id
             ? { ...m, content: "", error: true, errorMessage: "Something went wrong. Please try again." }
@@ -640,7 +650,10 @@
       if ((error as Error).name === "AbortError") {
         messages = messages.filter((m) => m.id !== assistantMessage.id);
       } else {
-        console.error("Chat audio error:", error);
+        captureException(error, {
+          tags: { feature: "builder-chat-preview" },
+          extra: { context: "audio-chat-stream" },
+        });
         messages = messages.map((m) =>
           m.id === assistantMessage.id
             ? { ...m, content: "", error: true, errorMessage: "Something went wrong. Please try again." }
@@ -809,7 +822,10 @@
       if ((error as Error).name === "AbortError") {
         messages = messages.filter((m) => m.id !== assistantMessage.id);
       } else {
-        console.error("Chat video error:", error);
+        captureException(error, {
+          tags: { feature: "builder-chat-preview" },
+          extra: { context: "video-chat-stream" },
+        });
         messages = messages.map((m) =>
           m.id === assistantMessage.id
             ? { ...m, content: "", error: true, errorMessage: "Something went wrong. Please try again." }

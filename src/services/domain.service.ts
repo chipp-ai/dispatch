@@ -13,7 +13,7 @@ import {
   ExternalServiceError,
   ValidationError,
 } from "../utils/errors.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 import type { CustomDomainType, CustomDomainSslStatus } from "../db/schema.ts";
 
 // ========================================
@@ -361,12 +361,50 @@ export const domainService = {
       }
     }
 
-    // Enrich with tenant data (from WhitelabelSettings or similar)
+    // Enrich with full tenant data from whitelabel_tenants table
     if (domain.type === "dashboard" && domain.tenantId) {
-      // For now, use cached brandStyles from domain
-      // In the future, could join with whitelabel_settings table
-      mapping.tenantId = domain.tenantId;
-      mapping.brandStyles = (domain.brandStyles as BrandStyles) ?? undefined;
+      const tenant = await db
+        .selectFrom("app.whitelabel_tenants")
+        .select([
+          "id",
+          "slug",
+          "name",
+          "primaryColor",
+          "secondaryColor",
+          "logoUrl",
+          "faviconUrl",
+          "features",
+        ])
+        .where("id", "=", domain.tenantId)
+        .executeTakeFirst();
+
+      if (tenant) {
+        mapping.tenantId = tenant.id;
+        mapping.tenantSlug = tenant.slug;
+        mapping.brandStyles = {
+          primaryColor: tenant.primaryColor ?? undefined,
+          logoUrl: tenant.logoUrl ?? undefined,
+          faviconUrl: tenant.faviconUrl ?? undefined,
+          companyName: tenant.name,
+        };
+
+        const features =
+          typeof tenant.features === "string"
+            ? JSON.parse(tenant.features)
+            : tenant.features;
+        if (features) {
+          mapping.features = {
+            isGoogleAuthDisabled: features.isGoogleAuthDisabled,
+            isMicrosoftAuthDisabled: features.isMicrosoftAuthDisabled,
+            isBillingDisabled: features.isBillingDisabled,
+            isMarketplaceDisabled: features.isMarketplaceDisabled,
+          };
+        }
+      } else {
+        // Fallback to cached brandStyles from domain row
+        mapping.tenantId = domain.tenantId;
+        mapping.brandStyles = (domain.brandStyles as BrandStyles) ?? undefined;
+      }
     }
 
     return mapping;
@@ -493,14 +531,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
-        "[domain] Failed to delete Cloudflare hostname:",
-        errorText
-      );
-      Sentry.captureMessage("Failed to delete Cloudflare hostname", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "cloudflare-delete" },
-        extra: { cloudflareId, errorText, status: response.status },
+      log.warn("Failed to delete Cloudflare hostname", {
+        source: "domain-service",
+        feature: "cloudflare-delete",
+        cloudflareId,
+        errorText,
+        status: response.status,
       });
       // Don't throw - we still want to clean up locally
     }
@@ -514,7 +550,7 @@ export const domainService = {
     const { accountId, kvNamespaceId, apiToken } = getCloudflareConfig();
 
     if (!accountId || !kvNamespaceId) {
-      console.warn("[domain] KV not configured, skipping update");
+      log.warn("KV not configured, skipping update", { source: "domain-service", feature: "kv-update" });
       return;
     }
 
@@ -537,11 +573,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("[domain] Failed to update KV:", errorText);
-      Sentry.captureMessage("Failed to update KV mapping", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "kv-update" },
-        extra: { hostname, errorText, status: response.status },
+      log.warn("Failed to update KV mapping", {
+        source: "domain-service",
+        feature: "kv-update",
+        hostname,
+        errorText,
+        status: response.status,
       });
     }
   },
@@ -565,11 +602,12 @@ export const domainService = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("[domain] Failed to delete KV:", errorText);
-      Sentry.captureMessage("Failed to delete KV mapping", {
-        level: "warning",
-        tags: { source: "domain-service", feature: "kv-delete" },
-        extra: { hostname, errorText, status: response.status },
+      log.warn("Failed to delete KV mapping", {
+        source: "domain-service",
+        feature: "kv-delete",
+        hostname,
+        errorText,
+        status: response.status,
       });
     }
   },

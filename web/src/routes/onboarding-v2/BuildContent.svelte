@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Wand2, ChevronRight, ChevronDown, Loader2, Check } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Button, Textarea } from "$lib/design-system";
   import { TemplateCard } from "$lib/design-system/components/onboarding";
   import { ONBOARDING_TEMPLATES } from "$lib/onboarding-v2/flow";
@@ -31,7 +32,7 @@
     template: (typeof ONBOARDING_TEMPLATES)[0]
   ): Promise<{ id: string; appNameId: string } | null> {
     if (!$currentWorkspace?.id) {
-      console.error("[BuildContent] No workspace ID available");
+      captureException(new Error("No workspace ID available"), { tags: { feature: "onboarding-build" }, extra: { action: "create-app-from-template" } });
       return null;
     }
 
@@ -51,7 +52,7 @@
 
       if (!createResponse.ok) {
         const error = await createResponse.json().catch(() => ({}));
-        console.error("[BuildContent] Failed to create app:", error);
+        captureException(new Error("Failed to create app"), { tags: { feature: "onboarding-build" }, extra: { action: "create-app-from-template", error } });
         return null;
       }
 
@@ -59,7 +60,7 @@
       const app = createResult.data;
 
       if (!app?.id || !app?.appNameId) {
-        console.error("[BuildContent] No app ID or appNameId returned");
+        captureException(new Error("No app ID or appNameId returned"), { tags: { feature: "onboarding-build" }, extra: { action: "create-app-from-template", app } });
         return null;
       }
 
@@ -84,7 +85,7 @@
       console.log("[BuildContent] Created app from template:", app.id, "slug:", app.appNameId);
       return { id: app.id, appNameId: app.appNameId };
     } catch (error) {
-      console.error("[BuildContent] Error creating app:", error);
+      captureException(error, { tags: { feature: "onboarding-build" }, extra: { action: "create-app-from-template" } });
       return null;
     }
   }
@@ -205,7 +206,7 @@
         onboardingV2Store.markStepCompleted("build");
         onboardingV2Store.setCurrentStep("train");
       } catch (error) {
-        console.error("[BuildContent] Custom app creation error:", error);
+        captureException(error, { tags: { feature: "onboarding-build" }, extra: { action: "create-custom-app", customPrompt: $onboardingV2Store.customPrompt?.slice(0, 100) } });
         onboardingV2Store.setGenerationError(
           error instanceof Error
             ? error.message

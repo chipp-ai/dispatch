@@ -171,6 +171,16 @@ export interface ChatMessage {
   error?: boolean;
   /** Error message to display */
   errorMessage?: string;
+  /** Multiplayer: sender participant ID */
+  senderParticipantId?: string;
+  /** Multiplayer: sender display name */
+  senderName?: string;
+  /** Multiplayer: sender avatar color */
+  senderAvatarColor?: string;
+  /** System message (join/leave, not persisted) */
+  isSystemMessage?: boolean;
+  /** Human operator name (for live takeover messages from builder) */
+  operatorName?: string;
 }
 
 // SSE Event types from AI SDK format

@@ -7,12 +7,14 @@
   export let streamResponses: boolean = true;
   export let requireAuth: boolean = false;
   export let showSources: boolean = true;
+  export let multiplayerEnabled: boolean = false;
 
   export let onTemperatureChange: (value: number) => void = () => {};
   export let onMaxTokensChange: (value: number) => void = () => {};
   export let onStreamResponsesChange: (value: boolean) => void = () => {};
   export let onRequireAuthChange: (value: boolean) => void = () => {};
   export let onShowSourcesChange: (value: boolean) => void = () => {};
+  export let onMultiplayerEnabledChange: (value: boolean) => void = () => {};
 </script>
 
 <BuilderCard title="Behavior" rightIcon="dropdown" defaultOpen={false}>
@@ -119,6 +121,17 @@
       <Switch
         checked={showSources}
         on:change={(e) => onShowSourcesChange(e.detail)}
+      />
+    </div>
+
+    <div class="toggle-field">
+      <div class="toggle-info">
+        <label>Multiplayer Chat</label>
+        <p class="description">Allow group chat sessions via shareable links</p>
+      </div>
+      <Switch
+        checked={multiplayerEnabled}
+        on:change={(e) => onMultiplayerEnabledChange(e.detail)}
       />
     </div>
   </div>

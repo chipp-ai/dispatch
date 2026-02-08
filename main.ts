@@ -11,7 +11,7 @@ import { initRedis } from "./services/redis/client.ts";
 import { isDatabaseConfigured } from "./src/db/client.ts";
 import { initWebSocket, shutdownWebSocket } from "./src/websocket/index.ts";
 import { initEmbedder } from "./src/services/local-embeddings.service.ts";
-import * as Sentry from "@sentry/deno";
+import { log } from "@/lib/logger.ts";
 
 const PORT = parseInt(Deno.env.get("PORT") ?? "8000");
 const ENVIRONMENT = Deno.env.get("ENVIRONMENT") ?? "development";
@@ -21,61 +21,75 @@ initSentry();
 
 // Global error handlers to prevent server crashes and report to Sentry
 globalThis.addEventListener("unhandledrejection", (event) => {
-  console.error("[server] Unhandled promise rejection:", event.reason);
-  Sentry.captureException(event.reason, {
-    tags: { type: "unhandled_rejection" },
-  });
+  log.error("Unhandled promise rejection", {
+    source: "server",
+    feature: "global-error",
+    type: "unhandled_rejection",
+  }, event.reason);
   event.preventDefault();
 });
 
 globalThis.addEventListener("error", (event) => {
-  console.error("[server] Uncaught error:", event.error);
-  Sentry.captureException(event.error, {
-    tags: { type: "uncaught_error" },
-  });
+  log.error("Uncaught error", {
+    source: "server",
+    feature: "global-error",
+    type: "uncaught_error",
+  }, event.error);
   event.preventDefault();
 });
 
 // Initialize services
 async function initServices() {
-  console.log(`[init] Starting Chipp API in ${ENVIRONMENT} mode...`);
+  log.info("Starting Chipp API", {
+    source: "server",
+    feature: "init",
+    environment: ENVIRONMENT,
+  });
 
   try {
     // Database auto-initializes on import (src/db/client.ts)
     if (isDatabaseConfigured()) {
-      console.log("[init] Database connected");
+      log.info("Database connected", { source: "server", feature: "init" });
     } else {
-      console.warn(
-        "[init] Database not configured (missing DENO_DATABASE_URL)"
-      );
+      log.warn("Database not configured (missing DENO_DATABASE_URL)", {
+        source: "server",
+        feature: "init",
+      });
     }
 
     // Initialize Redis (optional in dev)
     if (Deno.env.get("REDIS_URL")) {
       await initRedis();
-      console.log("[init] Redis connected");
+      log.info("Redis connected", { source: "server", feature: "init" });
     } else {
-      console.log("[init] Redis not configured, skipping...");
+      log.info("Redis not configured, skipping", { source: "server", feature: "init" });
     }
 
     // Initialize WebSocket handler (uses Redis if available)
     await initWebSocket();
-    console.log("[init] WebSocket handler ready");
+    log.info("WebSocket handler ready", { source: "server", feature: "init" });
 
     // Pre-load embedding model for fast RAG queries (non-blocking in dev)
     if (ENVIRONMENT === "production") {
       await initEmbedder();
-      console.log("[init] Embedding model ready");
+      log.info("Embedding model ready", { source: "server", feature: "init" });
     } else {
       // In dev, load lazily to speed up restarts (with error handling)
       initEmbedder()
-        .then(() => console.log("[init] Embedding model ready"))
+        .then(() => log.info("Embedding model ready", { source: "server", feature: "init" }))
         .catch((err) =>
-          console.warn("[init] Embedding model failed to load:", err.message)
+          log.warn("Embedding model failed to load", {
+            source: "server",
+            feature: "init",
+            error: err.message,
+          })
         );
     }
   } catch (error) {
-    console.error("[init] Failed to initialize services:", error);
+    log.error("Failed to initialize services", {
+      source: "server",
+      feature: "init",
+    }, error);
     if (ENVIRONMENT === "production") {
       Deno.exit(1);
     }
@@ -86,13 +100,13 @@ async function initServices() {
 async function main() {
   await initServices();
 
-  console.log(`[server] Listening on http://localhost:${PORT}`);
+  log.info("Server listening", { source: "server", feature: "startup", port: PORT });
 
   Deno.serve(
     {
       port: PORT,
       onListen: ({ hostname, port }) => {
-        console.log(`[server] Server running at http://${hostname}:${port}`);
+        log.info("Server running", { source: "server", feature: "startup", hostname, port });
       },
     },
     app.fetch
@@ -101,7 +115,7 @@ async function main() {
 
 // Handle shutdown gracefully
 async function shutdown() {
-  console.log("[server] Shutting down...");
+  log.info("Server shutting down", { source: "server", feature: "shutdown" });
   await shutdownWebSocket();
   Deno.exit(0);
 }

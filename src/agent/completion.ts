@@ -12,6 +12,7 @@
  * - Guards against duplicate processing and aborted streams
  */
 
+import { log } from "@/lib/logger.ts";
 import type { StreamChunk, TokenUsage } from "../llm/types.ts";
 
 // ========================================
@@ -99,7 +100,7 @@ export async function* withOnComplete(
     for await (const chunk of stream) {
       // Check abort before processing
       if (abortSignal?.aborted) {
-        console.log("[completion] Stream aborted, stopping processing");
+        log.debug("Stream aborted, stopping processing", { source: "agent", feature: "completion" });
         break;
       }
 
@@ -113,9 +114,7 @@ export async function* withOnComplete(
           break;
 
         case "tool_call":
-          console.log(
-            `[completion] Received tool_call: id=${chunk.call.id}, name=${chunk.call.name}`
-          );
+          log.debug("Received tool_call", { source: "agent", feature: "completion", toolCallId: chunk.call.id, toolName: chunk.call.name });
           toolCalls.push({
             id: chunk.call.id,
             name: chunk.call.name,
@@ -169,15 +168,13 @@ export async function* withOnComplete(
         aborted: false,
       };
 
-      console.log(
-        `[completion] onComplete: ${text.length} chars, ${toolCalls.length} toolCalls, ${toolResults.length} toolResults`
-      );
+      log.info("onComplete", { source: "agent", feature: "completion", textLength: text.length, toolCallCount: toolCalls.length, toolResultCount: toolResults.length });
 
       if (onComplete) {
         try {
           await onComplete(result);
         } catch (err) {
-          console.error("[completion] onComplete callback error:", err);
+          log.error("onComplete callback error", { source: "agent", feature: "completion", operation: "onComplete", textLength: text.length, toolCallCount: toolCalls.length, finishReason }, err);
           // Don't re-throw from finally block - it would mask any original exception
         }
       }
@@ -194,15 +191,13 @@ export async function* withOnComplete(
         aborted: true,
       };
 
-      console.log(
-        `[completion] onComplete (aborted): ${text.length} chars accumulated`
-      );
+      log.info("onComplete (aborted)", { source: "agent", feature: "completion", textLength: text.length });
 
       if (onComplete) {
         try {
           await onComplete(result);
         } catch (err) {
-          console.error("[completion] onComplete callback error:", err);
+          log.error("onComplete callback error", { source: "agent", feature: "completion", operation: "onComplete-aborted", textLength: text.length, toolCallCount: toolCalls.length, finishReason: "abort" }, err);
           // Don't re-throw from finally block - it would mask any original exception
         }
       }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { captureException } from "$lib/sentry";
   import { Card, Input, Button, toasts } from "$lib/design-system";
   import {
     FlaskConical,
@@ -69,7 +70,7 @@
         evaluations = result.data || [];
       }
     } catch (e) {
-      console.error("Failed to load evaluations:", e);
+      captureException(e, { tags: { feature: "builder-evals" }, extra: { action: "load-evaluations", appId } });
     }
   }
 
@@ -104,7 +105,7 @@
         toasts.success("Created", "Test suite created successfully");
       }
     } catch (e) {
-      console.error("Failed to create evaluation:", e);
+      captureException(e, { tags: { feature: "builder-evals" }, extra: { action: "create-evaluation", appId } });
       toasts.error("Error", "Failed to create test suite");
     } finally {
       isCreating = false;
@@ -136,7 +137,7 @@
         toasts.success("Complete", "Evaluation run completed");
       }
     } catch (e) {
-      console.error("Failed to run evaluation:", e);
+      captureException(e, { tags: { feature: "builder-evals" }, extra: { action: "run-evaluation", evalId, appId } });
       evaluations = evaluations.map(e =>
         e.id === evalId ? { ...e, status: 'pending' as const } : e
       );
@@ -163,7 +164,7 @@
         toasts.success("Deleted", "Test suite deleted");
       }
     } catch (e) {
-      console.error("Failed to delete evaluation:", e);
+      captureException(e, { tags: { feature: "builder-evals" }, extra: { action: "delete-evaluation", evalId, appId } });
       toasts.error("Error", "Failed to delete test suite");
     }
   }

@@ -61,6 +61,8 @@ Once configured, Claude can use natural language to manage dev servers:
 
 ## Log Files
 
-Logs are stored in `.scratch/logs/` with the naming convention `chipp-deno-YYYYMMDD-HHMMSS.log`.
+Logs are stored in `.scratch/logs/`:
+- `server.log` - Deno/Hono API server logs
+- `browser.log` - Browser console logs (captured from Svelte)
 
-A symlink `chipp-deno-latest.log` always points to the most recent log file.
+Both files are cleared when a new dev session starts with `./scripts/dev.sh`.

@@ -6,6 +6,7 @@
    * Skips registration in development mode.
    */
   import { onMount } from 'svelte';
+  import { captureException } from '$lib/sentry';
   import { toasts } from '$lib/design-system';
 
   export let swPath: string = '/consumer-sw.js';
@@ -75,7 +76,10 @@
         window.location.reload();
       });
     } catch (error) {
-      console.error('[SW] Registration failed:', error);
+      captureException(error, {
+        tags: { feature: "service-worker" },
+        extra: { action: "registration-failed", swPath },
+      });
     }
   }
 

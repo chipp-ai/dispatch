@@ -27,6 +27,7 @@
  *    Access at http://your-app-slug.localhost:8000/chat
  */
 
+import { log } from "@/lib/logger.ts";
 import type { Context, Next } from "hono";
 
 interface VanityConfig {
@@ -186,9 +187,13 @@ export function vanityMiddleware() {
     const rewrittenPath = getRewrittenPath(originalPath, appSlug);
 
     if (rewrittenPath && appInstance) {
-      console.log(
-        `[vanity] Rewriting ${originalPath} -> ${rewrittenPath} (slug: ${appSlug})`
-      );
+      log.debug("Rewriting vanity path", {
+        source: "vanity",
+        feature: "rewrite",
+        originalPath,
+        rewrittenPath,
+        appSlug,
+      });
 
       // Create a new URL with the rewritten path
       const url = new URL(c.req.url);

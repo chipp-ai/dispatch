@@ -5,6 +5,7 @@
   import BuilderHeader from "../lib/design-system/components/builder/BuilderHeader.svelte";
   import { Card, Button, Select, SelectItem, toasts, Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Checkbox } from "$lib/design-system";
   import { Globe, Trash2, AlertTriangle, Languages, Type } from "lucide-svelte";
+  import { captureException } from "$lib/sentry";
 
   export let params: { appId?: string } = {};
 
@@ -79,7 +80,7 @@
       selectedLanguage = app?.language || "EN";
       isRTL = app?.text_direction === "RTL";
     } catch (e) {
-      console.error("Failed to load app:", e);
+      captureException(e, { tags: { page: "app-builder-settings", feature: "load-app" }, extra: { appId: params.appId } });
       toasts.error("Error", "Failed to load application");
     } finally {
       isLoading = false;
@@ -107,7 +108,7 @@
 
       toasts.success("Saved", "Language settings updated");
     } catch (e) {
-      console.error("Failed to save:", e);
+      captureException(e, { tags: { page: "app-builder-settings", feature: "save-language" }, extra: { appId: app?.id, language: selectedLanguage } });
       toasts.error("Error", "Failed to save language settings");
     } finally {
       isSaving = false;
@@ -134,7 +135,7 @@
       toasts.success("Deleted", "Application has been deleted");
       push("/apps");
     } catch (e) {
-      console.error("Failed to delete:", e);
+      captureException(e, { tags: { page: "app-builder-settings", feature: "delete-app" }, extra: { appId: app?.id } });
       toasts.error("Error", "Failed to delete application");
     } finally {
       isDeleting = false;
