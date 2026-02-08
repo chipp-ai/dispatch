@@ -1,0 +1,223 @@
+# Grafana Helm values -- dashboards, Google OAuth, unified alerting
+# Chart: grafana/grafana
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: standard-rwo
+
+# Admin credentials from k8s secret
+admin:
+  existingSecret: grafana-secrets
+  userKey: admin-user
+  passwordKey: admin-password
+
+# Google OAuth + unified alerting
+grafana.ini:
+  server:
+    root_url: https://grafana.chipp.ai
+  auth.google:
+    enabled: true
+    client_id: $__file{/etc/grafana/secrets/google-client-id}
+    client_secret: $__file{/etc/grafana/secrets/google-client-secret}
+    scopes: openid email profile
+    auth_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    allowed_domains: chipp.ai
+    allow_sign_up: true
+    auto_assign_org_role: Editor
+  security:
+    cookie_secure: true
+  unified_alerting:
+    enabled: true
+  alerting:
+    enabled: false
+
+# Inject alerting secrets as env vars (used by contact point provisioning)
+# The k8s secret 'grafana-alerting-secrets' has CHIPP_ISSUES_WEBHOOK_URL and CHIPP_ISSUES_API_KEY
+envFromSecrets:
+  - grafana-alerting-secrets
+
+# Mount OAuth secrets
+extraSecretMounts:
+  - name: google-oauth
+    secretName: grafana-secrets
+    defaultMode: 0440
+    mountPath: /etc/grafana/secrets
+    readOnly: true
+
+# Loki data source
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki-gateway.monitoring.svc.cluster.local
+        isDefault: true
+        jsonData:
+          maxLines: 1000
+
+# Dashboard sidecar -- watches ConfigMaps with grafana_dashboard=1
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folderAnnotation: grafana_dashboard_folder
+    provider:
+      foldersFromFilesStructure: false
+
+# Alerting provisioning -- contact points, notification policies, alert rules
+# Env vars (CHIPP_ISSUES_WEBHOOK_URL, CHIPP_ISSUES_API_KEY) are substituted at startup
+alerting:
+  contactpoints.yaml:
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: chipp-issues-webhook
+        receivers:
+          - uid: chipp-issues-loki
+            type: webhook
+            settings:
+              url: ${CHIPP_ISSUES_WEBHOOK_URL}/api/loki/webhook
+              httpMethod: POST
+              authorization_scheme: Bearer
+              authorization_credentials: ${CHIPP_ISSUES_API_KEY}
+            disableResolveMessage: true
+
+  policies.yaml:
+    apiVersion: 1
+    policies:
+      - orgId: 1
+        receiver: chipp-issues-webhook
+        group_by:
+          - alertname
+          - source
+          - feature
+        group_wait: 5m
+        group_interval: 1h
+        repeat_interval: 24h
+
+  rules.yaml:
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: chipp-deno-error-alerts
+        folder: Error Alerts
+        interval: 1m
+        rules:
+          # Rule 1: New Error Category
+          # Fires when any (source, feature, msg) combination has 3+ events in 15 minutes.
+          # The notification policy's group_wait (5m) prevents rapid firing.
+          - uid: new-error-category
+            title: New Error Category
+            condition: B
+            for: 0s
+            noDataState: OK
+            execErrState: Alerting
+            data:
+              - refId: A
+                datasourceUid: loki
+                relativeTimeRange:
+                  from: 900
+                  to: 0
+                model:
+                  expr: 'count by (source, feature, msg) (count_over_time({app="chipp-deno", level="error"} | json [15m]))'
+                  queryType: instant
+                  refId: A
+              - refId: B
+                datasourceUid: __expr__
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                model:
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params:
+                          - 3
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+                  refId: B
+            labels:
+              severity: warning
+              alertname: NewErrorCategory
+            annotations:
+              summary: "New error category: {{ $labels.source }}/{{ $labels.feature }}"
+              description: "{{ $labels.msg }}"
+              source: "{{ $labels.source }}"
+              feature: "{{ $labels.feature }}"
+              error_count: "{{ $values.A }}"
+
+          # Rule 2: Error Spike
+          # Fires when total errors exceed 50 in 5 minutes (likely a bad deploy).
+          - uid: error-spike
+            title: Error Spike
+            condition: B
+            for: 0s
+            noDataState: OK
+            execErrState: Alerting
+            data:
+              - refId: A
+                datasourceUid: loki
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                model:
+                  expr: 'sum(count_over_time({app="chipp-deno", level="error"} [5m]))'
+                  queryType: instant
+                  refId: A
+              - refId: B
+                datasourceUid: __expr__
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                model:
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params:
+                          - 50
+                      operator:
+                        type: and
+                      reducer:
+                        type: last
+                  refId: B
+            labels:
+              severity: critical
+              alertname: ErrorSpike
+            annotations:
+              summary: "Error spike detected: {{ $values.A }} errors in 5 minutes"
+              description: "Total error count exceeded 50 in the last 5 minutes. This may indicate a bad deploy or infrastructure issue."
+              error_count: "{{ $values.A }}"
+
+# GKE Ingress with managed TLS
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: gce
+    networking.gke.io/managed-certificates: grafana-tls
+  hosts:
+    - grafana.chipp.ai
+  path: /
+
+# ManagedCertificate applied separately in deploy.sh

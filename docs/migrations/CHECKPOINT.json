@@ -539,5 +539,65 @@
     }
   },
 
-  "resumeInstructions": "CREDIT MANAGEMENT & TOKEN BILLING EXPLORATION COMPLETE. Report at docs/migrations/credit-management-token-billing.md. Covers: Stripe Token Billing proxy (llm.stripe.com) with 40+ models and 30% markup, customer ID routing, Responses API, parameter transformation, tier allowances ($5-$100/mo), credit_balance_summary API, creditsExhausted blocking, auto-topup (billing alerts + payment + credit grant + refund safety), manual top-up, email notifications with conversion tracking, usage analytics by 5 dimensions, credit calculator. ChippDeno has foundation but needs: invoice preview API, auto-topup APIs, credits/usage UI, notification system, analytics dashboard. Previous reports: APP GENERATOR at docs/migrations/app-generator-api.md, LANDING FLOW at docs/migrations/app-generator-landing-flow.md, STEP TRACKER at docs/migrations/app-generator-step-tracker.md, PWA at docs/migrations/pwa-progressive-web-app.md, EMAIL at docs/migrations/email-chippmono.md, SLACK at docs/migrations/slack-chippmono.md, WhatsApp at docs/migrations/whatsapp-chippmono.md. Feature survey at docs/migrations/feature-survey.md (40 features)."
+  "autonomous-error-remediation": {
+    "status": "complete",
+    "startedAt": "2026-02-07T12:00:00Z",
+    "plan": "docs/migrations/autonomous-error-remediation.md",
+    "summary": "Wire Loki errors -> Chipp Issues -> autonomous Claude Code sessions -> fix PRs. Chipp Issues is standalone at /Users/hunterhodnett/code/chipp-monorepo/apps/chipp-issues (Next.js, raw pg, pgvector). It already has: dedup via chipp_external_issue, PR matching, fix verification, MCP server, agent activity logging, auto-status transitions. We add: Grafana alerting, Loki webhook handler, spawn service with concurrency/budget controls, GH Actions workflow for Claude Code.",
+    "phases": {
+      "piece1-grafana-alerting": {
+        "status": "complete",
+        "where": "monitoring/ in chipp-deno",
+        "tasks": [
+          "Add unified alerting config to grafana/values.yaml",
+          "Add contact point: webhook to Chipp Issues with bearer auth",
+          "Add alert rule: new error fingerprints or error spikes",
+          "Test alert fires correctly with dev_inject_error"
+        ]
+      },
+      "piece2-loki-webhook-handler": {
+        "status": "complete",
+        "where": "/Users/hunterhodnett/code/chipp-monorepo/apps/chipp-issues",
+        "tasks": [
+          "Create DB migration: spawn columns on chipp_issue, chipp_spawn_budget table, cooldown/event_count on chipp_external_issue",
+          "Create app/api/loki/webhook/route.ts - Grafana alert receiver",
+          "Create lib/services/lokiService.ts - fingerprinting, message normalization, context extraction",
+          "Create lib/services/spawnService.ts - GitHub Actions dispatch, concurrency gate, budget tracking",
+          "Modify lib/services/issueService.ts - hook issue creation to spawn service",
+          "Add env vars for Loki webhook auth and spawn controls"
+        ]
+      },
+      "piece3-github-actions-workflow": {
+        "status": "complete",
+        "where": "chipp-deno/.github/workflows/auto-investigate.yml",
+        "tasks": [
+          "Create auto-investigate.yml workflow with workflow_dispatch trigger",
+          "Accept inputs: issue_id, identifier, title, description, source, feature, error_context",
+          "Checkout chipp-deno at staging, install Claude Code",
+          "Run autonomous investigation with full error context",
+          "Attempt fix, open PR with CHIPP-XXX in title targeting staging",
+          "Post activity updates back to Chipp Issues API",
+          "Update issue spawn_status throughout lifecycle"
+        ]
+      },
+      "piece4-fix-verification": {
+        "status": "complete",
+        "where": "/Users/hunterhodnett/code/chipp-monorepo/apps/chipp-issues",
+        "tasks": [
+          "Generalized fixTrackingService.ts to verify via both Sentry event log AND Loki external_issue.last_seen_at",
+          "Added extractChippIssueIdsFromPR() and findIssuesForChippIds() for auto-investigate PRs",
+          "Added handleLokiEventForMonitoredFix() for immediate failure detection from Loki webhook",
+          "Updated canMoveToCloseStatus() to check both sentry and loki sources",
+          "Hooked Loki webhook dedup path into fix tracking",
+          "Updated GitHub webhook to create fix attempts for CHIPP-XXX identifiers (not just Sentry IDs)",
+          "All changes pass tsc --noEmit with zero errors"
+        ]
+      }
+    }
+  },
+
+  "activeMigration": "autonomous-error-remediation",
+  "lastUpdated": "2026-02-07T14:00:00Z",
+
+  "resumeInstructions": "AUTONOMOUS ERROR REMEDIATION COMPLETE. All 4 pieces built and deployed. Plan at docs/migrations/autonomous-error-remediation.md. Pipeline: Loki errors -> Grafana alerts -> Chipp Issues webhook -> fingerprint+dedup -> spawn gate -> GH Actions Claude Code -> fix PR -> PR matching -> fix verification (48h monitoring). Files: (1) monitoring/grafana/values.yaml alerting config, (2) chipp-issues: lokiService.ts, spawnService.ts, loki webhook route, migration 002, (3) .github/workflows/auto-investigate.yml, (4) fixTrackingService.ts generalized for Sentry+Loki, GitHub webhook handles CHIPP-XXX identifiers. Secrets: 1Password grafana-alerting item, 3 GH secrets, 11 k8s env vars on chipp-issues pod. DB migration run on production. Next: deploy Chipp Issues code (lokiService, spawnService, webhook route, fix tracking changes) and deploy Grafana alerting config."
 }

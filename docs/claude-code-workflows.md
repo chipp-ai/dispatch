@@ -121,6 +121,7 @@ Task(subagent_type="e2e-flow-tester"): "Test upgrade flow: FREE→PRO with Strip
 
 ## Reading Logs
 
+**Local dev:**
 ```bash
 # Server logs (Deno API)
 tail -f .scratch/logs/server.log
@@ -130,6 +131,42 @@ mcp__dev-server__dev_logs_errors
 tail -f .scratch/logs/browser.log
 mcp__browser-devtools__browser_get_console_logs(type:"error")
 ```
+
+**Production (Loki + Grafana):**
+
+All prod logs are persisted in Loki with 30-day retention. Query via Grafana at `https://grafana.chipp.ai` or via kubectl:
+
+```bash
+# Port-forward Loki for direct API queries
+kubectl port-forward -n monitoring svc/loki-gateway 3100:80
+```
+
+Useful LogQL queries:
+```logql
+# All errors
+{app="chipp-deno", level="error"} | json
+
+# Errors by source/feature
+{app="chipp-deno", level="error"} | json | source="billing" | feature="auto-topup"
+
+# Integration channel logs
+{app="chipp-deno"} | json | source=~"whatsapp.*|slack.*|email.*"
+
+# Logs for a specific org/user
+{app="chipp-deno"} | json | orgId="org_abc123"
+
+# Top errors in last hour
+topk(10, sum by (msg) (count_over_time({app="chipp-deno", level="error"} | json [1h])))
+
+# Catch bad deploys (error spike by version)
+sum by (version) (count_over_time({app="chipp-deno", level="error"} | json [5m]))
+```
+
+**Label strategy:** `level` is a stream label (indexed, fast filter). `source`, `feature`, and entity IDs are extracted at query time via `| json` (high cardinality, not indexed).
+
+**Dashboards:** Error Overview, Feature Adoption, Billing Health. Config in `monitoring/grafana/dashboards/`.
+
+**Monitoring deploy:** Changes to `monitoring/` auto-deploy via `.github/workflows/monitoring.yml`. Manual: `monitoring/deploy.sh`.
 
 ## Worktree-Based Parallelization
 

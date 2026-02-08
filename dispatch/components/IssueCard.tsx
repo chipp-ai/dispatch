@@ -20,6 +20,9 @@ interface Issue {
   assignee: { name: string } | null;
   labels: Label[];
   created_at: string;
+  agent_status?: string;
+  plan_status?: string;
+  blocked_reason?: string | null;
 }
 
 interface IssueCardProps {
@@ -27,6 +30,35 @@ interface IssueCardProps {
   statusColor?: string;
   onDragStart?: (e: React.DragEvent, issue: Issue) => void;
 }
+
+// Agent status badge config
+const agentBadgeConfig: Record<
+  string,
+  { label: string; color: string; bgColor: string; pulse?: boolean }
+> = {
+  investigating: {
+    label: "Investigating",
+    color: "#a78bfa",
+    bgColor: "#a78bfa20",
+    pulse: true,
+  },
+  implementing: {
+    label: "Implementing",
+    color: "#22d3d3",
+    bgColor: "#22d3d320",
+    pulse: true,
+  },
+  blocked: {
+    label: "Blocked",
+    color: "#f87171",
+    bgColor: "#f8717120",
+  },
+  awaiting_review: {
+    label: "Awaiting Review",
+    color: "#facc15",
+    bgColor: "#facc1520",
+  },
+};
 
 // Linear-style priority indicator (stacked bars)
 function PriorityIndicator({ priority }: { priority: string }) {
@@ -135,6 +167,42 @@ export default function IssueCard({
             )}
           </div>
         )}
+
+        {/* Agent status badge */}
+        {issue.agent_status &&
+          issue.agent_status !== "idle" &&
+          agentBadgeConfig[issue.agent_status] && (
+            <div className="flex items-center gap-1.5 mb-2">
+              <div
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                style={{
+                  backgroundColor:
+                    agentBadgeConfig[issue.agent_status].bgColor,
+                  color: agentBadgeConfig[issue.agent_status].color,
+                }}
+              >
+                {agentBadgeConfig[issue.agent_status].pulse && (
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span
+                      className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                      style={{
+                        backgroundColor:
+                          agentBadgeConfig[issue.agent_status].color,
+                      }}
+                    />
+                    <span
+                      className="relative inline-flex rounded-full h-1.5 w-1.5"
+                      style={{
+                        backgroundColor:
+                          agentBadgeConfig[issue.agent_status].color,
+                      }}
+                    />
+                  </span>
+                )}
+                {agentBadgeConfig[issue.agent_status].label}
+              </div>
+            </div>
+          )}
 
         {/* Bottom row: Assignee */}
         {issue.assignee && (

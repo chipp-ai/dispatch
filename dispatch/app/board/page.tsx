@@ -32,6 +32,9 @@ interface Issue {
   assignee: { name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
+  agent_status?: string;
+  plan_status?: string;
+  blocked_reason?: string | null;
 }
 
 interface BoardEvent {

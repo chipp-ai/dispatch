@@ -92,6 +92,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       agent_output: body.agent_output,
       agent_confidence: body.agent_confidence,
       agent_tokens_used: body.agent_tokens_used,
+      // PRD workflow fields
+      workflow_type: body.workflow_type,
+      plan_status: body.plan_status,
+      plan_content: body.plan_content,
+      plan_feedback: body.plan_feedback,
+      plan_approved_at: body.plan_approved_at,
+      plan_approved_by: body.plan_approved_by,
+      spawn_type: body.spawn_type,
+      spawn_attempt_count: body.spawn_attempt_count,
+      blocked_reason: body.blocked_reason,
     });
 
     if (!issue) {
