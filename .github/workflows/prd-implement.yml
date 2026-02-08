@@ -428,11 +428,30 @@ jobs:
           PYEOF
 
           # =============================================================
-          # DIAGNOSTIC: Test each MCP server individually to find the hang
+          # DIAGNOSTIC: Isolate MCP issue
           # =============================================================
 
-          # Test 1: Database MCP server only
-          echo "=== TEST 1: Database MCP server only ==="
+          echo "=== Claude Code version ==="
+          claude --version 2>&1 || echo "version check failed"
+
+          # Test A: Raw JSON-RPC handshake with DB server (bypasses Claude Code entirely)
+          echo ""
+          echo "=== TEST A: Raw JSON-RPC to DB MCP server ==="
+          INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+          echo "$INIT_MSG" | timeout 15 deno run --allow-net --allow-env --allow-read tools/mcp-database/index.ts 2>.scratch/db-mcp-stderr.log | head -5 && echo "DB raw JSON-RPC: PASS" || echo "DB raw JSON-RPC: FAIL (exit: $?)"
+          echo "DB MCP stderr:"
+          cat .scratch/db-mcp-stderr.log
+
+          # Test B: Raw JSON-RPC handshake with browser server
+          echo ""
+          echo "=== TEST B: Raw JSON-RPC to Browser MCP server ==="
+          echo "$INIT_MSG" | timeout 15 node tools/mcp-browser-devtools/index.js 2>.scratch/br-mcp-stderr.log | head -5 && echo "Browser raw JSON-RPC: PASS" || echo "Browser raw JSON-RPC: FAIL (exit: $?)"
+          echo "Browser MCP stderr:"
+          cat .scratch/br-mcp-stderr.log
+
+          # Test C: Claude with verbose MCP (captures stderr to see where it hangs)
+          echo ""
+          echo "=== TEST C: Claude + MCP verbose (30s timeout) ==="
           cat > .scratch/mcp-db-only.json << 'DBEOF'
           {
             "mcpServers": {
@@ -445,62 +464,58 @@ jobs:
             }
           }
           DBEOF
-          timeout 60 claude --print --dangerously-skip-permissions \
+          timeout 30 claude --print --verbose --dangerously-skip-permissions \
             --mcp-config .scratch/mcp-db-only.json \
-            "Respond with exactly: DB_MCP_OK" 2>&1 && echo "DB MCP: PASS" || echo "DB MCP: FAIL (exit: $?)"
+            "Respond with exactly: DB_MCP_OK" > .scratch/claude-mcp-stdout.log 2>.scratch/claude-mcp-stderr.log
+          MCP_EXIT=$?
+          echo "Exit: $MCP_EXIT"
+          echo "--- stdout (first 20 lines) ---"
+          head -20 .scratch/claude-mcp-stdout.log
+          echo "--- stderr (first 30 lines) ---"
+          head -30 .scratch/claude-mcp-stderr.log
 
-          # Test 2: Browser MCP server only
+          # Test D: No MCP baseline
           echo ""
-          echo "=== TEST 2: Browser MCP server only ==="
-          cat > .scratch/mcp-browser-only.json << 'BREOF'
-          {
-            "mcpServers": {
-              "browser-devtools": {
-                "type": "stdio",
-                "command": "node",
-                "args": ["tools/mcp-browser-devtools/index.js"],
-                "env": { "CDP_HOST": "localhost", "CDP_PORT": "9222" }
-              }
-            }
-          }
-          BREOF
-          timeout 60 claude --print --dangerously-skip-permissions \
-            --mcp-config .scratch/mcp-browser-only.json \
-            "Respond with exactly: BROWSER_MCP_OK" 2>&1 && echo "Browser MCP: PASS" || echo "Browser MCP: FAIL (exit: $?)"
-
-          # Test 3: Both MCP servers together
-          echo ""
-          echo "=== TEST 3: Both MCP servers ==="
-          timeout 60 claude --print --dangerously-skip-permissions \
-            --mcp-config .mcp.json \
-            "Respond with exactly: BOTH_MCP_OK" 2>&1 && echo "Both MCP: PASS" || echo "Both MCP: FAIL (exit: $?)"
-
-          # Test 4: No MCP (baseline)
-          echo ""
-          echo "=== TEST 4: No MCP (baseline) ==="
+          echo "=== TEST D: No MCP baseline ==="
           timeout 30 claude --print --dangerously-skip-permissions \
             "Respond with exactly: NO_MCP_OK" 2>&1 && echo "No MCP: PASS" || echo "No MCP: FAIL (exit: $?)"
 
+          # Test E: Claude auto-discover .mcp.json (no --mcp-config flag)
           echo ""
-          echo "=== DIAGNOSTIC COMPLETE - Starting Implementation ==="
-          PROMPT=$(cat .scratch/implementation-prompt.md)
+          echo "=== TEST E: Claude auto-discover .mcp.json ==="
+          timeout 30 claude --print --verbose --dangerously-skip-permissions \
+            "Respond with exactly: AUTO_MCP_OK" > .scratch/claude-auto-stdout.log 2>.scratch/claude-auto-stderr.log
+          AUTO_EXIT=$?
+          echo "Exit: $AUTO_EXIT"
+          echo "--- stdout ---"
+          head -10 .scratch/claude-auto-stdout.log
+          echo "--- stderr (first 20 lines) ---"
+          head -20 .scratch/claude-auto-stderr.log
 
-          # Run Claude directly in foreground. Output is buffered by Node.js
-          # (no TTY in CI), so we monitor the output file in a background loop.
-          claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
-            --mcp-config .mcp.json "$PROMPT" \
-            > .scratch/claude-raw.log 2>&1 &
+          echo ""
+          echo "=== DIAGNOSTICS DONE ==="
+
+          # If both MCP tests failed, run without MCP so we at least get work done
+          if [ "$MCP_EXIT" -ne 0 ]; then
+            echo "MCP not working - running WITHOUT MCP tools"
+            PROMPT=$(cat .scratch/implementation-prompt.md)
+            claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+              "$PROMPT" > .scratch/claude-raw.log 2>&1 &
+          else
+            echo "MCP working - running WITH MCP tools"
+            PROMPT=$(cat .scratch/implementation-prompt.md)
+            claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
+              --mcp-config .mcp.json "$PROMPT" > .scratch/claude-raw.log 2>&1 &
+          fi
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
 
           # Monitor file growth (bytes AND lines) in foreground
-          PREV_SIZE=0
           while kill -0 $CLAUDE_PID 2>/dev/null; do
             sleep 15
             CURR_SIZE=$(stat -c%s .scratch/claude-raw.log 2>/dev/null || echo 0)
             CURR_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
             echo "[$(date -u +%H:%M:%S)] Claude running... (${CURR_SIZE} bytes, ${CURR_LINES} lines)"
-            PREV_SIZE=$CURR_SIZE
           done
           wait $CLAUDE_PID
           CLAUDE_EXIT=$?
