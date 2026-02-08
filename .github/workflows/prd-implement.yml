@@ -261,8 +261,10 @@ jobs:
         id: create-pr
         if: steps.check-fix.outputs.fix_attempted == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          # Use PAT for push (enterprise blocks default GITHUB_TOKEN writes)
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           BRANCH_NAME=$(git branch --show-current)
           git push origin "HEAD:${BRANCH_NAME}"
 
