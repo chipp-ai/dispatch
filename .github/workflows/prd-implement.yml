@@ -420,78 +420,41 @@ jobs:
                   print(line, flush=True)
           PYEOF
 
-          PROMPT=$(cat .scratch/implementation-prompt.md)
+          # Debug: verify setup
+          echo "=== Debug Info ==="
+          echo "which claude: $(which claude)"
+          echo "claude --version: $(claude --version 2>&1 || echo 'failed')"
+          echo "which script: $(which script)"
+          echo "script --version: $(script --version 2>&1 | head -1)"
+          echo "prompt size: $(wc -c < .scratch/implementation-prompt.md) bytes"
+          echo "=================="
 
-          # Claude CLI buffers ALL output when stdout is not a TTY (file or pipe).
-          # Use `script` to create a pseudo-TTY, forcing line-buffered output.
-          # -q: quiet (no "Script started" messages)
-          # -f: flush transcript file after each write
-          # -c: command to run
-          # Wrapper script avoids quoting issues with the long PROMPT variable.
+          # Wrapper script reads prompt from file (avoids arg length issues)
           cat > .scratch/run-claude.sh << 'RUNEOF'
           #!/bin/bash
+          echo ">>> run-claude.sh: starting" >&2
+          echo ">>> run-claude.sh: PATH=$PATH" >&2
+          echo ">>> run-claude.sh: which claude=$(which claude 2>&1)" >&2
           PROMPT=$(cat .scratch/implementation-prompt.md)
+          echo ">>> run-claude.sh: prompt length=${#PROMPT}" >&2
+          echo ">>> run-claude.sh: exec claude..." >&2
           exec claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
             --mcp-config .mcp.json "$PROMPT"
           RUNEOF
           chmod +x .scratch/run-claude.sh
 
-          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
-          CLAUDE_PID=$!
-          echo "Claude started (PID: $CLAUDE_PID)"
-
-          # Foreground monitoring loop:
-          # - Every 15s: show new output in GitHub Actions log (only foreground stdout appears)
-          # - Every 60s: POST heartbeat to Chipp Issues
-          PREV_LINES=0
-          TICK=0
-          PREV_HEARTBEAT_HASH=""
-          while kill -0 $CLAUDE_PID 2>/dev/null; do
-            sleep 15
-            TICK=$((TICK + 1))
-
-            [ -f .scratch/claude-raw.log ] || continue
-            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
-
-            # Show new lines (filtered to readable text) in Actions log
-            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
-              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
-                | python3 -u .scratch/stream-filter.py
-              PREV_LINES=$CURR_LINES
-            else
-              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines, $(du -h .scratch/claude-raw.log | cut -f1))"
-            fi
-
-            # Heartbeat to Chipp Issues every ~60s (every 4th tick)
-            if [ $((TICK % 4)) -eq 0 ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
-              LAST_READABLE=$(tail -50 .scratch/claude-raw.log | python3 -u .scratch/stream-filter.py 2>/dev/null | tail -30)
-              [ -z "$LAST_READABLE" ] && continue
-              CURR_HASH=$(echo "$LAST_READABLE" | md5sum | cut -d' ' -f1)
-              if [ "$CURR_HASH" != "$PREV_HEARTBEAT_HASH" ]; then
-                PREV_HEARTBEAT_HASH="$CURR_HASH"
-                curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-                  -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
-                  -H "Content-Type: application/json" \
-                  -d "$(jq -n --arg type "agent_heartbeat" --arg content "$LAST_READABLE" \
-                    '{type: $type, content: $content, metadata: {workflow_type: "prd_implement"}}')" || true
-              fi
-            fi
-          done
-
-          # Claude finished - get exit code
-          wait $CLAUDE_PID
+          # Run Claude in FOREGROUND via script PTY.
+          # Raw JSON output goes directly to GitHub Actions log.
+          # We'll process it into readable format afterward.
+          # script -q: no header, -e: return child exit, -f: flush after each write
+          script -qef -c "bash .scratch/run-claude.sh" .scratch/claude-raw.log
           CLAUDE_EXIT=$?
+          echo ""
           echo "=== Claude exited with code $CLAUDE_EXIT ==="
+          echo "=== Raw log size: $(wc -c < .scratch/claude-raw.log) bytes, $(wc -l < .scratch/claude-raw.log) lines ==="
 
-          # Show any remaining output
-          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
-          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
-            sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
-              | python3 -u .scratch/stream-filter.py
-          fi
-
-          # Create human-readable log for full-log upload
-          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
+          # Generate readable log from raw JSON
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || true
 
           exit $CLAUDE_EXIT
 
