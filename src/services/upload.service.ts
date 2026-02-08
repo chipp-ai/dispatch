@@ -8,13 +8,13 @@
 import { uploadFileFromBuffer } from "./storage.service.ts";
 import { knowledgeSourceService } from "./knowledge-source.service.ts";
 import {
-  ragIngestionService,
   processKnowledgeSource,
   processUrlContent,
 } from "./rag-ingestion.service.ts";
 import type { EmbeddingConfig } from "./embedding-provider.service.ts";
 import { firecrawlService, isFirecrawlAvailable } from "./firecrawl.service.ts";
 import { billingService } from "./billing.service.ts";
+import { createProcessingJob } from "./job-processor.service.ts";
 import { sql } from "../db/client.ts";
 import { log } from "@/lib/logger.ts";
 
@@ -70,6 +70,8 @@ export const uploadService = {
       knowledgeSourceId: string;
       applicationId: string;
       size: number;
+      filePath: string;
+      mimeType: string;
     }> = [];
 
     for (const file of files) {
@@ -109,11 +111,13 @@ export const uploadService = {
           status: source.status,
         });
 
-        // Track files for processing decision
+        // Track files for job creation
         filesToProcess.push({
           knowledgeSourceId: source.id,
           applicationId,
           size: file.size,
+          filePath,
+          mimeType: file.type,
         });
       } catch (error) {
         log.error("Error uploading file", {
@@ -132,47 +136,37 @@ export const uploadService = {
       }
     }
 
-    // Trigger RAG processing for successfully uploaded files
+    // Create processing jobs for all successfully uploaded files
     if (filesToProcess.length > 0) {
-      const shouldInline = ragIngestionService.shouldProcessInline(
-        filesToProcess.map((f) => ({ size: f.size }))
-      );
+      log.info("Creating processing jobs for uploaded files", {
+        source: "upload-service",
+        feature: "job-queue",
+        fileCount: filesToProcess.length,
+        totalSize: filesToProcess.reduce((sum, f) => sum + f.size, 0),
+      });
 
-      if (shouldInline) {
-        log.info("Processing files inline", {
-          source: "upload-service",
-          feature: "inline-processing",
-          fileCount: filesToProcess.length,
-          totalSize: filesToProcess.reduce((sum, f) => sum + f.size, 0),
-        });
-
-        // Process inline - don't await, let it run in background
-        // This allows the upload response to return quickly
-        Promise.all(
-          filesToProcess.map((f) =>
-            processKnowledgeSource({
+      for (const f of filesToProcess) {
+        try {
+          await createProcessingJob({
+            applicationId: f.applicationId,
+            knowledgeSourceId: f.knowledgeSourceId,
+            type: "file",
+            payload: {
               knowledgeSourceId: f.knowledgeSourceId,
-              applicationId: f.applicationId,
-              userId, // For WebSocket notifications
-              embeddingConfig, // Use selected embedding provider
-            }).catch((err) => {
-              log.error("Inline processing failed", {
-                source: "upload-service",
-                feature: "inline-processing",
-                knowledgeSourceId: f.knowledgeSourceId,
-                applicationId: f.applicationId,
-              }, err);
-            })
-          )
-        );
-      } else {
-        log.info("Files queued for Temporal processing", {
-          source: "upload-service",
-          feature: "temporal-processing",
-          fileCount: filesToProcess.length,
-          reason: "exceeds inline thresholds",
-        });
-        // TODO: Trigger Temporal workflow for batch processing
+              filePath: f.filePath,
+              mimeType: f.mimeType,
+            },
+            embeddingConfig: embeddingConfig || undefined,
+            userId,
+          });
+        } catch (err) {
+          log.error("Failed to create processing job", {
+            source: "upload-service",
+            feature: "job-queue",
+            knowledgeSourceId: f.knowledgeSourceId,
+            applicationId: f.applicationId,
+          }, err);
+        }
       }
     }
 
@@ -256,8 +250,8 @@ export const uploadService = {
     const billingCtx = await getBillingContextForApp(applicationId);
 
     if (crawlLinks) {
-      // Site crawl mode
-      await processSiteCrawl({
+      // Site crawl mode -- start async crawl with webhook callbacks
+      await startWebhookCrawl({
         knowledgeSourceId: source.id,
         applicationId,
         userId,
@@ -265,7 +259,6 @@ export const uploadService = {
         maxPages,
         maxDepth,
         embeddingConfig,
-        billingCtx,
         onProgress,
       });
     } else {
@@ -402,18 +395,21 @@ async function processSingleUrl(ctx: ProcessUrlContext): Promise<void> {
   }
 }
 
-interface ProcessCrawlContext extends ProcessUrlContext {
+/**
+ * Start a site crawl using Firecrawl webhooks (non-blocking).
+ * The crawl pages arrive via POST /api/webhooks/firecrawl and are
+ * enqueued as processing_jobs for the cron processor.
+ */
+async function startWebhookCrawl(params: {
+  knowledgeSourceId: string;
+  applicationId: string;
+  userId: string;
+  url: string;
   maxPages: number;
   maxDepth: number;
-}
-
-const POLL_INTERVAL_MS = 2_000;
-const MAX_POLL_ITERATIONS = 300; // 300 * 2s = 10 min timeout
-
-/**
- * Process a site crawl via Firecrawl crawl API
- */
-async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
+  embeddingConfig?: EmbeddingConfig;
+  onProgress?: UploadUrlParams["onProgress"];
+}): Promise<void> {
   const {
     knowledgeSourceId,
     applicationId,
@@ -422,11 +418,8 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
     maxPages,
     maxDepth,
     embeddingConfig,
-    billingCtx,
     onProgress,
-  } = ctx;
-
-  let crawlId: string | null = null;
+  } = params;
 
   try {
     await onProgress?.("crawling", 25, { pagesCompleted: 0, pagesTotal: 0 });
@@ -437,149 +430,63 @@ async function processSiteCrawl(ctx: ProcessCrawlContext): Promise<void> {
       WHERE knowledge_source_id = ${knowledgeSourceId}::uuid
     `;
 
-    // Start the crawl
+    // Build the webhook URL from APP_URL
+    const appUrl = Deno.env.get("APP_URL") || "http://localhost:8000";
+    const webhookUrl = `${appUrl}/api/webhooks/firecrawl`;
+
+    // Start the crawl with webhook config
     const crawl = await firecrawlService.startCrawl({
       url,
       maxPages,
       maxDepth,
+      webhook: {
+        url: webhookUrl,
+        metadata: {
+          knowledgeSourceId,
+          applicationId,
+          userId,
+          embeddingConfig: embeddingConfig || null,
+        },
+        events: ["page", "completed", "failed"],
+      },
     });
-    crawlId = crawl.id;
 
-    let pagesProcessed = 0;
-    let processedUrls = new Set<string>();
-
-    for (let i = 0; i < MAX_POLL_ITERATIONS; i++) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-      const status = await firecrawlService.getCrawlStatus(crawlId);
-
-      // Process newly completed pages
-      for (const page of status.data) {
-        const pageUrl = page.metadata?.sourceURL || url;
-        if (processedUrls.has(pageUrl as string)) continue;
-        if (!page.markdown || page.markdown.trim().length === 0) {
-          processedUrls.add(pageUrl as string);
-          continue;
-        }
-
-        try {
-          await processUrlContent({
-            knowledgeSourceId,
-            applicationId,
-            url: pageUrl as string,
-            markdown: page.markdown,
-            sourceMetadata: page.metadata,
-            userId,
-            embeddingConfig,
-            skipDelete: true, // append mode
-          });
-          pagesProcessed++;
-        } catch (pageError) {
-          log.error("Failed to process crawled page", {
-            source: "upload-service",
-            feature: "crawl-page-processing",
-            knowledgeSourceId,
-            applicationId,
-            pageUrl,
-            crawlId,
-          }, pageError);
-          // Continue processing other pages
-        }
-
-        processedUrls.add(pageUrl as string);
-      }
-
-      const progress =
-        status.total > 0
-          ? Math.min(
-              25 + Math.round((status.completed / status.total) * 70),
-              95
-            )
-          : 30;
-
-      await onProgress?.("crawling", progress, {
-        pagesCompleted: pagesProcessed,
-        pagesTotal: status.total,
-      });
-
-      if (
-        status.status === "completed" ||
-        status.status === "failed" ||
-        status.status === "cancelled"
-      ) {
-        break;
-      }
-    }
-
-    // If we hit the poll limit, cancel the crawl
-    const finalStatus = await firecrawlService.getCrawlStatus(crawlId);
-    if (finalStatus.status === "scraping") {
-      log.warn("Crawl timed out, cancelling", { source: "upload-service", feature: "firecrawl-crawl", crawlId, url });
-      await firecrawlService.cancelCrawl(crawlId);
-    }
-
-    // Update knowledge source with final chunk count
-    const chunkCountResult = await sql`
-      SELECT COUNT(*) as count
-      FROM rag.text_chunks
-      WHERE knowledge_source_id = ${knowledgeSourceId}::uuid
-    `;
-    const totalChunks = Number(chunkCountResult[0]?.count || 0);
-
+    // Store crawl ID in knowledge source metadata for tracking
     await sql`
       UPDATE rag.knowledge_sources
       SET
-        status = 'completed',
-        chunk_count = ${totalChunks},
+        status = 'processing',
+        metadata = COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ crawlId: crawl.id })}::jsonb,
         updated_at = NOW()
       WHERE id = ${knowledgeSourceId}::uuid
     `;
 
-    // Report usage (fire-and-forget)
-    if (billingCtx?.stripeCustomerId && pagesProcessed > 0) {
-      billingService.reportWebScrapeUsage({
-        stripeCustomerId: billingCtx.stripeCustomerId,
-        pagesScraped: pagesProcessed,
-        applicationId,
-        knowledgeSourceId,
-        useSandbox: billingCtx.useSandbox,
-      });
-    }
+    await onProgress?.("crawling", 30, { pagesCompleted: 0, pagesTotal: 0 });
 
-    await onProgress?.("completed", 100, {
-      pagesCompleted: pagesProcessed,
-      pagesTotal: finalStatus.total,
-    });
-
-    log.info("Site crawl complete", {
+    log.info("Site crawl started with webhook", {
       source: "upload-service",
-      feature: "firecrawl-crawl",
+      feature: "webhook-crawl",
       knowledgeSourceId,
+      applicationId,
+      crawlId: crawl.id,
       url,
-      pagesProcessed,
-      totalChunks,
+      webhookUrl,
     });
   } catch (error) {
-    log.error("Site crawl failed", {
+    log.error("Failed to start webhook crawl", {
       source: "upload-service",
-      feature: "firecrawl-crawl",
+      feature: "webhook-crawl",
       knowledgeSourceId,
       applicationId,
       url,
-      crawlId,
     }, error);
-
-    // Try to cancel if crawl is still running
-    if (crawlId) {
-      firecrawlService.cancelCrawl(crawlId).catch(() => {});
-    }
 
     // Mark knowledge source as failed
     await sql`
       UPDATE rag.knowledge_sources
       SET
         status = 'failed',
-        error_message = ${error instanceof Error ? error.message : "Crawl failed"},
+        error_message = ${error instanceof Error ? error.message : "Crawl start failed"},
         updated_at = NOW()
       WHERE id = ${knowledgeSourceId}::uuid
     `;

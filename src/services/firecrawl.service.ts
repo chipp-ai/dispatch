@@ -198,22 +198,44 @@ export const firecrawlService = {
     url: string;
     maxPages: number;
     maxDepth: number;
+    webhook?: {
+      url: string;
+      metadata?: Record<string, unknown>;
+      events?: string[];
+    };
   }): Promise<{ id: string }> {
-    const { url, maxPages, maxDepth } = params;
+    const { url, maxPages, maxDepth, webhook } = params;
 
-    log.info("Starting crawl", { source: "firecrawl-service", feature: "crawl-start", url, maxPages, maxDepth });
+    log.info("Starting crawl", {
+      source: "firecrawl-service",
+      feature: "crawl-start",
+      url,
+      maxPages,
+      maxDepth,
+      hasWebhook: !!webhook,
+    });
+
+    const body: Record<string, unknown> = {
+      url,
+      limit: maxPages,
+      maxDepth,
+      scrapeOptions: {
+        formats: ["markdown"],
+        onlyMainContent: true,
+      },
+    };
+
+    if (webhook) {
+      body.webhook = {
+        url: webhook.url,
+        metadata: webhook.metadata,
+        events: webhook.events,
+      };
+    }
 
     const response = await firecrawlFetch("/crawl", {
       method: "POST",
-      body: JSON.stringify({
-        url,
-        limit: maxPages,
-        maxDepth,
-        scrapeOptions: {
-          formats: ["markdown"],
-          onlyMainContent: true,
-        },
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
