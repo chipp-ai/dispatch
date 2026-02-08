@@ -1,0 +1,377 @@
+name: PRD Implementation
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Chipp Issues issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. CHIPP-456)"
+        required: true
+        type: string
+      title:
+        description: "Issue title / PRD summary"
+        required: true
+        type: string
+      description:
+        description: "Full PRD or feature description (markdown)"
+        required: true
+        type: string
+      plan_content:
+        description: "Approved implementation plan (markdown)"
+        required: true
+        type: string
+
+# Only one implementation per issue at a time
+concurrency:
+  group: prd-implement-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    name: Implement ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    # SECURITY: All user-provided inputs are passed through env vars to
+    # prevent command injection. They are NEVER interpolated in run: blocks.
+    # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CHIPP_ISSUES_API_URL: ${{ secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_PLAN_CONTENT: ${{ inputs.plan_content }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chipp_deno
+        ports:
+          - 5436:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Sanitize branch name
+        id: branch
+        run: |
+          SAFE_ID=$(echo "$INPUT_ISSUE_IDENTIFIER" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          echo "name=feat/${SAFE_ID}" >> "$GITHUB_OUTPUT"
+          echo "Branch name: feat/${SAFE_ID}"
+
+      - name: Notify Chipp Issues - Implementing
+        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          PAYLOAD=$(jq -n \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            --arg agent_status "implementing" \
+            --arg spawn_type "implement" \
+            '{spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at, agent_status: $agent_status, spawn_type: $spawn_type}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+
+      - name: Setup database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          # Run migrations to set up the schema
+          deno task db:migrate || echo "Warning: Migration failed (may need manual schema setup)"
+
+      - name: Build implementation prompt
+        run: |
+          mkdir -p .scratch
+
+          # Build prompt file using jq for safe string handling (no shell interpolation of inputs)
+          jq -n \
+            --arg identifier "$INPUT_ISSUE_IDENTIFIER" \
+            --arg title "$INPUT_TITLE" \
+            --arg description "$INPUT_DESCRIPTION" \
+            --arg plan "$INPUT_PLAN_CONTENT" \
+            '{identifier: $identifier, title: $title, description: $description, plan: $plan}' \
+            > .scratch/prompt-data.json
+
+          python3 -c "
+          import json, sys
+          d = json.load(open('.scratch/prompt-data.json'))
+          prompt = f\"\"\"You are autonomously implementing an approved feature plan for the chipp-deno project.
+          You MUST follow the approved plan closely. Do NOT deviate from it without good reason.
+
+          Issue: {d['identifier']} - {d['title']}
+
+          Description / PRD:
+          {d['description']}
+
+          APPROVED IMPLEMENTATION PLAN:
+          {d['plan']}
+
+          Instructions:
+          1. Read CLAUDE.md first to understand the codebase conventions
+          2. Create a feature branch: git checkout -b feat/{d['identifier'].lower().replace(' ', '-')}
+          3. Follow the plan step by step:
+             - Create files listed in 'Files to Create'
+             - Modify files listed in 'Files to Modify'
+             - Create database migrations if listed in 'Database Changes'
+             - Follow existing code patterns and conventions
+          4. After implementing, verify your work:
+             - Run 'deno check main.ts' for type safety
+             - Run any relevant tests
+          5. Commit your changes with a descriptive message referencing {d['identifier']}
+          6. Do NOT push branches - just prepare commits locally
+
+          CRITICAL STOP CONDITIONS:
+          If you encounter ANY of the following, STOP IMMEDIATELY:
+          - Missing environment variables or secrets that you cannot create
+          - Requirements that are unclear or contradictory
+          - Dependencies that are not available or cannot be installed
+          - Test failures that indicate a fundamental design issue
+          - Design decisions that are not covered by the plan
+          - Work that is clearly out of scope of the plan
+
+          When you must STOP:
+          1. Write a detailed explanation to .scratch/blocker.md with:
+             - Category: missing_env | unclear_requirement | missing_dependency | test_failure | design_decision | out_of_scope
+             - What you were trying to do
+             - What went wrong
+             - What information or decision you need from a human
+          2. Exit immediately after writing the blocker file
+
+          IMPORTANT: Working around blockers instead of reporting them is a FAILURE.
+          It is better to stop and ask for help than to produce incorrect or incomplete work.
+          \"\"\"
+          with open('.scratch/implementation-prompt.md', 'w') as f:
+              f.write(prompt)
+          "
+
+      - name: Run Implementation
+        id: implement
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+        run: |
+          PROMPT=$(cat .scratch/implementation-prompt.md)
+          claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+      - name: Check for blocker
+        id: check-blocker
+        if: always()
+        run: |
+          if [ -f .scratch/blocker.md ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "Agent reported a blocker:"
+            cat .scratch/blocker.md
+          else
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report blocker to Chipp Issues
+        if: always() && steps.check-blocker.outputs.blocked == 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          BLOCKER_PAYLOAD=$(jq -n \
+            --arg type "blocker_reported" \
+            --rawfile content .scratch/blocker.md \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BLOCKER_PAYLOAD" || echo "Warning: Failed to post blocker (non-fatal)"
+
+          # Extract blocker category from the file
+          BLOCKER_CATEGORY=$(grep -oP 'Category:\s*\K\S+' .scratch/blocker.md || echo "unknown")
+
+          BLOCKER_REASON=$(head -5 .scratch/blocker.md | tr '\n' ' ')
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "completed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg agent_status "blocked" \
+            --arg blocked_reason "$BLOCKER_REASON" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status, blocked_reason: $blocked_reason}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update blocker status (non-fatal)"
+
+      - name: Check for fix
+        id: check-fix
+        if: steps.check-blocker.outputs.blocked != 'true'
+        run: |
+          CURRENT_BRANCH=$(git branch --show-current)
+          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Implementation committed on branch: $CURRENT_BRANCH"
+          elif git diff --quiet && git diff --cached --quiet; then
+            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            echo "No implementation commits found"
+          else
+            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            echo "Warning: uncommitted changes found but no commit was made"
+            git diff --stat
+          fi
+
+      - name: Push branch and create PR
+        id: create-pr
+        if: steps.check-fix.outputs.fix_attempted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH_NAME=$(git branch --show-current)
+          git push origin "HEAD:${BRANCH_NAME}"
+
+          {
+            echo "## Implementation for ${INPUT_ISSUE_IDENTIFIER}"
+            echo ""
+            echo "Autonomous implementation following approved plan."
+            echo ""
+            if [ -f .scratch/implementation-summary.md ]; then
+              cat .scratch/implementation-summary.md
+            else
+              echo "### Changes"
+              echo ""
+              git log --oneline staging..HEAD
+            fi
+            echo ""
+            echo "---"
+            echo ""
+            echo "Autonomously generated by Claude Code for ${INPUT_ISSUE_IDENTIFIER}"
+            echo ""
+            echo "- **Run**: [${GITHUB_RUN_ID}](${GITHUB_RUN_URL})"
+          } > .scratch/pr-body.md
+
+          PR_URL=$(gh pr create \
+            --title "feat: ${INPUT_TITLE} [${INPUT_ISSUE_IDENTIFIER}]" \
+            --body-file .scratch/pr-body.md \
+            --base staging \
+            --head "${BRANCH_NAME}")
+
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+          echo "Created PR: ${PR_URL}"
+
+      - name: Post results to Chipp Issues
+        if: always() && steps.check-blocker.outputs.blocked != 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        env:
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+          FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            SPAWN_STATUS="completed"
+          else
+            SPAWN_STATUS="failed"
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Build summary from git log or output
+          if [ -f .scratch/implementation-summary.md ]; then
+            SUMMARY_FILE=".scratch/implementation-summary.md"
+          else
+            git log --oneline staging..HEAD 2>/dev/null > .scratch/git-summary.md || echo "No commits" > .scratch/git-summary.md
+            SUMMARY_FILE=".scratch/git-summary.md"
+          fi
+
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "implementation_complete" \
+            --rawfile content "$SUMMARY_FILE" \
+            --arg pr_url "$PR_URL" \
+            --arg fix_attempted "${FIX_ATTEMPTED:-false}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity (non-fatal)"
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Report failure
+        if: failure() && steps.check-blocker.outputs.blocked != 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "implementation_failed" \
+            --arg content "PRD implementation workflow failed." \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, error_tail: $error_tail}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || true
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg agent_status "idle" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || true
