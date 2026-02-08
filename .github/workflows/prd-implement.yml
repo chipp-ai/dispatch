@@ -236,7 +236,7 @@ jobs:
         run: |
           mkdir -p .scratch
 
-          # Build prompt file using jq for safe string handling (no shell interpolation of inputs)
+          # Build prompt data using jq for safe string handling (no shell interpolation of inputs)
           jq -n \
             --arg identifier "$INPUT_ISSUE_IDENTIFIER" \
             --arg title "$INPUT_TITLE" \
@@ -245,13 +245,16 @@ jobs:
             '{identifier: $identifier, title: $title, description: $description, plan: $plan}' \
             > .scratch/prompt-data.json
 
-          python3 -c "
-          import json, sys
+          # Use heredoc with single-quoted delimiter to prevent bash expansion of backticks
+          python3 << 'PYEOF'
+          import json
           d = json.load(open('.scratch/prompt-data.json'))
-          prompt = f\"\"\"You are autonomously implementing an approved feature plan for the chipp-deno project.
+          identifier = d['identifier']
+          branch_id = identifier.lower().replace(' ', '-')
+          prompt = f"""You are autonomously implementing an approved feature plan for the chipp-deno project.
           You MUST follow the approved plan closely. Do NOT deviate from it without good reason.
 
-          Issue: {d['identifier']} - {d['title']}
+          Issue: {identifier} - {d['title']}
 
           Description / PRD:
           {d['description']}
@@ -298,7 +301,7 @@ jobs:
 
           Instructions:
           1. Read CLAUDE.md first to understand the codebase conventions
-          2. Create a feature branch: git checkout -b feat/{d['identifier'].lower().replace(' ', '-')}
+          2. Create a feature branch: git checkout -b feat/{branch_id}
           3. Follow the plan step by step:
              - Create files listed in 'Files to Create'
              - Modify files listed in 'Files to Modify'
@@ -312,63 +315,35 @@ jobs:
              d. cd web && npm run check && npm run build  (Svelte type check + build -- npm ci already done)
              If ANY check fails, fix the issue and re-run ALL checks until they pass.
              Fix pre-existing failures too -- the PR must be green.
-          5. Commit your changes with a descriptive message referencing {d['identifier']}
+          5. Commit your changes with a descriptive message referencing {identifier}
           6. Do NOT push branches - just prepare commits locally
 
           EVIDENCE & PR SUMMARY (MANDATORY):
           After ALL implementation and checks pass, you MUST write .scratch/implementation-summary.md.
-          This file becomes the PR description that humans review. Use this exact format:
-
-          ```markdown
-          ## What Changed
-          <2-4 sentence summary of what this PR does and why>
-
-          ## Changes
-          | File | Change |
-          |------|--------|
-          | path/to/file.ts | Description of what changed |
-          | ... | ... |
-
-          ## How It Works
-          <Brief technical explanation of the approach taken, key design decisions,
-          and how this fits into the existing architecture. 3-5 sentences.>
-
-          ## Verification
-
-          ### PR Checks
-          - [ ] `deno check main.ts` -- pass/fail
-          - [ ] `deno lint` -- pass/fail
-          - [ ] `deno test` -- pass/fail
-          - [ ] `svelte build` -- pass/fail
-
-          ### Evidence
-          <This section depends on the type of change:>
+          This file becomes the PR description that humans review. Include these sections:
+          - What Changed (2-4 sentence summary)
+          - Changes (table of files and what changed)
+          - How It Works (technical approach, 3-5 sentences)
+          - Verification: PR Checks (deno check, deno lint, deno test, svelte build - pass/fail)
+          - Verification: Evidence (see below)
+          - Potential Risks (breaking changes, performance, security, edge cases)
 
           FOR UI CHANGES (MANDATORY SCREENSHOTS):
           Use the browser-devtools MCP tools to test and screenshot your changes:
-          1. Navigate to the changed page: mcp__browser-devtools__browser_navigate
+          1. Navigate to the changed page with browser_navigate
           2. Interact with UI elements: browser_click, browser_type, browser_wait_for
-          3. Take screenshots: mcp__browser-devtools__browser_take_screenshot
-          4. Check for console errors: mcp__browser-devtools__browser_get_console_logs
+          3. Take screenshots with browser_take_screenshot
+          4. Check for console errors with browser_get_console_logs
           Save screenshots to .scratch/screenshots/ and reference them in the summary.
           You MUST take at least one screenshot for any change that affects the UI.
 
           FOR DATABASE CHANGES: Use the chipp-database MCP tools:
           1. Run the migration: deno task db:migrate
-          2. Verify with mcp__chipp-database__db_query or db_describe_table
+          2. Verify with db_query or db_describe_table
           Paste the query results in the summary as proof.
 
           FOR API CHANGES: The API server is running at http://localhost:8000.
           Use curl to hit the actual running endpoints and paste the responses.
-          Also check browser_get_network_requests if the UI calls these endpoints.
-
-          FOR LOGIC/REFACTOR CHANGES: Show before/after code snippets or test output
-          that proves the change works correctly.
-
-          ## Potential Risks
-          <List anything a reviewer should pay attention to: breaking changes,
-          performance implications, security considerations, edge cases. Say "None identified" if none.>
-          ```
 
           CRITICAL STOP CONDITIONS:
           If you encounter ANY of the following, STOP IMMEDIATELY:
@@ -389,10 +364,10 @@ jobs:
 
           IMPORTANT: Working around blockers instead of reporting them is a FAILURE.
           It is better to stop and ask for help than to produce incorrect or incomplete work.
-          \"\"\"
+          """
           with open('.scratch/implementation-prompt.md', 'w') as f:
               f.write(prompt)
-          "
+          PYEOF
 
       - name: Run Implementation
         id: implement
@@ -471,12 +446,13 @@ jobs:
           PROMPT=$(cat .scratch/implementation-prompt.md)
 
           # Use stream-json for real-time output (--print text mode buffers everything)
-          # Raw JSON -> tee to raw log -> filter to readable text -> tee to readable log + stdout
+          # stdbuf -oL forces line buffering on tee; python3 -u disables Python buffering
+          # Pipeline: raw JSON -> tee to raw log -> filter to readable text -> tee to readable log + stdout
           claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
             --mcp-config .mcp.json "$PROMPT" 2>&1 \
-            | tee .scratch/claude-raw.log \
-            | python3 .scratch/stream-filter.py \
-            | tee .scratch/claude-output.log
+            | stdbuf -oL tee .scratch/claude-raw.log \
+            | python3 -u .scratch/stream-filter.py \
+            | stdbuf -oL tee .scratch/claude-output.log
 
           # Stop heartbeat when Claude finishes
           [ -n "${HEARTBEAT_PID:-}" ] && kill $HEARTBEAT_PID 2>/dev/null || true
@@ -542,9 +518,9 @@ jobs:
 
           claude --print --verbose --output-format stream-json --dangerously-skip-permissions \
             --mcp-config .mcp.json "$FIX_PROMPT" 2>&1 \
-            | tee -a .scratch/claude-raw.log \
-            | python3 .scratch/stream-filter.py \
-            | tee -a .scratch/claude-output.log
+            | stdbuf -oL tee -a .scratch/claude-raw.log \
+            | python3 -u .scratch/stream-filter.py \
+            | stdbuf -oL tee -a .scratch/claude-output.log
 
       - name: Re-verify after fix
         if: steps.verify.outputs.checks_failed == 'true'
