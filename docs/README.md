@@ -4,6 +4,10 @@ This folder contains documentation for the chipp-issues application - an issue t
 
 ## Table of Contents
 
+### Getting Started
+
+- [Agent Orchestration Guide](./agent-orchestration.md) - How to manage autonomous Claude Code agents (start here)
+
 ### Integrations
 
 - [Sentry Integration](./sentry-integration.md) - Automatic issue creation from production errors
