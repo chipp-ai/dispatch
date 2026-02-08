@@ -431,25 +431,32 @@ jobs:
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
 
-          # Monitor file growth (bytes AND lines) in foreground
+          # Stream new output lines through the human-readable filter every 10s
+          PREV_LINES=0
           while kill -0 $CLAUDE_PID 2>/dev/null; do
-            sleep 15
-            CURR_SIZE=$(stat -c%s .scratch/claude-raw.log 2>/dev/null || echo 0)
+            sleep 10
+            [ -f .scratch/claude-raw.log ] || continue
             CURR_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
-            echo "[$(date -u +%H:%M:%S)] Claude running... (${CURR_SIZE} bytes, ${CURR_LINES} lines)"
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+              PREV_LINES=$CURR_LINES
+            fi
           done
           wait $CLAUDE_PID
           CLAUDE_EXIT=$?
 
+          # Flush any remaining lines after exit
+          [ -f .scratch/claude-raw.log ] && {
+            FINAL_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+              sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py
+            fi
+          }
+
           echo ""
           echo "=== Claude exited with code $CLAUDE_EXIT ==="
-          FINAL_SIZE=$(stat -c%s .scratch/claude-raw.log 2>/dev/null || echo 0)
-          FINAL_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
-          echo "Output: ${FINAL_SIZE} bytes, ${FINAL_LINES} lines"
-          echo "=== First 50 lines ==="
-          head -50 .scratch/claude-raw.log
-          echo "=== Last 50 lines ==="
-          tail -50 .scratch/claude-raw.log
 
           # Generate readable log from raw JSON
           python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
