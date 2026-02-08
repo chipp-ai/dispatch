@@ -1,0 +1,273 @@
+name: PRD Investigation
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Chipp Issues issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. CHIPP-456)"
+        required: true
+        type: string
+      title:
+        description: "Issue title / PRD summary"
+        required: true
+        type: string
+      description:
+        description: "Full PRD or feature description (markdown)"
+        required: true
+        type: string
+      plan_feedback:
+        description: "Human feedback from a previous plan rejection (optional)"
+        required: false
+        type: string
+
+# Only one investigation per issue at a time
+concurrency:
+  group: prd-investigate-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    name: Investigate ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    # SECURITY: All user-provided inputs are passed through env vars to
+    # prevent command injection. They are NEVER interpolated in run: blocks.
+    # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CHIPP_ISSUES_API_URL: ${{ secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_PLAN_FEEDBACK: ${{ inputs.plan_feedback }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Notify Chipp Issues - Investigating
+        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          PAYLOAD=$(jq -n \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            --arg agent_status "investigating" \
+            --arg spawn_type "investigate" \
+            '{spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at, agent_status: $agent_status, spawn_type: $spawn_type}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+
+      - name: Build investigation prompt
+        run: |
+          mkdir -p .scratch
+
+          # Build prompt file using jq for safe string handling (no shell interpolation of inputs)
+          jq -n \
+            --arg identifier "$INPUT_ISSUE_IDENTIFIER" \
+            --arg title "$INPUT_TITLE" \
+            --arg description "$INPUT_DESCRIPTION" \
+            --arg feedback "$INPUT_PLAN_FEEDBACK" \
+            '{identifier: $identifier, title: $title, description: $description, feedback: $feedback}' \
+            > .scratch/prompt-data.json
+
+          python3 -c "
+          import json, sys
+          d = json.load(open('.scratch/prompt-data.json'))
+          feedback_section = ''
+          if d['feedback']:
+              feedback_section = f\"\"\"\n\nPrevious Plan Feedback (address these concerns):\n{d['feedback']}\n\"\"\"
+          prompt = f\"\"\"You are autonomously investigating a feature request / PRD for the chipp-deno project.
+          Your goal is to explore the codebase and produce a STRUCTURED IMPLEMENTATION PLAN.
+          You are READ-ONLY -- do NOT create branches, modify files, or write code.
+
+          Issue: {d['identifier']} - {d['title']}
+
+          Description / PRD:
+          {d['description']}{feedback_section}
+
+          Instructions:
+          1. Read CLAUDE.md first to understand the codebase
+          2. Explore all relevant files, services, routes, components, and database schemas
+          3. Check for existing patterns, utilities, and conventions
+          4. Identify environment variables, secrets, or external dependencies needed
+          5. Write a STRUCTURED PLAN to .scratch/plan.md with these sections:
+
+          ## Summary
+          Brief description of what will be built.
+
+          ## Files to Create
+          - path/to/new/file.ts -- purpose
+
+          ## Files to Modify
+          - path/to/existing/file.ts -- what changes and why
+
+          ## Database Changes
+          Migration SQL or \"none\"
+
+          ## API Changes
+          New or modified endpoints
+
+          ## UI Changes
+          New or modified components
+
+          ## Dependencies
+          New packages, env vars, secrets needed
+
+          ## Testing Strategy
+          How to verify the implementation works
+
+          ## Risks
+          What could go wrong, edge cases
+
+          ## Stop Conditions
+          Conditions under which the implementation agent should STOP and report a blocker:
+          - List specific scenarios (missing env vars, unclear requirements, etc.)
+
+          ## Estimated Complexity
+          Simple / Medium / Complex
+
+          6. Do NOT attempt any code changes
+          7. Do NOT create branches
+          8. If you cannot understand the requirements well enough to plan, write that in the plan
+          \"\"\"
+          with open('.scratch/investigation-prompt.md', 'w') as f:
+              f.write(prompt)
+          "
+
+      - name: Run Investigation
+        id: investigate
+        run: |
+          PROMPT=$(cat .scratch/investigation-prompt.md)
+          claude --print --dangerously-skip-permissions "$PROMPT" 2>&1 | tee .scratch/claude-output.log
+
+          # Ensure plan exists even if Claude didn't create one
+          if [ ! -f .scratch/plan.md ]; then
+            {
+              echo "# Investigation Plan"
+              echo ""
+              echo "Claude Code did not produce a structured plan. Raw output saved to claude-output.log."
+              echo ""
+              echo '```'
+              tail -100 .scratch/claude-output.log
+              echo '```'
+            } > .scratch/plan.md
+          fi
+
+      - name: Post Plan to Chipp Issues
+        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ ! -f .scratch/plan.md ]; then
+            echo "No plan file found." > .scratch/plan.md
+          fi
+
+          if [ "$JOB_STATUS" = "success" ]; then
+            # Post the plan for review
+            PLAN_PAYLOAD=$(jq -n \
+              --arg action "submit" \
+              --rawfile content .scratch/plan.md \
+              '{action: $action, content: $content}')
+
+            curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/plan" \
+              -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$PLAN_PAYLOAD" || echo "Warning: Failed to post plan (non-fatal)"
+
+            SPAWN_STATUS="completed"
+          else
+            SPAWN_STATUS="failed"
+          fi
+
+          # Post activity log
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "investigation_complete" \
+            --rawfile content .scratch/plan.md \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_investigate"}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity (non-fatal)"
+
+          # Update spawn status
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Report failure
+        if: failure() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "investigation_failed" \
+            --arg content "PRD investigation workflow failed." \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, error_tail: $error_tail}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || true
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg agent_status "idle" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || true
