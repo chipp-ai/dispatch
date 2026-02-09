@@ -51,6 +51,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const [_repoOwner, _repoName] = (process.env.GITHUB_REPO || "").split("/");
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || _repoOwner || "";
 const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || _repoName || "";
+const GITHUB_REF = process.env.GITHUB_REF || "main";
 
 // Workflow IDs for each type
 const WORKFLOW_IDS: Record<WorkflowType, string> = {
@@ -271,7 +272,7 @@ export async function dispatchWorkflow(
       "X-GitHub-Api-Version": "2022-11-28",
     },
     body: JSON.stringify({
-      ref: "staging",
+      ref: GITHUB_REF,
       inputs,
     }),
   });
