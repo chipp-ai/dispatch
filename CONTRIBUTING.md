@@ -47,3 +47,12 @@ charts/           -- Kubernetes deployment examples
 - SQL queries use `$1, $2` parameterized placeholders (never string interpolation)
 - Agent workflows communicate back to Dispatch via the REST API
 - Terminal output is streamed via WebSocket + SSE
+
+## Upstream relationship
+
+This repo is the canonical open-source home of Dispatch. The maintainers also run a copy inside a private monorepo, synced via `git subtree`. When your PR is merged here, it gets pulled into the internal codebase automatically.
+
+This means:
+- **Your PRs go here** -- open PRs against `main` on this repo
+- Internal improvements flow back here too -- the maintainers push internal changes to this repo periodically
+- You don't need to know or care about the monorepo -- just work against this repo normally
