@@ -13,7 +13,7 @@ function getOpenAIClient(): OpenAI {
   }
   return openaiClient;
 }
-const EMBEDDING_DIMENSIONS = 3072;
+const EMBEDDING_DIMENSIONS = 1536;
 
 export interface EmbeddingResult {
   vector: number[];
