@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     // Find the agent
     const agent = await db.queryOne<{ id: string; workspace_id: string }>(
-      `SELECT id, workspace_id FROM chipp_agent WHERE LOWER(name) = LOWER($1)`,
+      `SELECT id, workspace_id FROM dispatch_agent WHERE LOWER(name) = LOWER($1)`,
       [agentName]
     );
 
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
 
     // Find the agent
     const agent = await db.queryOne<{ id: string }>(
-      `SELECT id FROM chipp_agent WHERE LOWER(name) = LOWER($1)`,
+      `SELECT id FROM dispatch_agent WHERE LOWER(name) = LOWER($1)`,
       [agentName]
     );
 
@@ -133,7 +133,7 @@ export async function DELETE(request: NextRequest) {
 
     // Find the agent
     const agent = await db.queryOne<{ id: string }>(
-      `SELECT id FROM chipp_agent WHERE LOWER(name) = LOWER($1)`,
+      `SELECT id FROM dispatch_agent WHERE LOWER(name) = LOWER($1)`,
       [agentName]
     );
 
@@ -146,7 +146,7 @@ export async function DELETE(request: NextRequest) {
 
     // Clear webhook fields
     await db.query(
-      `UPDATE chipp_agent SET webhook_url = NULL, webhook_secret = NULL, updated_at = NOW() WHERE id = $1`,
+      `UPDATE dispatch_agent SET webhook_url = NULL, webhook_secret = NULL, updated_at = NOW() WHERE id = $1`,
       [agent.id]
     );
 

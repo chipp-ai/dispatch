@@ -1244,7 +1244,7 @@ export default function IssuePageClient() {
                 opacity="0.6"
               />
             </svg>
-            <span>Chipp</span>
+            <span>Dispatch</span>
           </Link>
           <svg
             className="w-4 h-4 text-[#404040]"
@@ -2326,7 +2326,8 @@ export default function IssuePageClient() {
                       issue.spawn_type === "implement"
                         ? "prd-implement.yml"
                         : "prd-investigate.yml";
-                    return `https://github.com/BenchmarkAI/chipp-deno/actions/workflows/${workflow}`;
+                    const repo = process.env.NEXT_PUBLIC_GITHUB_REPO || "";
+                    return repo ? `https://github.com/${repo}/actions/workflows/${workflow}` : "#";
                   })()}
                   target="_blank"
                   rel="noopener noreferrer"

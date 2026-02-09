@@ -111,26 +111,37 @@ const DEFAULT_LABELS = [
 ];
 
 export async function getOrCreateDefaultWorkspace(): Promise<Workspace> {
+  const issuePrefix = process.env.DEFAULT_ISSUE_PREFIX || "DISPATCH";
+  const workspaceName = process.env.DEFAULT_WORKSPACE_NAME || "My Workspace";
+
   let workspace = await db.queryOne<Workspace>(
-    `SELECT * FROM chipp_workspace WHERE issue_prefix = $1`,
-    ["CHIPP"]
+    `SELECT * FROM dispatch_workspace WHERE issue_prefix = $1`,
+    [issuePrefix]
   );
 
   if (workspace) {
     return workspace;
   }
 
+  // Also check for legacy "CHIPP" prefix from pre-rename deployments
+  if (issuePrefix !== "CHIPP") {
+    workspace = await db.queryOne<Workspace>(
+      `SELECT * FROM dispatch_workspace WHERE issue_prefix = 'CHIPP'`
+    );
+    if (workspace) return workspace;
+  }
+
   const workspaceId = uuidv4();
 
   await db.query(
-    `INSERT INTO chipp_workspace (id, name, issue_prefix, next_issue_number, created_at)
+    `INSERT INTO dispatch_workspace (id, name, issue_prefix, next_issue_number, created_at)
      VALUES ($1, $2, $3, $4, NOW())`,
-    [workspaceId, "Chipp Workspace", "CHIPP", 1]
+    [workspaceId, workspaceName, issuePrefix, 1]
   );
 
   for (const status of DEFAULT_STATUSES) {
     await db.query(
-      `INSERT INTO chipp_status (id, workspace_id, name, color, position, is_triage, is_closed)
+      `INSERT INTO dispatch_status (id, workspace_id, name, color, position, is_triage, is_closed)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         uuidv4(),
@@ -146,14 +157,14 @@ export async function getOrCreateDefaultWorkspace(): Promise<Workspace> {
 
   for (const label of DEFAULT_LABELS) {
     await db.query(
-      `INSERT INTO chipp_label (id, workspace_id, name, color)
+      `INSERT INTO dispatch_label (id, workspace_id, name, color)
        VALUES ($1, $2, $3, $4)`,
       [uuidv4(), workspaceId, label.name, label.color]
     );
   }
 
   workspace = await db.queryOne<Workspace>(
-    `SELECT * FROM chipp_workspace WHERE id = $1`,
+    `SELECT * FROM dispatch_workspace WHERE id = $1`,
     [workspaceId]
   );
 
@@ -162,14 +173,14 @@ export async function getOrCreateDefaultWorkspace(): Promise<Workspace> {
 
 export async function getStatuses(workspaceId: string): Promise<Status[]> {
   return db.query<Status>(
-    `SELECT * FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC`,
+    `SELECT * FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC`,
     [workspaceId]
   );
 }
 
 export async function getLabels(workspaceId: string): Promise<Label[]> {
   return db.query<Label>(
-    `SELECT * FROM chipp_label WHERE workspace_id = $1 ORDER BY name ASC`,
+    `SELECT * FROM dispatch_label WHERE workspace_id = $1 ORDER BY name ASC`,
     [workspaceId]
   );
 }
@@ -182,12 +193,12 @@ export async function createStatus(
 ): Promise<Status> {
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_status (id, workspace_id, name, color, position, is_triage, is_closed)
+    `INSERT INTO dispatch_status (id, workspace_id, name, color, position, is_triage, is_closed)
      VALUES ($1, $2, $3, $4, $5, false, false)`,
     [id, workspaceId, name, color, position]
   );
   return (await db.queryOne<Status>(
-    `SELECT * FROM chipp_status WHERE id = $1`,
+    `SELECT * FROM dispatch_status WHERE id = $1`,
     [id]
   ))!;
 }
@@ -199,11 +210,11 @@ export async function createLabel(
 ): Promise<Label> {
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_label (id, workspace_id, name, color)
+    `INSERT INTO dispatch_label (id, workspace_id, name, color)
      VALUES ($1, $2, $3, $4)`,
     [id, workspaceId, name, color]
   );
-  return (await db.queryOne<Label>(`SELECT * FROM chipp_label WHERE id = $1`, [
+  return (await db.queryOne<Label>(`SELECT * FROM dispatch_label WHERE id = $1`, [
     id,
   ]))!;
 }

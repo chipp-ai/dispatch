@@ -17,7 +17,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   // Resolve issue ID
   const issue = await db.queryOne<{ id: string }>(
-    `SELECT id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT id FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [id]
   );
 

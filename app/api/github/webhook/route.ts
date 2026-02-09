@@ -23,8 +23,8 @@ import { broadcastBoardEvent } from "@/lib/services/boardBroadcast";
 import {
   extractSentryIdsFromPR,
   findIssuesForSentryIds,
-  extractChippIssueIdsFromPR,
-  findIssuesForChippIds,
+  extractDispatchIssueIdsFromPR,
+  findIssuesForDispatchIds,
   createFixAttempt,
   markFixAttemptsDeployed,
 } from "@/lib/services/fixTrackingService";
@@ -468,7 +468,7 @@ async function handlePRMerged(
   }
 }
 
-// Handle fix tracking for PRs that reference Sentry issue IDs or Chipp issue identifiers
+// Handle fix tracking for PRs that reference Sentry issue IDs or Dispatch issue identifiers
 async function handleFixTrackingForMergedPR(pr: PRData) {
   const issueIdsToTrack: Array<{ issueId: string; label: string }> = [];
 
@@ -487,15 +487,15 @@ async function handleFixTrackingForMergedPR(pr: PRData) {
     }
   }
 
-  // 2. Extract CHIPP-XXX identifiers (from auto-investigate PRs)
-  const chippIds = extractChippIssueIdsFromPR(pr.title, pr.body);
-  if (chippIds.length > 0) {
+  // 2. Extract issue identifiers (from auto-investigate PRs)
+  const dispatchIds = extractDispatchIssueIdsFromPR(pr.title, pr.body);
+  if (dispatchIds.length > 0) {
     console.log(
-      `[GitHub Webhook] Found Chipp IDs in PR #${pr.number}: ${chippIds.join(", ")}`
+      `[GitHub Webhook] Found issue IDs in PR #${pr.number}: ${dispatchIds.join(", ")}`
     );
-    const chippLinked = await findIssuesForChippIds(chippIds);
-    for (const linked of chippLinked) {
-      // Avoid duplicates if same issue found via both Sentry and Chipp ID
+    const dispatchLinked = await findIssuesForDispatchIds(dispatchIds);
+    for (const linked of dispatchLinked) {
+      // Avoid duplicates if same issue found via both Sentry and issue ID
       if (!issueIdsToTrack.some((t) => t.issueId === linked.issueId)) {
         issueIdsToTrack.push({
           issueId: linked.issueId,

@@ -42,7 +42,7 @@ export async function logSentryEvent(
   const id = uuidv4();
 
   const result = await db.query<SentryEventLog>(
-    `INSERT INTO chipp_sentry_event_log
+    `INSERT INTO dispatch_sentry_event_log
      (id, external_issue_id, sentry_issue_id, sentry_short_id, event_count, user_count, release_sha, first_seen, last_seen)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
@@ -73,7 +73,7 @@ export async function getEventLogsForExternalIssue(
   externalIssueId: string
 ): Promise<SentryEventLog[]> {
   return db.query<SentryEventLog>(
-    `SELECT * FROM chipp_sentry_event_log
+    `SELECT * FROM dispatch_sentry_event_log
      WHERE external_issue_id = $1
      ORDER BY created_at DESC`,
     [externalIssueId]
@@ -89,7 +89,7 @@ export async function getEventLogsAfter(
   after: Date
 ): Promise<SentryEventLog[]> {
   return db.query<SentryEventLog>(
-    `SELECT * FROM chipp_sentry_event_log
+    `SELECT * FROM dispatch_sentry_event_log
      WHERE external_issue_id = $1
        AND created_at > $2
      ORDER BY created_at ASC`,
@@ -104,7 +104,7 @@ export async function getLatestEventLog(
   externalIssueId: string
 ): Promise<SentryEventLog | null> {
   return db.queryOne<SentryEventLog>(
-    `SELECT * FROM chipp_sentry_event_log
+    `SELECT * FROM dispatch_sentry_event_log
      WHERE external_issue_id = $1
      ORDER BY created_at DESC
      LIMIT 1`,
@@ -147,7 +147,7 @@ export async function hasEventsAfterDeploy(
 ): Promise<boolean> {
   const result = await db.queryOne<{ exists: boolean }>(
     `SELECT EXISTS(
-      SELECT 1 FROM chipp_sentry_event_log
+      SELECT 1 FROM dispatch_sentry_event_log
       WHERE external_issue_id = $1
         AND created_at > $2
     ) as exists`,
@@ -165,7 +165,7 @@ export async function getEventLogsByRelease(
   releaseSha: string
 ): Promise<SentryEventLog[]> {
   return db.query<SentryEventLog>(
-    `SELECT * FROM chipp_sentry_event_log
+    `SELECT * FROM dispatch_sentry_event_log
      WHERE release_sha = $1
      ORDER BY created_at DESC`,
     [releaseSha]
@@ -183,7 +183,7 @@ export async function cleanupOldEventLogs(
   cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
   const result = await db.query<{ count: number }>(
-    `DELETE FROM chipp_sentry_event_log
+    `DELETE FROM dispatch_sentry_event_log
      WHERE created_at < $1
      RETURNING id`,
     [cutoffDate]

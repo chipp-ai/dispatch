@@ -21,26 +21,26 @@ export interface CreateExternalIssueInput {
 }
 
 /**
- * Find an existing chipp issue linked to an external issue
+ * Find an existing Dispatch issue linked to an external issue
  */
 export async function findByExternalId(
   source: ExternalSource,
   externalId: string
 ): Promise<ExternalIssue | null> {
   return db.queryOne<ExternalIssue>(
-    `SELECT * FROM chipp_external_issue WHERE source = $1 AND external_id = $2`,
+    `SELECT * FROM dispatch_external_issue WHERE source = $1 AND external_id = $2`,
     [source, externalId]
   );
 }
 
 /**
- * Link an external issue to a chipp issue
+ * Link an external issue to a Dispatch issue
  */
 export async function linkExternalIssue(
   input: CreateExternalIssueInput
 ): Promise<ExternalIssue> {
   const result = await db.query<ExternalIssue>(
-    `INSERT INTO chipp_external_issue (issue_id, source, external_id, external_url, metadata)
+    `INSERT INTO dispatch_external_issue (issue_id, source, external_id, external_url, metadata)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
@@ -55,19 +55,19 @@ export async function linkExternalIssue(
 }
 
 /**
- * Get all external links for a chipp issue
+ * Get all external links for a Dispatch issue
  */
 export async function getExternalLinksForIssue(
   issueId: string
 ): Promise<ExternalIssue[]> {
   return db.query<ExternalIssue>(
-    `SELECT * FROM chipp_external_issue WHERE issue_id = $1 ORDER BY created_at ASC`,
+    `SELECT * FROM dispatch_external_issue WHERE issue_id = $1 ORDER BY created_at ASC`,
     [issueId]
   );
 }
 
 /**
- * Check if an external issue is already linked to any chipp issue
+ * Check if an external issue is already linked to any Dispatch issue
  */
 export async function isExternalIssueLinked(
   source: ExternalSource,

@@ -51,7 +51,7 @@ export async function getOrCreateCustomerUser(params: {
 }): Promise<CustomerUser> {
   // Check if user exists
   const existing = await db.queryOne<RawCustomerUser>(
-    `SELECT * FROM chipp_customer_user
+    `SELECT * FROM dispatch_customer_user
      WHERE customer_id = $1 AND slack_user_id = $2`,
     [params.customerId, params.slackUserId]
   );
@@ -66,7 +66,7 @@ export async function getOrCreateCustomerUser(params: {
 
     if (needsUpdate) {
       const updated = await db.queryOne<RawCustomerUser>(
-        `UPDATE chipp_customer_user
+        `UPDATE dispatch_customer_user
          SET slack_display_name = $1,
              email = COALESCE($2, email),
              slack_avatar_url = COALESCE($3, slack_avatar_url),
@@ -87,7 +87,7 @@ export async function getOrCreateCustomerUser(params: {
 
   // Create new user
   const newUser = await db.queryOne<RawCustomerUser>(
-    `INSERT INTO chipp_customer_user (
+    `INSERT INTO dispatch_customer_user (
        id, customer_id, slack_user_id, slack_display_name, slack_avatar_url, email,
        email_notifications_enabled, created_at, updated_at
      ) VALUES (
@@ -112,7 +112,7 @@ export async function getCustomerUserById(
   id: string
 ): Promise<CustomerUser | null> {
   const user = await db.queryOne<RawCustomerUser>(
-    `SELECT * FROM chipp_customer_user WHERE id = $1`,
+    `SELECT * FROM dispatch_customer_user WHERE id = $1`,
     [id]
   );
   return user ? mapToCustomerUser(user) : null;
@@ -126,7 +126,7 @@ export async function getUsersForNotification(
   customerId: string
 ): Promise<CustomerUser[]> {
   const users = await db.query<RawCustomerUser>(
-    `SELECT * FROM chipp_customer_user
+    `SELECT * FROM dispatch_customer_user
      WHERE customer_id = $1
        AND email_notifications_enabled = true
        AND email IS NOT NULL`,
@@ -143,7 +143,7 @@ export async function updateEmailNotificationPreference(
   enabled: boolean
 ): Promise<CustomerUser | null> {
   const updated = await db.queryOne<RawCustomerUser>(
-    `UPDATE chipp_customer_user
+    `UPDATE dispatch_customer_user
      SET email_notifications_enabled = $1, updated_at = NOW()
      WHERE id = $2
      RETURNING *`,
@@ -159,7 +159,7 @@ export async function listCustomerUsers(
   customerId: string
 ): Promise<CustomerUser[]> {
   const users = await db.query<RawCustomerUser>(
-    `SELECT * FROM chipp_customer_user
+    `SELECT * FROM dispatch_customer_user
      WHERE customer_id = $1
      ORDER BY created_at ASC`,
     [customerId]

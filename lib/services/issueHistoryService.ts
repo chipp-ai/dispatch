@@ -51,7 +51,7 @@ export async function createHistoryEntry(
   input: CreateHistoryInput
 ): Promise<IssueHistoryEntry> {
   const result = await db.query<IssueHistoryEntry>(
-    `INSERT INTO chipp_issue_history (
+    `INSERT INTO dispatch_issue_history (
       id, issue_id, action, old_value, new_value, actor_type, actor_name, created_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, NOW()
@@ -79,14 +79,14 @@ export async function getIssueHistory(
 ): Promise<IssueHistoryEntry[]> {
   // First resolve the issue ID if identifier was provided
   const issue = await db.queryOne<{ id: string }>(
-    `SELECT id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT id FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [issueIdOrIdentifier]
   );
 
   if (!issue) return [];
 
   return db.query<IssueHistoryEntry>(
-    `SELECT * FROM chipp_issue_history
+    `SELECT * FROM dispatch_issue_history
      WHERE issue_id = $1
      ORDER BY created_at DESC
      LIMIT $2`,

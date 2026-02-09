@@ -20,13 +20,13 @@ function isValidHexColor(color: string): boolean {
 
 export async function listLabels(workspaceId: string): Promise<Label[]> {
   return db.query<Label>(
-    `SELECT * FROM chipp_label WHERE workspace_id = $1 ORDER BY name ASC`,
+    `SELECT * FROM dispatch_label WHERE workspace_id = $1 ORDER BY name ASC`,
     [workspaceId]
   );
 }
 
 export async function getLabel(labelId: string): Promise<Label | null> {
-  return db.queryOne<Label>(`SELECT * FROM chipp_label WHERE id = $1`, [
+  return db.queryOne<Label>(`SELECT * FROM dispatch_label WHERE id = $1`, [
     labelId,
   ]);
 }
@@ -36,7 +36,7 @@ export async function getLabelByName(
   name: string
 ): Promise<Label | null> {
   return db.queryOne<Label>(
-    `SELECT * FROM chipp_label WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+    `SELECT * FROM dispatch_label WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
     [workspaceId, name]
   );
 }
@@ -51,12 +51,12 @@ export async function createLabel(
 
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_label (id, workspace_id, name, color)
+    `INSERT INTO dispatch_label (id, workspace_id, name, color)
      VALUES ($1, $2, $3, $4)`,
     [id, workspaceId, input.name, input.color]
   );
 
-  return (await db.queryOne<Label>(`SELECT * FROM chipp_label WHERE id = $1`, [
+  return (await db.queryOne<Label>(`SELECT * FROM dispatch_label WHERE id = $1`, [
     id,
   ]))!;
 }
@@ -73,26 +73,26 @@ export async function updateLabel(
   }
 
   await db.query(
-    `UPDATE chipp_label SET
+    `UPDATE dispatch_label SET
       name = COALESCE($1, name),
       color = COALESCE($2, color)
     WHERE id = $3`,
     [input.name, input.color, labelId]
   );
 
-  return (await db.queryOne<Label>(`SELECT * FROM chipp_label WHERE id = $1`, [
+  return (await db.queryOne<Label>(`SELECT * FROM dispatch_label WHERE id = $1`, [
     labelId,
   ]))!;
 }
 
 export async function deleteLabel(labelId: string): Promise<boolean> {
   // First remove label from all issues
-  await db.query(`DELETE FROM chipp_issue_label WHERE label_id = $1`, [
+  await db.query(`DELETE FROM dispatch_issue_label WHERE label_id = $1`, [
     labelId,
   ]);
 
   const result = await db.query(
-    `DELETE FROM chipp_label WHERE id = $1 RETURNING id`,
+    `DELETE FROM dispatch_label WHERE id = $1 RETURNING id`,
     [labelId]
   );
   return result.length > 0;

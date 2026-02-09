@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     // Preview mode - just return stats
     if (dryRun) {
       const existingLinks = await db.query<{ external_id: string }>(
-        `SELECT external_id FROM chipp_external_issue WHERE source = 'linear'`
+        `SELECT external_id FROM dispatch_external_issue WHERE source = 'linear'`
       );
       const existingIds = new Set(existingLinks.map((l) => l.external_id));
 
@@ -117,13 +117,13 @@ export async function POST(request: NextRequest) {
       );
 
       // Delete all issues in this workspace
-      await db.query(`DELETE FROM chipp_issue WHERE workspace_id = $1`, [
+      await db.query(`DELETE FROM dispatch_issue WHERE workspace_id = $1`, [
         workspace.id,
       ]);
 
       // Reset issue counter
       await db.query(
-        `UPDATE chipp_workspace SET next_issue_number = 1 WHERE id = $1`,
+        `UPDATE dispatch_workspace SET next_issue_number = 1 WHERE id = $1`,
         [workspace.id]
       );
 
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
 
     // Pre-fetch existing statuses
     const existingStatuses = await db.query<{ id: string; name: string }>(
-      `SELECT id, name FROM chipp_status WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_status WHERE workspace_id = $1`,
       [workspace.id]
     );
     existingStatuses.forEach((s) =>
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
 
     // Pre-fetch existing labels
     const existingLabels = await db.query<{ id: string; name: string }>(
-      `SELECT id, name FROM chipp_label WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_label WHERE workspace_id = $1`,
       [workspace.id]
     );
     existingLabels.forEach((l) => labelCache.set(l.name.toLowerCase(), l.id));
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
     // Create agents for assignees
     const agentCache = new Map<string, string>();
     const existingAgents = await db.query<{ id: string; name: string }>(
-      `SELECT id, name FROM chipp_agent WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_agent WHERE workspace_id = $1`,
       [workspace.id]
     );
     existingAgents.forEach((a) => agentCache.set(a.name.toLowerCase(), a.id));
@@ -240,7 +240,7 @@ export async function POST(request: NextRequest) {
           if (!assigneeId) {
             const agentId = uuidv4();
             await db.query(
-              `INSERT INTO chipp_agent (id, workspace_id, name, description, is_active, created_at)
+              `INSERT INTO dispatch_agent (id, workspace_id, name, description, is_active, created_at)
                VALUES ($1, $2, $3, $4, true, NOW())`,
               [
                 agentId,
@@ -260,7 +260,7 @@ export async function POST(request: NextRequest) {
         if (existingLink && mode === "upsert") {
           // Update existing issue
           await db.query(
-            `UPDATE chipp_issue SET
+            `UPDATE dispatch_issue SET
               title = $1,
               description = $2,
               status_id = $3,
@@ -285,12 +285,12 @@ export async function POST(request: NextRequest) {
           );
 
           // Update labels
-          await db.query(`DELETE FROM chipp_issue_label WHERE issue_id = $1`, [
+          await db.query(`DELETE FROM dispatch_issue_label WHERE issue_id = $1`, [
             existingLink.issue_id,
           ]);
           for (const labelId of labelIds) {
             await db.query(
-              `INSERT INTO chipp_issue_label (issue_id, label_id)
+              `INSERT INTO dispatch_issue_label (issue_id, label_id)
                VALUES ($1, $2) ON CONFLICT DO NOTHING`,
               [existingLink.issue_id, labelId]
             );
@@ -308,7 +308,7 @@ export async function POST(request: NextRequest) {
           );
 
           await db.query(
-            `INSERT INTO chipp_issue (
+            `INSERT INTO dispatch_issue (
               id, identifier, issue_number, title, description,
               status_id, priority, assignee_id, workspace_id,
               embedding, embedding_provider, embedding_model,
@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
           // Add labels
           for (const labelId of labelIds) {
             await db.query(
-              `INSERT INTO chipp_issue_label (issue_id, label_id)
+              `INSERT INTO dispatch_issue_label (issue_id, label_id)
                VALUES ($1, $2) ON CONFLICT DO NOTHING`,
               [issueId, labelId]
             );
@@ -365,11 +365,11 @@ export async function POST(request: NextRequest) {
 
     // Update workspace issue counter to max issue number + 1
     const maxIssueNum = await db.queryOne<{ max_num: number }>(
-      `SELECT COALESCE(MAX(issue_number), 0) as max_num FROM chipp_issue WHERE workspace_id = $1`,
+      `SELECT COALESCE(MAX(issue_number), 0) as max_num FROM dispatch_issue WHERE workspace_id = $1`,
       [workspace.id]
     );
     await db.query(
-      `UPDATE chipp_workspace SET next_issue_number = $1 WHERE id = $2`,
+      `UPDATE dispatch_workspace SET next_issue_number = $1 WHERE id = $2`,
       [(maxIssueNum?.max_num || 0) + 1, workspace.id]
     );
 
@@ -408,12 +408,12 @@ export async function GET() {
 
     // Count existing linked issues
     const linkedCount = await db.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM chipp_external_issue WHERE source = 'linear'`
+      `SELECT COUNT(*) as count FROM dispatch_external_issue WHERE source = 'linear'`
     );
 
     // Count total issues
     const totalCount = await db.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM chipp_issue`
+      `SELECT COUNT(*) as count FROM dispatch_issue`
     );
 
     return NextResponse.json({

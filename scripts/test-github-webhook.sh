@@ -64,7 +64,7 @@ PR_OPENED_PAYLOAD=$(cat <<'EOF'
     "number": 9999,
     "title": "fix: resolve authentication timeout issue (ENG-1234)",
     "body": "## Summary\nThis PR fixes the authentication timeout issue reported in ENG-1234.\n\n## Changes\n- Extended token TTL\n- Added retry logic\n\n## Test Plan\n- Verified locally\n- Added unit tests",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/9999",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/9999",
     "state": "open",
     "merged": false,
     "merged_at": null,
@@ -80,11 +80,11 @@ PR_OPENED_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
@@ -107,7 +107,7 @@ PR_MERGED_STAGING_PAYLOAD=$(cat <<'EOF'
     "number": 9999,
     "title": "fix: resolve authentication timeout issue (ENG-1234)",
     "body": "## Summary\nThis PR fixes the authentication timeout issue reported in ENG-1234.",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/9999",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/9999",
     "state": "closed",
     "merged": true,
     "merged_at": "2025-01-15T10:30:00Z",
@@ -123,11 +123,11 @@ PR_MERGED_STAGING_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
@@ -150,7 +150,7 @@ RELEASE_PR_PAYLOAD=$(cat <<'EOF'
     "number": 10000,
     "title": "Release: Deploy staging to production",
     "body": "## Release Notes\n\nThis release includes:\n- ENG-1234: Auth timeout fix\n- ENG-1235: Performance improvements\n- ENG-1236: Bug fixes",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/10000",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/10000",
     "state": "closed",
     "merged": true,
     "merged_at": "2025-01-16T14:00:00Z",
@@ -166,11 +166,11 @@ RELEASE_PR_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
@@ -193,7 +193,7 @@ PR_CLOSED_PAYLOAD=$(cat <<'EOF'
     "number": 9998,
     "title": "feat: abandoned feature",
     "body": "This feature was abandoned",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/9998",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/9998",
     "state": "closed",
     "merged": false,
     "merged_at": null,
@@ -209,11 +209,11 @@ PR_CLOSED_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
@@ -236,7 +236,7 @@ PR_EDITED_PAYLOAD=$(cat <<'EOF'
     "number": 9999,
     "title": "fix: resolve authentication timeout issue (ENG-1234) - Updated",
     "body": "## Summary\nUpdated description with more details.\n\nFixes ENG-1234",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/9999",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/9999",
     "state": "open",
     "merged": false,
     "merged_at": null,
@@ -252,11 +252,11 @@ PR_EDITED_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
@@ -277,7 +277,7 @@ PUSH_PAYLOAD=$(cat <<'EOF'
   "before": "abc123",
   "after": "def456",
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo"
+    "full_name": "yourorg/yourrepo"
   }
 }
 EOF
@@ -318,7 +318,7 @@ PR_REOPENED_PAYLOAD=$(cat <<'EOF'
     "number": 9999,
     "title": "fix: resolve authentication timeout issue (ENG-1234)",
     "body": "Reopening this PR after addressing review comments",
-    "html_url": "https://github.com/BenchmarkAI/chipp-monorepo/pull/9999",
+    "html_url": "https://github.com/yourorg/yourrepo/pull/9999",
     "state": "open",
     "merged": false,
     "merged_at": null,
@@ -334,11 +334,11 @@ PR_REOPENED_PAYLOAD=$(cat <<'EOF'
     }
   },
   "repository": {
-    "full_name": "BenchmarkAI/chipp-monorepo",
+    "full_name": "yourorg/yourrepo",
     "owner": {
-      "login": "BenchmarkAI"
+      "login": "yourorg"
     },
-    "name": "chipp-monorepo"
+    "name": "yourrepo"
   }
 }
 EOF
