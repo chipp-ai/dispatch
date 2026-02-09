@@ -117,6 +117,7 @@ Type your request naturally. The orchestrator handles issue creation and agent d
 | \`auto-investigate\` | Automatic (Loki/Sentry errors) | Investigates production errors, attempts quick fix |
 | \`prd-investigate\` | Manual (click Investigate) | Deep investigation, produces implementation plan |
 | \`prd-implement\` | Manual or auto-chain | Implements the approved plan, opens PR |
+| \`qa-test\` | Manual (terminal or issue) | Tests an implementation end-to-end, writes test report |
 | \`deep-research\` | Manual (terminal or issue) | Web + codebase research, produces comprehensive report |
 
 ---
@@ -134,7 +135,7 @@ Research agents are different from investigation agents. Instead of writing code
 
 ### How It Works
 
-1. Type your research question in the terminal (or create an issue with a \`research\` label)
+1. Type your research question in the terminal
 2. The agent uses web search and codebase analysis
 3. A structured report is posted to the issue with findings, recommendations, and trade-offs
 4. No code changes are made -- research is purely informational
@@ -174,8 +175,8 @@ The **Fleet** widget in the sidebar shows real-time fleet health at a glance:
 
 - **Active count** (green pulsing dot) -- How many agents are running right now
 - **Budget bars** -- Daily spawn limits by workflow type:
-  - **EF** (Error Fix) -- Auto-spawned from Loki/Sentry errors (default: 10/day)
-  - **PRD** (PRD workflows) -- Human-initiated investigate/implement (default: 5/day)
+  - **EF** (Error Fix) -- Auto-spawned from Loki/Sentry errors
+  - **PRD** (PRD workflows) -- Human-initiated investigate/implement/research
 - **Daily cost** -- Total API spend today across all agent runs
 
 Click to expand and see:
@@ -190,7 +191,6 @@ If an agent is doing the wrong thing or taking too long:
 
 1. Go to the issue detail page
 2. Click the red **Cancel Agent** button (visible when an agent is running)
-3. Confirm cancellation
 
 This calls the GitHub Actions API to cancel the workflow run. The issue returns to idle state.
 
@@ -234,13 +234,12 @@ The **Agent Activity** section shows structured events:
 
 ### Daily Spawn Budgets
 
-Each workflow type has a daily spawn limit (configured in \`chipp_spawn_budget\` table):
+Each workflow type has a daily spawn limit (configured via environment variables):
 
-| Type | Default Limit | Purpose |
-|------|--------------|---------|
-| \`error_fix\` | 10/day | Prevent runaway auto-remediation |
-| \`prd_investigate\` | 5/day | Limit investigation costs |
-| \`prd_implement\` | 5/day | Limit implementation costs |
+| Type | Env Var | Purpose |
+|------|---------|---------|
+| \`error_fix\` | \`DAILY_SPAWN_BUDGET_ERROR\` | Prevent runaway auto-remediation |
+| \`prd\` (investigate, implement, QA, research) | \`DAILY_SPAWN_BUDGET_PRD\` | Limit human-initiated costs |
 
 The Fleet panel shows current usage. When a budget is exhausted, the bar turns red and new spawns of that type are blocked.
 
@@ -312,7 +311,6 @@ Portal links include a unique token for authentication. Share the link with cust
 
 | Key | Action | Context |
 |-----|--------|---------|
-| \`C\` | Create new issue | Board view |
 | \`/\` | Open search | Anywhere |
 | \`Ctrl+\\\`\` | Toggle terminal / board view | Anywhere |
 | \`Esc\` | Close modal / search | Modals |
