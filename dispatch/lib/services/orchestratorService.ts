@@ -15,7 +15,7 @@ import {
 } from "./orchestratorSessionService";
 import { getOrCreateDefaultWorkspace } from "./workspaceService";
 
-const MODEL = process.env.ORCHESTRATOR_MODEL || "claude-sonnet-4-5-20250929";
+const MODEL = process.env.ORCHESTRATOR_MODEL || "claude-opus-4-6";
 const MAX_TOKENS = parseInt(process.env.ORCHESTRATOR_MAX_TOKENS || "4096", 10);
 const MAX_TOOL_ROUNDS = parseInt(
   process.env.ORCHESTRATOR_MAX_TOOL_ROUNDS || "10",
