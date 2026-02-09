@@ -560,18 +560,29 @@ export async function searchIssuesSemantic(
   query: string,
   limit: number = 10
 ): Promise<
-  { id: string; identifier: string; title: string; similarity: number }[]
+  {
+    id: string;
+    identifier: string;
+    title: string;
+    description: string | null;
+    priority: string;
+    status_name: string;
+    status_color: string;
+    similarity: number;
+  }[]
 > {
   const embedding = await generateEmbeddingForIssue(query, null);
   const embeddingStr = vectorToString(embedding.vector);
 
   return db.query(
     `SELECT
-      id, identifier, title,
-      1 - (embedding <=> $1::vector) as similarity
-    FROM chipp_issue
-    WHERE workspace_id = $2 AND embedding IS NOT NULL
-    ORDER BY embedding <=> $1::vector
+      i.id, i.identifier, i.title, i.description, i.priority,
+      s.name as status_name, s.color as status_color,
+      1 - (i.embedding <=> $1::vector) as similarity
+    FROM chipp_issue i
+    JOIN chipp_status s ON i.status_id = s.id
+    WHERE i.workspace_id = $2 AND i.embedding IS NOT NULL
+    ORDER BY i.embedding <=> $1::vector
     LIMIT $3`,
     [embeddingStr, workspaceId, limit]
   );
