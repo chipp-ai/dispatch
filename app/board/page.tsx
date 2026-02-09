@@ -4,9 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import KanbanBoard from "@/components/KanbanBoard";
-import CreateIssueModal from "@/components/CreateIssueModal";
 import SearchModal from "@/components/SearchModal";
-import ImportEmptyState from "@/components/ImportEmptyState";
 import GuideOverlay, { hasSeenGuide, markGuideComplete } from "@/components/GuideOverlay";
 import Terminal from "@/components/terminal/Terminal";
 
@@ -56,7 +54,7 @@ interface BoardEvent {
   timestamp: string;
 }
 
-type ViewMode = "all" | "active" | "backlog";
+type ViewMode = "all" | "active" | "done";
 
 export default function BoardPage() {
   const router = useRouter();
@@ -64,7 +62,6 @@ export default function BoardPage() {
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [isConnected, setIsConnected] = useState(false);
@@ -219,25 +216,19 @@ export default function BoardPage() {
         return;
       }
 
-      if (e.key === "c" && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-        setShowCreateModal(true);
-      }
-
       if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setShowSearchModal(true);
       }
 
       if (e.key === "Escape") {
-        if (showCreateModal) setShowCreateModal(false);
         if (showSearchModal) setShowSearchModal(false);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showCreateModal, showSearchModal]);
+  }, [showSearchModal]);
 
   async function handleMoveIssue(issueId: string, newStatusId: string) {
     setIssues((prev) =>
@@ -260,27 +251,6 @@ export default function BoardPage() {
       console.error("Error moving issue:", error);
       fetchData();
     }
-  }
-
-  async function handleCreateIssue(data: {
-    title: string;
-    description: string;
-    priority: string;
-    statusId: string;
-    labelIds: string[];
-    assigneeName: string;
-  }) {
-    const res = await fetch("/api/issues", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-
-    if (!res.ok) {
-      throw new Error("Failed to create issue");
-    }
-
-    await fetchData();
   }
 
   async function handleReconcile() {
@@ -329,9 +299,9 @@ export default function BoardPage() {
         return sortedStatuses.filter(
           (s) => !s.is_closed && s.name.toLowerCase() !== "backlog"
         );
-      case "backlog":
-        // Show only backlog
-        return sortedStatuses.filter((s) => s.name.toLowerCase() === "backlog");
+      case "done":
+        // Show closed/done statuses
+        return sortedStatuses.filter((s) => s.is_closed || s.name.toLowerCase() === "done");
       default:
         return sortedStatuses;
     }
@@ -342,18 +312,18 @@ export default function BoardPage() {
     const activeStatuses = statuses.filter(
       (s) => !s.is_closed && s.name.toLowerCase() !== "backlog"
     );
-    const backlogStatuses = statuses.filter(
-      (s) => s.name.toLowerCase() === "backlog"
+    const doneStatuses = statuses.filter(
+      (s) => s.is_closed || s.name.toLowerCase() === "done"
     );
 
     const activeCount = issues.filter((i) =>
       activeStatuses.some((s) => s.id === i.status_id)
     ).length;
-    const backlogCount = issues.filter((i) =>
-      backlogStatuses.some((s) => s.id === i.status_id)
+    const doneCount = issues.filter((i) =>
+      doneStatuses.some((s) => s.id === i.status_id)
     ).length;
 
-    return { active: activeCount, backlog: backlogCount, all: issues.length };
+    return { active: activeCount, done: doneCount, all: issues.length };
   };
 
   if (loading) {
@@ -370,7 +340,6 @@ export default function BoardPage() {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
-        onCreateIssue={() => setShowCreateModal(true)}
         onOpenGuide={() => setShowGuide(true)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -399,7 +368,7 @@ export default function BoardPage() {
                   </svg>
                 </button>
 
-                <h1 className="text-[14px] font-semibold text-[#f5f5f5] hidden md:block">Issues</h1>
+                <h1 className="text-[14px] font-semibold text-[#f5f5f5] hidden md:block">Missions</h1>
 
                 {/* View tabs */}
                 <div className="flex items-center gap-0.5 md:gap-1 overflow-x-auto">
@@ -416,10 +385,10 @@ export default function BoardPage() {
                     onClick={() => setViewMode("active")}
                   />
                   <ViewTab
-                    label="Backlog"
-                    count={counts.backlog}
-                    active={viewMode === "backlog"}
-                    onClick={() => setViewMode("backlog")}
+                    label="Done"
+                    count={counts.done}
+                    active={viewMode === "done"}
+                    onClick={() => setViewMode("done")}
                   />
                 </div>
               </div>
@@ -483,44 +452,22 @@ export default function BoardPage() {
                   Display
                 </button>
 
-                {/* Mobile create button */}
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="p-1.5 text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215] rounded transition-colors md:hidden"
-                  title="New Issue"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                </button>
               </div>
             </header>
 
             {/* Main content - overflow-hidden so columns scroll independently */}
             <main className="flex-1 overflow-hidden p-2 md:p-4">
-              {issues.length === 0 ? (
-                <ImportEmptyState onImportComplete={fetchData} />
-              ) : (
-                <KanbanBoard
-                  statuses={filteredStatuses}
-                  issues={issues}
-                  onMoveIssue={handleMoveIssue}
-                />
-              )}
+              <KanbanBoard
+                statuses={filteredStatuses}
+                issues={issues}
+                onMoveIssue={handleMoveIssue}
+              />
             </main>
           </>
         )}
       </div>
 
       {/* Modals */}
-      <CreateIssueModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSubmit={handleCreateIssue}
-        statuses={statuses}
-        labels={labels}
-      />
-
       <SearchModal
         isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}

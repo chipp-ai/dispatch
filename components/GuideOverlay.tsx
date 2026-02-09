@@ -9,33 +9,33 @@ interface GuideOverlayProps {
 
 const STEPS = [
   {
-    title: "Meet Your Agent Fleet",
+    title: "Your Agent Command Center",
     description:
-      "Agents are autonomous Claude Code sessions running in GitHub Actions. The board tracks investigations, plans, and implementations across your codebase.",
+      "Dispatch sends autonomous agents to investigate, implement, test, and research. Every mission is backed by a real Claude Code session running in GitHub Actions.",
     illustration: FleetIllustration,
   },
   {
-    title: "Spawn an Agent",
+    title: "Dispatch a Mission",
     description:
-      "Open any issue and click Investigate. The agent reads your code, writes a plan, then implements it — all autonomously.",
+      "Type in the terminal to dispatch investigation or research agents. Describe what you want built or explored, and an agent gets to work immediately.",
     illustration: SpawnIllustration,
   },
   {
     title: "Review & Approve Plans",
     description:
-      "Agents submit plans for your approval before implementing. Approve to auto-spawn implementation, or request changes to refine the approach.",
+      "Investigation agents post plans for your approval. Approve to auto-dispatch an implementation agent, or request changes to refine the approach.",
     illustration: PlanIllustration,
   },
   {
-    title: "Cancel, Retry & Monitor",
+    title: "Monitor the Fleet",
     description:
-      "Cancel running agents, retry failed ones with additional context. The Fleet panel shows your budget and all active runs at a glance.",
+      "The Fleet panel shows running agents, daily costs, and budget usage. Cancel running agents, retry failed ones, or dispatch QA agents to verify implementations.",
     illustration: MonitorIllustration,
   },
   {
-    title: "Understand Outcomes",
+    title: "Deep Research",
     description:
-      "Every run declares an outcome — completed, blocked, no changes needed, and more. Outcomes are visible on cards and detail pages so you always know the status.",
+      "Research agents search the internet and codebase to produce comprehensive reports. Use them for architecture decisions, technology comparisons, or exploring unfamiliar domains.",
     illustration: OutcomeIllustration,
   },
 ];

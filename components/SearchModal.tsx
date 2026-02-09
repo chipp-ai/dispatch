@@ -97,7 +97,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search issues..."
+            placeholder="Search missions..."
             className="flex-1 bg-transparent text-[14px] text-[#f5f5f5] placeholder-[#666] outline-none"
           />
           {loading && <div className="spinner" />}
@@ -140,14 +140,14 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         {/* Empty state */}
         {query && !loading && results.length === 0 && (
           <div className="py-8 text-center text-[13px] text-[#666]">
-            No issues found
+            No missions found
           </div>
         )}
 
         {/* Help text */}
         {!query && (
           <div className="py-8 text-center text-[13px] text-[#555]">
-            Start typing to search issues
+            Start typing to search missions
           </div>
         )}
 

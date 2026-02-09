@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chipp Issues",
-  description: "AI Agent Issue Tracker",
+  title: "Chippy Dispatch",
+  description: "Autonomous Agent Command Center",
 };
 
 export const viewport: Viewport = {

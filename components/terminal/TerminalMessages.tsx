@@ -59,7 +59,7 @@ export default function TerminalMessages({
             {process.env.NEXT_PUBLIC_ORCHESTRATOR_MODEL || "sonnet-4.5"} · dispatch orchestrator
           </div>
           <div className="text-[#4a4400] text-[11px]">
-            Issue tracker + autonomous agents
+            autonomous agent command center
           </div>
         </div>
       </div>
@@ -68,19 +68,19 @@ export default function TerminalMessages({
         <div className="text-[#444] text-[11px] space-y-1 ml-1">
           <p>
             <span className="text-[#f9db00]">{">"}</span>{" "}
-            {"what's on the board?"}
+            {"investigate adding dark mode support"}
           </p>
           <p>
             <span className="text-[#f9db00]">{">"}</span>{" "}
-            {"plan the notifications feature"}
+            {"what's the fleet status?"}
           </p>
           <p>
             <span className="text-[#f9db00]">{">"}</span>{" "}
-            {"search for billing issues"}
+            {"research best practices for WebSocket scaling"}
           </p>
           <p>
             <span className="text-[#f9db00]">{">"}</span>{" "}
-            {"spawn an agent on CHIPP-42"}
+            {"run QA on CHIPP-42"}
           </p>
         </div>
       ) : (

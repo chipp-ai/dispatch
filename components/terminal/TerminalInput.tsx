@@ -29,13 +29,13 @@ const CHIPPY_VERBS = [
 
 // Tool-specific chippy verbs
 const TOOL_VERBS: Record<string, string> = {
-  get_board_status: "Surveying the chip aisle...",
-  search_issues: "Rummaging through the bag...",
-  create_issue: "Pressing a fresh chip...",
-  create_issues_batch: "Opening a party size bag...",
-  spawn_agent: "Deploying a chip runner...",
-  get_issue_details: "Reading the nutrition label...",
-  update_issue: "Re-seasoning...",
+  get_fleet_status: "Surveying the fleet...",
+  search_missions: "Scanning mission logs...",
+  get_mission: "Reading the mission brief...",
+  dispatch_investigation: "Deploying investigator...",
+  dispatch_implementation: "Deploying implementer...",
+  dispatch_qa: "Deploying QA agent...",
+  dispatch_research: "Deploying research agent...",
 };
 
 function formatDuration(ms: number): string {
@@ -212,7 +212,7 @@ export default function TerminalInput({
           placeholder={
             isStreaming
               ? "Esc to cancel"
-              : "Ask chippy anything... (Enter to send)"
+              : "Describe a mission... (Enter to send)"
           }
           disabled={isStreaming}
           rows={1}

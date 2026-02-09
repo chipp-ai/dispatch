@@ -45,7 +45,10 @@ export default function TerminalHeader({
 
       const activeAgents = issues.filter(
         (i: { agent_status?: string }) =>
-          i.agent_status === "investigating" || i.agent_status === "implementing"
+          i.agent_status === "investigating" ||
+          i.agent_status === "implementing" ||
+          i.agent_status === "testing" ||
+          i.agent_status === "researching"
       ).length;
 
       const totalCost = issues.reduce(
@@ -127,7 +130,7 @@ export default function TerminalHeader({
       {stats && (
         <div className="flex items-center gap-4 px-4 py-1.5 border-t border-[#1a1800] text-[10px] font-mono text-[#665e00]">
           <span>
-            <span className="text-[#f9db00]">{stats.total_issues}</span> issues
+            <span className="text-[#f9db00]">{stats.total_issues}</span> missions
           </span>
           <span>
             <span className="text-[#f9db00]">{stats.active_agents}</span> agent{stats.active_agents !== 1 ? "s" : ""}

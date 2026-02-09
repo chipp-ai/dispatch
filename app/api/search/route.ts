@@ -24,7 +24,17 @@ export async function GET(request: NextRequest) {
 
     const results = await searchIssuesSemantic(workspace.id, query, limit);
 
-    return NextResponse.json(results);
+    // Map to the shape expected by SearchModal
+    const mapped = results.map((r) => ({
+      id: r.id,
+      identifier: r.identifier,
+      title: r.title,
+      description: r.description,
+      priority: r.priority,
+      status: { name: r.status_name, color: r.status_color },
+    }));
+
+    return NextResponse.json(mapped);
   } catch (error) {
     console.error("Error searching issues:", error);
     return NextResponse.json(
