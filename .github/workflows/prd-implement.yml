@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       issue_id:
-        description: "Chipp Issues issue ID"
+        description: "Dispatch issue ID"
         required: true
         type: string
       issue_identifier:
-        description: "Human-readable identifier (e.g. CHIPP-456)"
+        description: "Human-readable identifier (e.g. DISPATCH-456)"
         required: true
         type: string
       title:
@@ -52,8 +52,8 @@ jobs:
     # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      CHIPP_ISSUES_API_URL: ${{ inputs.callback_url || secrets.CHIPP_ISSUES_API_URL }}
-      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DISPATCH_API_URL: ${{ inputs.callback_url || secrets.DISPATCH_API_URL }}
+      DISPATCH_API_KEY: ${{ secrets.DISPATCH_API_KEY }}
       DENO_NO_PACKAGE_JSON: "1"
       INPUT_ISSUE_ID: ${{ inputs.issue_id }}
       INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
@@ -69,7 +69,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: chipp_deno
+          POSTGRES_DB: dispatch
         ports:
           - 5436:5432
         options: >-
@@ -110,13 +110,13 @@ jobs:
 
       - name: Register MCP servers
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           # Register MCP servers at user scope to avoid project-scope approval prompts.
           # Project-scoped servers (.mcp.json) require interactive approval which blocks CI.
           # User-scoped servers are pre-approved.
           claude mcp add-json browser-devtools '{"type":"stdio","command":"node","args":["tools/mcp-browser-devtools/index.js"],"env":{"CDP_HOST":"localhost","CDP_PORT":"9222"}}'
-          claude mcp add-json chipp-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-database/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:postgres@localhost:5436/chipp_deno"}}'
+          claude mcp add-json dispatch-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-database/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:postgres@localhost:5436/dispatch"}}'
 
           # Remove project .mcp.json to avoid duplicate server registration
           rm -f .mcp.json
@@ -131,8 +131,8 @@ jobs:
           echo "name=feat/${SAFE_ID}" >> "$GITHUB_OUTPUT"
           echo "Branch name: feat/${SAFE_ID}"
 
-      - name: Notify Chipp Issues - Implementing
-        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Notify Dispatch - Implementing
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -144,21 +144,21 @@ jobs:
             --arg spawn_type "implement" \
             '{spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at, agent_status: $agent_status, spawn_type: $spawn_type}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
 
       - name: Setup database
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           # Run migrations to set up the schema
           deno task db:migrate || echo "Warning: Migration failed (may need manual schema setup)"
 
       - name: Seed test data
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           psql "$DATABASE_URL" -f scripts/seed-test-data.sql
 
@@ -167,7 +167,7 @@ jobs:
 
       - name: Start dev servers
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
           NODE_ENV: development
           PORT: "8000"
         run: |
@@ -255,7 +255,7 @@ jobs:
           d = json.load(open('.scratch/prompt-data.json'))
           identifier = d['identifier']
           branch_id = identifier.lower().replace(' ', '-')
-          prompt = f"""You are autonomously implementing an approved feature plan for the chipp-deno project.
+          prompt = f"""You are autonomously implementing an approved feature plan for this project.
           You MUST follow the approved plan closely. Do NOT deviate from it without good reason.
 
           Issue: {identifier} - {d['title']}
@@ -274,7 +274,7 @@ jobs:
           A full-stack dev environment is running and available:
           - API server: http://localhost:8000 (Deno with --watch, auto-reloads on file changes)
           - Frontend: http://localhost:5173 (Vite dev server, hot module reload)
-          - Database: postgresql://postgres:postgres@localhost:5436/chipp_deno (seeded with test data)
+          - Database: postgresql://postgres:postgres@localhost:5436/dispatch (seeded with test data)
           - Chrome: headless Chrome with DevTools Protocol on port 9222
           - Server logs: .scratch/logs/api-server.log and .scratch/logs/vite-server.log
 
@@ -293,11 +293,11 @@ jobs:
           Use these to verify your implementation works visually before committing.
 
           DATABASE (MCP tools available):
-          You have access to chipp-database MCP tools:
-          - mcp__chipp-database__db_query: Run SELECT queries
-          - mcp__chipp-database__db_execute: Run INSERT/UPDATE/DELETE
-          - mcp__chipp-database__db_list_tables: List tables
-          - mcp__chipp-database__db_describe_table: Show table schema
+          You have access to dispatch-database MCP tools:
+          - mcp__dispatch-database__db_query: Run SELECT queries
+          - mcp__dispatch-database__db_execute: Run INSERT/UPDATE/DELETE
+          - mcp__dispatch-database__db_list_tables: List tables
+          - mcp__dispatch-database__db_describe_table: Show table schema
           Use these to verify database changes work correctly.
 
           Test data in the database:
@@ -345,7 +345,7 @@ jobs:
           Save screenshots to .scratch/screenshots/ and reference them in the summary.
           You MUST take at least one screenshot for any change that affects the UI.
 
-          FOR DATABASE CHANGES: Use the chipp-database MCP tools:
+          FOR DATABASE CHANGES: Use the dispatch-database MCP tools:
           1. Run the migration: deno task db:migrate
           2. Verify with db_query or db_describe_table
           Paste the query results in the summary as proof.
@@ -415,7 +415,7 @@ jobs:
       - name: Run Implementation
         id: implement
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
           BRANCH_NAME: ${{ steps.branch.outputs.name }}
         run: |
           mkdir -p .scratch/screenshots
@@ -493,10 +493,10 @@ jobs:
               echo "$CHUNK"
 
               # Stream to Dispatch terminal viewer (non-blocking, fire-and-forget)
-              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              if [ -n "$CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
                 jq -n --arg content "$CHUNK" '{content: $content}' | \
-                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
-                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
                     -H "Content-Type: application/json" \
                     -d @- > /dev/null 2>&1 &
               fi
@@ -514,10 +514,10 @@ jobs:
               FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
                 | python3 -u .scratch/stream-filter.py)
               echo "$FINAL_CHUNK"
-              if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              if [ -n "$FINAL_CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
                 jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
-                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
-                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
                     -H "Content-Type: application/json" \
                     -d @- > /dev/null 2>&1 || true
               fi
@@ -587,7 +587,7 @@ jobs:
         id: verify
         if: steps.run-result.outputs.changes_made == 'true'
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           echo "Running PR check suite to verify implementation..."
           FAILURES=""
@@ -626,7 +626,7 @@ jobs:
       - name: Fix failing checks
         if: steps.verify.outputs.checks_failed == 'true' && steps.run-result.outputs.changes_made == 'true'
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           FAILURES=$(cat .scratch/failed-checks.txt)
           FIX_PROMPT="The implementation is complete but the following PR checks are failing: ${FAILURES}
@@ -677,7 +677,7 @@ jobs:
       - name: Re-verify after fix
         if: steps.verify.outputs.checks_failed == 'true' && steps.run-result.outputs.changes_made == 'true'
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
         run: |
           echo "Re-running PR check suite after fix attempt..."
           STILL_FAILING=""
@@ -708,8 +708,8 @@ jobs:
             echo "blocked=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Report blocker to Chipp Issues
-        if: always() && steps.check-blocker.outputs.blocked == 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Report blocker to Dispatch
+        if: always() && steps.check-blocker.outputs.blocked == 'true' && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           BLOCKER_PAYLOAD=$(jq -n \
             --arg type "blocker_reported" \
@@ -718,8 +718,8 @@ jobs:
             --arg run_url "$GITHUB_RUN_URL" \
             '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}')
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$BLOCKER_PAYLOAD" || echo "Warning: Failed to post blocker (non-fatal)"
 
@@ -736,8 +736,8 @@ jobs:
             --arg blocked_reason "$BLOCKER_REASON" \
             '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status, blocked_reason: $blocked_reason}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update blocker status (non-fatal)"
 
@@ -881,8 +881,8 @@ jobs:
               -d "$(jq -n --arg body "$(echo -e "$COMMENT")" '{body: $body}')" || echo "Warning: Failed to post screenshots comment"
           fi
 
-      - name: Post results to Chipp Issues
-        if: always() && steps.check-blocker.outputs.blocked != 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Post results to Dispatch
+        if: always() && steps.check-blocker.outputs.blocked != 'true' && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         env:
           PR_URL: ${{ steps.create-pr.outputs.pr_url }}
           FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
@@ -947,8 +947,8 @@ jobs:
             --arg model "$MODEL" \
             '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity (non-fatal)"
 
@@ -968,13 +968,13 @@ jobs:
             --arg outcome_summary "$OUTCOME_SUMMARY" \
             '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
 
       - name: Upload full agent log
-        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           LOG_FILE=".scratch/claude-output.log"
           if [ ! -f "$LOG_FILE" ]; then
@@ -1000,15 +1000,15 @@ jobs:
             '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement"}}' \
             > .scratch/full-log-payload.json
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d @.scratch/full-log-payload.json || echo "Warning: Failed to upload full log (non-fatal)"
 
           echo "Full log uploaded ($(( FULL_SIZE / 1024 ))KB)"
 
       - name: Report failure
-        if: failure() && steps.check-blocker.outputs.blocked != 'true' && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        if: failure() && steps.check-blocker.outputs.blocked != 'true' && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           ERROR_TAIL=""
           if [ -f .scratch/claude-output.log ]; then
@@ -1025,8 +1025,8 @@ jobs:
             --arg error_tail "$ERROR_TAIL" \
             '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, error_tail: $error_tail}}')
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$FAILURE_PAYLOAD" || true
 
@@ -1036,7 +1036,7 @@ jobs:
             --arg agent_status "idle" \
             '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || true
