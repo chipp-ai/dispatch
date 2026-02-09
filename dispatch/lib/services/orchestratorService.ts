@@ -9,7 +9,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import { tools, executeTool } from "./orchestratorTools";
 import {
   getSession,
-  getLatestSession,
   createSession,
   saveMessages,
 } from "./orchestratorSessionService";
@@ -79,10 +78,8 @@ export async function* orchestrate(
   const client = new Anthropic();
   const workspace = await getOrCreateDefaultWorkspace();
 
-  // Load or create session
-  let session = sessionId
-    ? await getSession(sessionId)
-    : await getLatestSession(workspace.id);
+  // Load existing session (for multi-turn within a page visit) or create fresh
+  let session = sessionId ? await getSession(sessionId) : null;
 
   if (!session) {
     session = await createSession(workspace.id);
