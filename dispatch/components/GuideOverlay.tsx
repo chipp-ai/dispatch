@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 
 interface GuideOverlayProps {
   isOpen: boolean;
@@ -155,12 +156,21 @@ export default function GuideOverlay({ isOpen, onClose }: GuideOverlayProps) {
               </button>
             )}
             {isLast ? (
-              <button
-                onClick={handleClose}
-                className="px-4 py-1.5 text-[13px] font-medium text-white bg-[#5e6ad2] hover:bg-[#6c78e0] rounded-md transition-colors"
-              >
-                Get Started
-              </button>
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/guide"
+                  onClick={handleClose}
+                  className="text-[12px] text-[#666] hover:text-[#999] underline underline-offset-2 transition-colors"
+                >
+                  Read the full documentation
+                </Link>
+                <button
+                  onClick={handleClose}
+                  className="px-4 py-1.5 text-[13px] font-medium text-white bg-[#5e6ad2] hover:bg-[#6c78e0] rounded-md transition-colors"
+                >
+                  Get Started
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => setCurrentStep((s) => s + 1)}
