@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || "Dispatch";
+
 // Priority colors matching the app
 const PRIORITY_COLORS: Record<string, string> = {
   P1: "#f87171",
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     // Get issue data from query params
-    const title = searchParams.get("title") || "Dispatch";
+    const title = searchParams.get("title") || APP_NAME;
     const description = searchParams.get("description") || "";
     const identifier = searchParams.get("id") || "";
     const status = searchParams.get("status")?.toLowerCase() || "";
@@ -200,7 +202,7 @@ export async function GET(request: NextRequest) {
                       fontFamily: "Mulish",
                     }}
                   >
-                    C
+                    {APP_NAME[0]}
                   </span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
@@ -213,7 +215,7 @@ export async function GET(request: NextRequest) {
                       letterSpacing: "-0.5px",
                     }}
                   >
-                    Dispatch
+                    {APP_NAME}
                   </span>
                   <span
                     style={{
@@ -576,7 +578,7 @@ export async function GET(request: NextRequest) {
                     fontFamily: "Mulish",
                   }}
                 >
-                  dispatch
+                  {APP_NAME.toLowerCase()}
                 </span>
               </div>
             </div>
