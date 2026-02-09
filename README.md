@@ -1,19 +1,16 @@
 <div align="center">
-
-```
-  ____  _                 _       _
- |  _ \(_)___ _ __   __ _| |_ ___| |__
- | | | | / __| '_ \ / _` | __/ __| '_ \
- | |_| | \__ \ |_) | (_| | || (__| | | |
- |____/|_|___/ .__/ \__,_|\__\___|_| |_|
-             |_|
-  autonomous agent orchestration
-```
-
-**Tell it what to build. Agents investigate, plan, implement, and ship.**
-
-[Quick Start](#quick-start) &#8226; [Screenshots](#what-it-looks-like) &#8226; [Docs](#setting-up-github-actions-agents) &#8226; [MCP](#mcp-integration) &#8226; [License](#license)
-
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo-light.svg" alt="Dispatch" width="480">
+  </picture>
+  <p><strong>Tell it what to build. Agents investigate, plan, implement, and ship.</strong></p>
+  <p>
+    <a href="#quick-start">Quick Start</a> &#8226;
+    <a href="#what-it-looks-like">Screenshots</a> &#8226;
+    <a href="#setting-up-github-actions-agents">Docs</a> &#8226;
+    <a href="#mcp-integration">MCP</a> &#8226;
+    <a href="#license">License</a>
+  </p>
 </div>
 
 ---
