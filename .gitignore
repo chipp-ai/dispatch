@@ -1,54 +1,7 @@
-# Environment and secrets
-.env
-.env.*
-!.env.example
-
-# Dependencies
 node_modules/
-web/node_modules/
-cloudflare-worker/node_modules/
-landing/node_modules/
-docs-site/node_modules/
-
-# Build outputs
-web/dist/
-landing/dist/
-docs-site/dist/
-cloudflare-worker/dist/
-dispatch/.next/
-dispatch/dist/
-*.tsbuildinfo
-
-# Deno cache
-.deno/
-
-# IDE
-.vscode/
-.idea/
-
-# Claude Code (user-specific local overrides)
-.claude/settings.local.json
-
-# Logs and scratch files
+.next/
+dist/
+.env
+.env.local
 .scratch/
-*.log
-
-# Testing
-coverage/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Docker
-docker-compose.override.yml
-
-# Redis dump
-dump.rdb
-
-# Secrets
-chipp-deno-secret.yaml
-*.pem
-*.key
-# MCP local config with credentials
-.mcp.local.json
+*.tsbuildinfo

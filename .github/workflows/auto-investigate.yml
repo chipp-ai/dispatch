@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       issue_id:
-        description: "Chipp Issues issue ID"
+        description: "Dispatch issue ID"
         required: true
         type: string
       issue_identifier:
-        description: "Human-readable identifier (e.g. CHIPP-456)"
+        description: "Human-readable identifier (e.g. DISPATCH-456)"
         required: true
         type: string
       title:
@@ -60,8 +60,8 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       # callback_url input overrides the production API URL (for local dev tunnels)
-      CHIPP_ISSUES_API_URL: ${{ inputs.callback_url || secrets.CHIPP_ISSUES_API_URL }}
-      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DISPATCH_API_URL: ${{ inputs.callback_url || secrets.DISPATCH_API_URL }}
+      DISPATCH_API_KEY: ${{ secrets.DISPATCH_API_KEY }}
       DENO_NO_PACKAGE_JSON: "1"
       INPUT_ISSUE_ID: ${{ inputs.issue_id }}
       INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
@@ -101,8 +101,8 @@ jobs:
           echo "name=auto-fix/${SAFE_ID}" >> "$GITHUB_OUTPUT"
           echo "Branch name: auto-fix/${SAFE_ID}"
 
-      - name: Notify Chipp Issues - In Progress
-        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Notify Dispatch - In Progress
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -114,10 +114,10 @@ jobs:
             --arg spawn_started_at "$TIMESTAMP" \
             '{status: $status, spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
 
       - name: Run Investigation
         id: investigate
@@ -128,7 +128,7 @@ jobs:
 
           # Build the prompt. Leading spaces from YAML indentation are stripped by sed.
           cat > .scratch/investigation-prompt.md <<PROMPT_BOUNDARY
-          You are autonomously investigating a production error for the chipp-deno project.
+          You are autonomously investigating a production error for this project.
 
           Issue: ${INPUT_ISSUE_IDENTIFIER} - ${INPUT_TITLE}
 
@@ -237,10 +237,10 @@ jobs:
               echo "$CHUNK"
 
               # Stream to Dispatch terminal viewer
-              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              if [ -n "$CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
                 jq -n --arg content "$CHUNK" '{content: $content}' | \
-                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
-                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
                     -H "Content-Type: application/json" \
                     -d @- > /dev/null 2>&1 &
               fi
@@ -259,10 +259,10 @@ jobs:
             FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
               | python3 -u .scratch/stream-filter.py)
             echo "$FINAL_CHUNK"
-            if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+            if [ -n "$FINAL_CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
               jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
-                curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
-                  -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                  -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
                   -H "Content-Type: application/json" \
                   -d @- > /dev/null 2>&1 || true
             fi
@@ -385,8 +385,8 @@ jobs:
           echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
           echo "Created PR: ${PR_URL}"
 
-      - name: Post results to Chipp Issues
-        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Post results to Dispatch
+        if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         env:
           PR_URL: ${{ steps.create-pr.outputs.pr_url }}
           FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
@@ -448,10 +448,10 @@ jobs:
               }
             }')
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity to Chipp Issues (non-fatal)"
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity to Dispatch (non-fatal)"
 
           # Read outcome summary from file
           OUTCOME_SUMMARY=""
@@ -470,13 +470,13 @@ jobs:
             --arg outcome_summary "$OUTCOME_SUMMARY" \
             '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
 
-      - name: Report failure to Chipp Issues
-        if: failure() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+      - name: Report failure to Dispatch
+        if: failure() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
           ERROR_TAIL=""
           if [ -f .scratch/claude-output.log ]; then
@@ -502,17 +502,17 @@ jobs:
               }
             }')
 
-          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$FAILURE_PAYLOAD" || echo "Warning: Failed to report failure to Chipp Issues (non-fatal)"
+            -d "$FAILURE_PAYLOAD" || echo "Warning: Failed to report failure to Dispatch (non-fatal)"
 
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "failed" \
             --arg spawn_completed_at "$TIMESTAMP" \
             '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
 
-          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
-            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"

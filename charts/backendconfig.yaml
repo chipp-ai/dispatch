@@ -1,0 +1,12 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: dispatch
+spec:
+  connectionDraining:
+    drainingTimeoutSec: 300
+  timeoutSec: 86400
+  healthCheck:
+    requestPath: /api/health
+    type: HTTP
+    # Note: Do NOT specify port here - GKE will use the NodePort automatically
