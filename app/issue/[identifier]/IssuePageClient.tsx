@@ -1250,13 +1250,6 @@ export default function IssuePageClient() {
           </div>
         )}
 
-        {/* Spawn error for non-blocked contexts */}
-        {spawnError && issue.agent_status !== "blocked" && (
-          <div className="mb-4 p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
-            <p className="text-[12px] text-red-400">{spawnError}</p>
-          </div>
-        )}
-
         {/* Plan Review Section */}
         {issue.plan_content &&
           (issue.plan_status === "awaiting_review" ||
