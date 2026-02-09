@@ -1095,10 +1095,10 @@ export default function IssuePageClient() {
             })()}
 
             {/* Cost info */}
-            {issue.cost_usd != null && issue.cost_usd > 0 && (
+            {issue.cost_usd != null && Number(issue.cost_usd) > 0 && (
               <div className="flex items-center gap-2 text-[12px] text-[#505050]">
                 <span className="font-mono text-[#22d3d3]">
-                  ${issue.cost_usd < 0.01 ? "<0.01" : issue.cost_usd.toFixed(2)}
+                  ${Number(issue.cost_usd) < 0.01 ? "<0.01" : Number(issue.cost_usd).toFixed(2)}
                 </span>
                 {issue.num_turns != null && issue.num_turns > 0 && (
                   <span>{issue.num_turns} turns</span>
@@ -1193,18 +1193,18 @@ export default function IssuePageClient() {
                   <div
                     className="h-full rounded-full transition-all"
                     style={{
-                      width: `${issue.agent_confidence}%`,
+                      width: `${Number(issue.agent_confidence)}%`,
                       backgroundColor:
-                        issue.agent_confidence >= 80
+                        Number(issue.agent_confidence) >= 80
                           ? "#4ade80"
-                          : issue.agent_confidence >= 50
+                          : Number(issue.agent_confidence) >= 50
                             ? "#facc15"
                             : "#f87171",
                     }}
                   />
                 </div>
                 <span className="text-[11px] text-[#808080] tabular-nums">
-                  {issue.agent_confidence}%
+                  {Number(issue.agent_confidence)}%
                 </span>
               </div>
             </div>
