@@ -13,18 +13,18 @@ interface TerminalInputProps {
 
 // Fun verbs for thinking states
 const THINKING_VERBS = [
-  "Crunching chips...",
-  "Munching data...",
-  "Frying circuits...",
-  "Dipping in salsa...",
-  "Seasoning response...",
-  "Heating up...",
-  "Getting crispy...",
-  "Chipping away...",
-  "Snacking on context...",
-  "Flavor-blasting...",
-  "Kettle-cooking...",
-  "Salt & peppering...",
+  "Analyzing...",
+  "Processing intel...",
+  "Scanning codebase...",
+  "Routing agents...",
+  "Triangulating...",
+  "Decoding signals...",
+  "Compiling data...",
+  "Mapping vectors...",
+  "Calibrating...",
+  "Correlating...",
+  "Running diagnostics...",
+  "Tracing paths...",
 ];
 
 // Tool-specific verbs
@@ -86,8 +86,8 @@ export default function TerminalInput({
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Pick a random chippy verb on each streaming start
-  const chippyVerb = useMemo(() => {
+  // Pick a random thinking verb on each streaming start
+  const thinkingVerb = useMemo(() => {
     if (!isStreaming) return "";
     if (activeToolName && TOOL_VERBS[activeToolName]) {
       return TOOL_VERBS[activeToolName];
@@ -142,13 +142,13 @@ export default function TerminalInput({
       {/* Metrics bar - Claude Code style */}
       {showMetrics && turnMetrics && (
         <div className="flex items-center justify-between mb-2 px-1">
-          {/* Left: chippy verb with pulse */}
+          {/* Left: thinking verb with pulse */}
           <div className="flex items-center gap-2">
             {isStreaming && (
               <>
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#f9db00] animate-pulse" />
                 <span className="text-[11px] font-mono text-[#f9db00] opacity-70">
-                  {chippyVerb}
+                  {thinkingVerb}
                 </span>
               </>
             )}

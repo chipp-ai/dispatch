@@ -62,7 +62,7 @@ export const tools: Tool[] = [
       properties: {
         mission_identifier: {
           type: "string",
-          description: "Mission identifier (e.g. CHIPP-42)",
+          description: "Mission identifier (e.g. DISPATCH-42)",
         },
       },
       required: ["mission_identifier"],
@@ -77,7 +77,7 @@ export const tools: Tool[] = [
       properties: {
         mission_identifier: {
           type: "string",
-          description: "Mission identifier (e.g. CHIPP-42)",
+          description: "Mission identifier (e.g. DISPATCH-42)",
         },
         test_instructions: {
           type: "string",
@@ -127,7 +127,7 @@ export const tools: Tool[] = [
       properties: {
         mission_identifier: {
           type: "string",
-          description: "Mission identifier (e.g. CHIPP-42) or UUID",
+          description: "Mission identifier (e.g. DISPATCH-42) or UUID",
         },
       },
       required: ["mission_identifier"],
