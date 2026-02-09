@@ -39,6 +39,10 @@ on:
         description: "Override API callback URL (for local dev tunnels)"
         required: false
         type: string
+      ref:
+        description: "Git ref to checkout (branch, tag, or SHA). Defaults to the workflow dispatch ref."
+        required: false
+        type: string
 
 # Only one QA run per mission at a time
 concurrency:
@@ -87,10 +91,10 @@ jobs:
           --health-retries 5
 
     steps:
-      - name: Checkout staging
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: staging
+          ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Setup Deno
