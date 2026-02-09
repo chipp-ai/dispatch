@@ -107,14 +107,6 @@ export default function LoginPage() {
             )}
           </button>
         </form>
-
-        <p className="text-[11px] text-[#444] text-center mt-8">
-          Set{" "}
-          <code className="text-[#555] bg-[#1a1a1a] px-1 py-0.5 rounded">
-            CHIPP_ISSUES_PASSWORD
-          </code>{" "}
-          in your environment
-        </p>
       </div>
     </div>
   );
