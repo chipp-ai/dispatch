@@ -8,6 +8,9 @@ import CreateIssueModal from "@/components/CreateIssueModal";
 import SearchModal from "@/components/SearchModal";
 import ImportEmptyState from "@/components/ImportEmptyState";
 import GuideOverlay, { hasSeenGuide, markGuideComplete } from "@/components/GuideOverlay";
+import Terminal from "@/components/terminal/Terminal";
+
+type ViewType = "terminal" | "board";
 
 interface Status {
   id: string;
@@ -73,6 +76,17 @@ export default function BoardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const [viewType, setViewType] = useState<ViewType>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("dispatch_view_type") as ViewType) || "terminal";
+    }
+    return "terminal";
+  });
+
+  // Persist view preference
+  useEffect(() => {
+    localStorage.setItem("dispatch_view_type", viewType);
+  }, [viewType]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -191,6 +205,13 @@ export default function BoardPage() {
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Ctrl+` to toggle terminal/board
+      if (e.key === "`" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setViewType((prev) => (prev === "terminal" ? "board" : "terminal"));
+        return;
+      }
+
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -353,131 +374,142 @@ export default function BoardPage() {
         onOpenGuide={() => setShowGuide(true)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        viewType={viewType}
+        onViewTypeChange={setViewType}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="h-12 border-b border-[#252525] flex items-center justify-between px-3 md:px-4">
-          <div className="flex items-center gap-3 md:gap-6 min-w-0">
-            {/* Mobile hamburger */}
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="p-1.5 -ml-1 text-[#888] hover:text-[#e0e0e0] hover:bg-[#1a1a1a] rounded transition-colors md:hidden"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-
-            <h1 className="text-[14px] font-semibold text-[#f5f5f5] hidden md:block">Issues</h1>
-
-            {/* View tabs */}
-            <div className="flex items-center gap-0.5 md:gap-1 overflow-x-auto">
-              <ViewTab
-                label="All"
-                count={counts.all}
-                active={viewMode === "all"}
-                onClick={() => setViewMode("all")}
-              />
-              <ViewTab
-                label="Active"
-                count={counts.active}
-                active={viewMode === "active"}
-                onClick={() => setViewMode("active")}
-              />
-              <ViewTab
-                label="Backlog"
-                count={counts.backlog}
-                active={viewMode === "backlog"}
-                onClick={() => setViewMode("backlog")}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
-            {/* Reconcile result toast */}
-            {reconcileResult && (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#4ade80] bg-[#4ade8015] rounded">
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+        {viewType === "terminal" ? (
+          /* Terminal view — full area */
+          <main className="flex-1 overflow-hidden">
+            <Terminal />
+          </main>
+        ) : (
+          <>
+            {/* Header — board view only */}
+            <header className="h-12 border-b border-[#252525] flex items-center justify-between px-3 md:px-4">
+              <div className="flex items-center gap-3 md:gap-6 min-w-0">
+                {/* Mobile hamburger */}
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="p-1.5 -ml-1 text-[#888] hover:text-[#e0e0e0] hover:bg-[#1a1a1a] rounded transition-colors md:hidden"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+
+                <h1 className="text-[14px] font-semibold text-[#f5f5f5] hidden md:block">Issues</h1>
+
+                {/* View tabs */}
+                <div className="flex items-center gap-0.5 md:gap-1 overflow-x-auto">
+                  <ViewTab
+                    label="All"
+                    count={counts.all}
+                    active={viewMode === "all"}
+                    onClick={() => setViewMode("all")}
                   />
-                </svg>
-                {reconcileResult.prsProcessed} PRs,{" "}
-                {reconcileResult.issuesUpdated} issues updated
+                  <ViewTab
+                    label="Active"
+                    count={counts.active}
+                    active={viewMode === "active"}
+                    onClick={() => setViewMode("active")}
+                  />
+                  <ViewTab
+                    label="Backlog"
+                    count={counts.backlog}
+                    active={viewMode === "backlog"}
+                    onClick={() => setViewMode("backlog")}
+                  />
+                </div>
               </div>
-            )}
 
-            {/* Live indicator */}
-            <div className="flex items-center gap-1.5 px-1.5 md:px-2 py-1 text-[11px] text-[#666]">
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isConnected ? "bg-green-500" : "bg-[#555]"
-                }`}
-              />
-              <span className="hidden sm:inline">{isConnected ? "Live" : "Offline"}</span>
-            </div>
+              <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+                {/* Reconcile result toast */}
+                {reconcileResult && (
+                  <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#4ade80] bg-[#4ade8015] rounded">
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    {reconcileResult.prsProcessed} PRs,{" "}
+                    {reconcileResult.issuesUpdated} issues updated
+                  </div>
+                )}
 
-            {/* Reconcile button */}
-            <button
-              onClick={handleReconcile}
-              disabled={isReconciling}
-              className={`flex items-center gap-1.5 p-1.5 md:px-2.5 md:py-1 text-[12px] rounded transition-colors ${
-                isReconciling
-                  ? "text-[#555] cursor-not-allowed"
-                  : "text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215]"
-              }`}
-              title="Reconcile"
-            >
-              <ReconcileIcon spinning={isReconciling} />
-              <span className="hidden md:inline">{isReconciling ? "Syncing..." : "Reconcile"}</span>
-            </button>
+                {/* Live indicator */}
+                <div className="flex items-center gap-1.5 px-1.5 md:px-2 py-1 text-[11px] text-[#666]">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isConnected ? "bg-green-500" : "bg-[#555]"
+                    }`}
+                  />
+                  <span className="hidden sm:inline">{isConnected ? "Live" : "Offline"}</span>
+                </div>
 
-            {/* Filter button */}
-            <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
-              <FilterIcon />
-              Filter
-            </button>
+                {/* Reconcile button */}
+                <button
+                  onClick={handleReconcile}
+                  disabled={isReconciling}
+                  className={`flex items-center gap-1.5 p-1.5 md:px-2.5 md:py-1 text-[12px] rounded transition-colors ${
+                    isReconciling
+                      ? "text-[#555] cursor-not-allowed"
+                      : "text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215]"
+                  }`}
+                  title="Reconcile"
+                >
+                  <ReconcileIcon spinning={isReconciling} />
+                  <span className="hidden md:inline">{isReconciling ? "Syncing..." : "Reconcile"}</span>
+                </button>
 
-            {/* Display button */}
-            <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
-              <DisplayIcon />
-              Display
-            </button>
+                {/* Filter button */}
+                <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
+                  <FilterIcon />
+                  Filter
+                </button>
 
-            {/* Mobile create button */}
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="p-1.5 text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215] rounded transition-colors md:hidden"
-              title="New Issue"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
-          </div>
-        </header>
+                {/* Display button */}
+                <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
+                  <DisplayIcon />
+                  Display
+                </button>
 
-        {/* Main content - overflow-hidden so columns scroll independently */}
-        <main className="flex-1 overflow-hidden p-2 md:p-4">
-          {issues.length === 0 ? (
-            <ImportEmptyState onImportComplete={fetchData} />
-          ) : (
-            <KanbanBoard
-              statuses={filteredStatuses}
-              issues={issues}
-              onMoveIssue={handleMoveIssue}
-            />
-          )}
-        </main>
+                {/* Mobile create button */}
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="p-1.5 text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215] rounded transition-colors md:hidden"
+                  title="New Issue"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                </button>
+              </div>
+            </header>
+
+            {/* Main content - overflow-hidden so columns scroll independently */}
+            <main className="flex-1 overflow-hidden p-2 md:p-4">
+              {issues.length === 0 ? (
+                <ImportEmptyState onImportComplete={fetchData} />
+              ) : (
+                <KanbanBoard
+                  statuses={filteredStatuses}
+                  issues={issues}
+                  onMoveIssue={handleMoveIssue}
+                />
+              )}
+            </main>
+          </>
+        )}
       </div>
 
       {/* Modals */}
