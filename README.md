@@ -192,58 +192,13 @@ Create a `CLAUDE.md` in your repository root. This file should give an agent eve
 
 **What to include:**
 
-```markdown
-# Project Name
-
-Brief description of what the project does and its core architecture.
-
-## Tech Stack
-
-- Language/runtime (e.g. TypeScript, Node.js 20, Deno 2.x)
-- Framework (e.g. Next.js 15, Express, Hono)
-- Database (e.g. PostgreSQL with Prisma, MongoDB with Mongoose)
-- Key libraries (e.g. Zod for validation, Tailwind for styling)
-
-## Project Structure
-
-```
-src/
-  api/         -- API route handlers
-  services/    -- Business logic
-  db/          -- Database queries and migrations
-  utils/       -- Shared helpers
-tests/         -- Test files mirror src/ structure
-```
-
-## Development Commands
-
-```bash
-npm run dev      # Start dev server
-npm run test     # Run tests
-npm run lint     # Lint check
-npm run build    # Production build
-```
-
-## Key Patterns
-
-- How requests flow through the system (middleware -> handler -> service -> db)
-- How errors are handled (custom error classes, error middleware, logging patterns)
-- How authentication works (JWT, sessions, API keys)
-- How database queries are structured (ORM patterns, raw SQL conventions)
-- How tests are written (testing framework, fixtures, mocks)
-
-## Critical Rules
-
-- Things agents must NEVER do (e.g. "never modify migration files that have already run")
-- Security constraints (e.g. "always use parameterized queries, never string interpolation")
-- Conventions (e.g. "all new API routes need tests", "use snake_case for DB columns")
-
-## Common Pitfalls
-
-- Known gotchas that trip up newcomers (and agents)
-- Environment-specific quirks
-- Things that look wrong but are intentional
-```
+- **Project overview** -- What the project does and its core architecture.
+- **Tech stack** -- Language, framework, database, key libraries.
+- **Project structure** -- Directory layout with one-line descriptions.
+- **Development commands** -- How to run dev server, tests, lint, build. Be specific (e.g. `npm run test -- --watch=false`, not just "run the tests").
+- **Key patterns** -- How requests flow, how errors are handled, how auth works, how DB queries are structured, how tests are written.
+- **Critical rules** -- Things agents must never do (e.g. "never modify migration files that have already run", "always use parameterized queries").
+- **Common pitfalls** -- Known gotchas, environment quirks, things that look wrong but are intentional.
 
 **Why this matters:** Without a `CLAUDE.md`, agents can still read your code, but they'll spend time figuring out basics that you could tell them upfront. A good `CLAUDE.md` means agents spend more time solving the actual problem and less time orienting themselves.
 
@@ -279,11 +234,9 @@ For larger codebases, you can add `CLAUDE.md` files to subdirectories. Claude Co
 4. Secret: Same as `GITHUB_WEBHOOK_SECRET` in your `.env`
 5. Events: Pull requests
 
-### Sentry webhook (optional, for error tracking)
+### Sentry webhook (optional)
 
-1. Create an Internal Integration in Sentry
-2. Set webhook URL: `https://your-dispatch-instance.com/api/sentry/webhook`
-3. Enable events: Issue Created, Issue Resolved
+See [Using Sentry or other error trackers](#using-sentry-or-other-error-trackers) in the autonomous error remediation section.
 
 ## Configuration reference
 
@@ -399,92 +352,52 @@ The admin-side customer detail page (`/customers/:id`) provides:
 
 ## Autonomous error remediation
 
-Dispatch can automatically detect production errors and spawn agents to investigate and fix them. This creates a closed loop: error occurs -> issue created -> agent investigates -> PR opened -> fix verified.
+Dispatch can close the loop on production errors: an error happens, an agent investigates it, opens a fix PR, and verifies the fix stuck. No human needed for the routine stuff.
 
-### How it works
+This is where your [CLAUDE.md files](#preparing-your-codebase-for-agents) really matter. When an error-fix agent checks out your codebase, the first thing it reads is your `CLAUDE.md`. The better your project context, the better the agent's fixes. An agent with a good `CLAUDE.md` can trace an error from a stack trace to root cause to fix in minutes.
+
+### The loop
 
 ```
-Application logs (stdout)
-    |
-    v
-Loki (log aggregation)
-    |
-    v
-Grafana Alerting (error detection rules)
-    |
-    v
-Dispatch webhook (/api/loki/webhook)
-    |
-    v
-Fingerprint + deduplicate
-    |
-    v
-Spawn gate (budget, cooldown, concurrency checks)
-    |
-    v
-GitHub Actions (Claude Code auto-investigate workflow)
-    |
-    v
-PR targeting your default branch + 48h fix verification
+Your app (structured JSON logs to stdout)
+         |
+         v
+    Log collector (Promtail, Fluentd, Vector, etc.)
+         |
+         v
+    Loki (log aggregation + storage)
+         |
+         v
+    Grafana (alert rules detect errors)
+         |
+         v
+    Dispatch (/api/loki/webhook)
+    - Fingerprint + deduplicate
+    - Safety gates (budget, cooldown, concurrency)
+         |
+         v
+    GitHub Actions (Claude Code agent)
+    - Reads your CLAUDE.md for project context
+    - Investigates root cause from error context
+    - Opens fix PR if changes needed
+         |
+         v
+    Fix verification (48h monitoring)
+    - Same error reappears? Mark fix as failed
+    - No recurrence after 48h? Auto-close issue
 ```
 
-### Pipeline components
+### Prerequisites
 
-1. **Log aggregation** -- Your application writes structured JSON logs to stdout. A log collector (e.g. Promtail) ships them to Loki.
+You need three things:
 
-2. **Grafana alerting** -- Alert rules detect new error categories or error spikes. When triggered, Grafana sends a webhook to Dispatch with the error context (source, feature, message, event count).
+1. **Structured JSON logs** -- Your app writes errors to stdout in a format Dispatch can parse (see [structured logging](#step-1-structured-logging) below)
+2. **Loki + Grafana** -- Log aggregation with alerting. This is the supported pipeline. See [alternatives](#using-sentry-or-other-error-trackers) if you use something else.
+3. **CLAUDE.md in your repo** -- Agents need project context to fix errors effectively. See [preparing your codebase for agents](#preparing-your-codebase-for-agents).
 
-3. **Loki webhook handler** (`/api/loki/webhook`) -- Receives Grafana alert payloads, extracts error context via `lokiService.ts` (fingerprinting, message normalization), deduplicates against existing issues via `dispatch_external_issue`, and creates new issues when novel errors appear.
+### Step 1: Structured logging
 
-4. **Spawn service** (`spawnService.ts`) -- Before dispatching an agent, checks safety gates:
-   - **Daily budget** -- Configurable max spawns per day per workflow type (`DAILY_SPAWN_BUDGET_ERROR`)
-   - **Concurrency limit** -- Max simultaneous agent runs (`MAX_CONCURRENT_SPAWNS_ERROR`)
-   - **Cooldown** -- Per-fingerprint cooldown to avoid re-spawning for recurring errors (`SPAWN_COOLDOWN_HOURS`)
-   - **Min event count** -- Only spawn after an error occurs N times (`MIN_EVENT_COUNT_TO_SPAWN`)
-
-5. **Agent workflow** (`auto-investigate.yml`) -- GitHub Actions workflow that:
-   - Checks out your codebase at your configured branch (`GITHUB_REF`, default: `main`)
-   - Runs Claude Code with full error context
-   - Investigates the root cause, attempts a fix
-   - Opens a PR if changes are made
-   - Reports activity back to Dispatch via API
-
-6. **Fix verification** (`fixTrackingService.ts`) -- After a fix PR is merged, monitors for 48 hours. If the same error fingerprint reappears in Loki, the fix is marked as failed. If 48 hours pass with no recurrence, the fix is verified and the issue auto-closes.
-
-### Setup
-
-1. **Deploy a log aggregation stack** (Loki + Promtail + Grafana, or equivalent)
-
-2. **Create Grafana alert rules** that detect errors and fire webhooks:
-   ```yaml
-   # Example: alert on new error categories
-   condition: count by (source, feature, msg) > 3 in 15m
-   ```
-
-3. **Configure the webhook contact point** in Grafana to send to:
-   ```
-   POST https://your-dispatch-instance.com/api/loki/webhook
-   Authorization: Bearer <DISPATCH_API_KEY>
-   ```
-
-4. **Set environment variables** in Dispatch:
-   ```env
-   # Safety controls
-   MAX_CONCURRENT_SPAWNS_ERROR=3      # Max simultaneous error-fix agents
-   DAILY_SPAWN_BUDGET_ERROR=10        # Max auto-spawns per day
-   SPAWN_COOLDOWN_HOURS=24            # Don't re-spawn same error within 24h
-   MIN_EVENT_COUNT_TO_SPAWN=3         # Minimum occurrences before spawning
-   ```
-
-5. **Copy the `auto-investigate.yml` workflow** to your target repository's `.github/workflows/` and configure the required secrets.
-
-The Fleet Status panel in the sidebar shows real-time budget usage, active spawns, and daily outcomes.
-
-### Structured logging requirements
-
-The pipeline depends on your application writing structured JSON logs to stdout. Each error log must include `source`, `feature`, and `msg` fields so that Dispatch can fingerprint, deduplicate, and provide rich context to the investigating agent.
-
-**Log format:**
+Your app must write structured JSON to stdout. Dispatch fingerprints errors using three fields -- `source`, `feature`, and `msg` -- so every error log needs these.
 
 ```json
 {
@@ -493,46 +406,35 @@ The pipeline depends on your application writing structured JSON logs to stdout.
   "source": "billing",
   "feature": "charge-customer",
   "timestamp": "2025-01-15T10:30:00.000Z",
-  "userId": "user_abc123",
-  "orgId": "org_xyz789",
-  "stripeCustomerId": "cus_abc",
-  "amount": 2500,
-  "currency": "usd",
   "error": "Stripe error: card_declined",
-  "stack": "Error: card_declined\n    at ChargeService.charge (src/services/billing.ts:142)\n    at handleCheckout (src/api/routes/checkout.ts:58)"
+  "stack": "Error: card_declined\n    at ChargeService.charge (billing.ts:142)\n    at handleCheckout (checkout.ts:58)",
+  "userId": "user_abc123",
+  "amount": 2500
 }
 ```
 
-**Required fields:**
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `level` | Yes | Severity. Grafana filters on `level="error"`. |
+| `msg` | Yes | Human-readable message. Used for fingerprinting and shown to the agent. |
+| `source` | Yes | Module or service area (e.g. `"billing"`, `"auth"`). Used for fingerprinting. |
+| `feature` | Yes | Specific operation (e.g. `"charge-customer"`). Used for fingerprinting. |
+| `error` / `stack` | Recommended | Stack trace helps the agent find the root cause faster. |
+| Entity IDs | Recommended | `userId`, `orgId`, etc. help the agent understand scope. |
 
-| Field | Purpose | Example |
-|-------|---------|---------|
-| `level` | Severity. Grafana alert rules filter on `level="error"` | `"error"`, `"warn"` |
-| `msg` | Human-readable error message. Used for fingerprinting and agent context | `"Failed to process payment: card declined"` |
-| `source` | Module or service area. Used for fingerprinting and routing | `"billing"`, `"auth"`, `"whatsapp-webhook"` |
-| `feature` | Specific operation within the source. Used for fingerprinting | `"charge-customer"`, `"token-refresh"`, `"message-handler"` |
-
-**Recommended fields (provide more context to the agent):**
-
-| Field | Purpose |
-|-------|---------|
-| `error` / `stack` | Stack trace or error details -- the agent uses these to find the root cause |
-| `userId`, `orgId`, `applicationId` | Entity IDs help the agent understand scope and reproduce |
-| Domain-specific fields | Any relevant data (amounts, request IDs, external IDs) |
-
-**Example loggers:**
+<details>
+<summary><strong>Example loggers (TypeScript, Python, Go)</strong></summary>
 
 ```typescript
-// Node.js / TypeScript -- simple structured logger
+// Node.js / TypeScript
 function logError(msg: string, context: Record<string, unknown>, error?: Error) {
-  const entry = {
+  console.log(JSON.stringify({
     level: "error",
     msg,
     ...context,
     ...(error && { error: error.message, stack: error.stack }),
     timestamp: new Date().toISOString(),
-  };
-  console.log(JSON.stringify(entry));
+  }));
 }
 
 // Usage
@@ -542,27 +444,20 @@ try {
   logError("Failed to process payment", {
     source: "billing",
     feature: "charge-customer",
-    customerId,
-    amount,
+    customerId, amount,
   }, err);
   throw err;
 }
 ```
 
 ```python
-# Python -- structured JSON logging
+# Python
 import json, sys, traceback
 from datetime import datetime
 
-def log_error(msg: str, source: str, feature: str, error: Exception = None, **context):
-    entry = {
-        "level": "error",
-        "msg": msg,
-        "source": source,
-        "feature": feature,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        **context,
-    }
+def log_error(msg, source, feature, error=None, **context):
+    entry = {"level": "error", "msg": msg, "source": source, "feature": feature,
+             "timestamp": datetime.utcnow().isoformat() + "Z", **context}
     if error:
         entry["error"] = str(error)
         entry["stack"] = traceback.format_exc()
@@ -572,27 +467,15 @@ def log_error(msg: str, source: str, feature: str, error: Exception = None, **co
 try:
     process_webhook(payload)
 except Exception as e:
-    log_error(
-        "Webhook processing failed",
-        source="stripe-webhook",
-        feature="event-routing",
-        error=e,
-        event_type=payload.get("type"),
-        event_id=payload.get("id"),
-    )
+    log_error("Webhook processing failed", source="stripe-webhook",
+              feature="event-routing", error=e, event_type=payload.get("type"))
     raise
 ```
 
 ```go
 // Go -- slog with JSON handler
-import (
-    "log/slog"
-    "os"
-)
-
 logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-// Usage
 logger.Error("Failed to process payment",
     "source", "billing",
     "feature", "charge-customer",
@@ -602,12 +485,87 @@ logger.Error("Failed to process payment",
 )
 ```
 
-### Grafana alert rule configuration
+</details>
 
-The Grafana alert rule must extract `source`, `feature`, and `msg` from your logs and pass them as labels or annotations to the webhook. Here is a complete example:
+### Step 2: Deploy Loki + Grafana
+
+You need Loki for log storage and Grafana for alerting. If you already have these, skip to Step 3.
+
+**Docker Compose (simplest for getting started):**
 
 ```yaml
-# In your Grafana alerting provisioning (e.g. values.yaml for Helm)
+# docker-compose.monitoring.yml
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    ports: ["3100:3100"]
+    command: -config.file=/etc/loki/local-config.yaml
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports: ["3000:3000"]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    volumes:
+      - /var/log:/var/log:ro
+    command: -config.file=/etc/promtail/config.yml
+
+volumes:
+  grafana-data:
+```
+
+**Kubernetes:** Use the official Grafana Helm charts (`grafana/loki`, `grafana/promtail`, `grafana/grafana`). See the `monitoring/` directory in this repo for a production example with GCS storage, Google OAuth, and managed certificates.
+
+**Key concept:** Your app writes JSON to stdout. A collector (Promtail, Fluentd, Vector) ships those logs to Loki. Grafana queries Loki and fires alerts.
+
+### Step 3: Configure Grafana alerting
+
+You need two things in Grafana: an **alert rule** that detects errors, and a **contact point** that sends them to Dispatch.
+
+**Contact point** -- sends alerts to Dispatch's webhook:
+
+1. In Grafana, go to **Alerting > Contact points > New contact point**
+2. Type: **Webhook**
+3. URL: `https://your-dispatch-instance.com/api/loki/webhook`
+4. HTTP Method: POST
+5. Authorization Header: `Bearer <your DISPATCH_API_KEY>`
+
+**Alert rule** -- detects new error categories:
+
+1. Go to **Alerting > Alert rules > New alert rule**
+2. Query (Loki data source):
+   ```
+   count by (source, feature, msg) (
+     count_over_time({app="your-app", level="error"} | json [15m])
+   )
+   ```
+3. Condition: when query result **is above 3**
+4. Evaluation: every 1 minute, for 0 seconds (fire immediately)
+5. Labels: `severity = warning`
+6. Annotations:
+   - Summary: `{{ $labels.source }}/{{ $labels.feature }}: {{ $labels.msg }}`
+   - Description: `{{ $labels.msg }}`
+
+**Notification policy:**
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Group by | `alertname`, `source`, `feature` | Deduplicate by error type |
+| Group wait | 5 minutes | Let events accumulate before first alert |
+| Group interval | 1 hour | Don't re-send same group within 1h |
+| Repeat interval | 24 hours | Don't repeat same alert within 24h |
+
+<details>
+<summary><strong>Full Grafana provisioning YAML (for Helm/IaC)</strong></summary>
+
+If you manage Grafana via Helm or infrastructure-as-code, here's the full alerting config:
+
+```yaml
 alerting:
   rules:
     - orgId: 1
@@ -619,35 +577,23 @@ alerting:
           title: New Error Category
           condition: C
           data:
-            # Query A: count errors grouped by source, feature, msg
             - refId: A
-              relativeTimeRange:
-                from: 900    # 15 minutes
-                to: 0
+              relativeTimeRange: { from: 900, to: 0 }
               datasourceUid: loki
               model:
                 expr: |
                   count by (source, feature, msg) (
-                    count_over_time(
-                      {app="your-app", level="error"} | json [15m]
-                    )
+                    count_over_time({app="your-app", level="error"} | json [15m])
                   )
                 queryType: range
-            # Condition C: fire when count > 3
             - refId: C
-              relativeTimeRange:
-                from: 900
-                to: 0
+              relativeTimeRange: { from: 900, to: 0 }
               datasourceUid: __expr__
               model:
                 type: threshold
                 expression: A
                 conditions:
-                  - evaluator:
-                      type: gt
-                      params: [3]
-
-          # These labels are extracted from the query's group-by and passed to the webhook
+                  - evaluator: { type: gt, params: [3] }
           labels:
             severity: warning
           annotations:
@@ -676,15 +622,79 @@ alerting:
       repeat_interval: 24h
 ```
 
-**How it flows:**
+</details>
 
-1. Your app writes `{"level":"error", "source":"billing", "feature":"charge-customer", "msg":"card declined", ...}` to stdout
-2. Promtail (or your log collector) ships it to Loki with label `app="your-app"`
-3. The Grafana alert rule queries `{app="your-app", level="error"} | json` -- the `| json` stage extracts `source`, `feature`, and `msg` as query-time labels
-4. When the threshold fires (>3 events in 15min), Grafana sends a webhook with `labels.source`, `labels.feature`, `labels.msg` in the payload
-5. Dispatch's `/api/loki/webhook` receives it, fingerprints by `source|feature|normalizedMsg`, deduplicates, and creates an issue
-6. The spawn service checks budget/cooldown/concurrency gates, then dispatches `auto-investigate.yml` via GitHub Actions
-7. Claude Code receives the full error context (source, feature, message, sample log lines, event count) and investigates your codebase
+### Step 4: Configure Dispatch safety controls
+
+These env vars prevent runaway agent spending. Start conservative and increase as you build confidence:
+
+```env
+# Recommended starting values
+MAX_CONCURRENT_SPAWNS_ERROR=3      # Max 3 agents investigating errors at once
+DAILY_SPAWN_BUDGET_ERROR=10        # Max 10 auto-spawns per day
+SPAWN_COOLDOWN_HOURS=24            # Don't re-investigate same error within 24h
+MIN_EVENT_COUNT_TO_SPAWN=3         # Only investigate after 3+ occurrences
+SPAWN_DELAY_MINUTES=5              # Wait 5 min before spawning (avoids transient errors)
+```
+
+The **Fleet Status** panel in the sidebar shows real-time budget usage, active agents, and daily outcomes.
+
+### Step 5: Verify the pipeline
+
+1. Trigger an error in your application
+2. Check Grafana -- the error should appear in Loki within seconds
+3. Wait for the alert rule to fire (check **Alerting > Alert rules** for firing state)
+4. Check Dispatch -- a new issue should appear on the board
+5. If `MIN_EVENT_COUNT_TO_SPAWN` is met, an agent should auto-dispatch
+
+### How the safety gates work
+
+When Dispatch receives an error alert, it runs through these checks before spawning an agent:
+
+```
+Error alert received
+    |
+    v
+Kill switch enabled? ----yes----> Block (SPAWN_KILL_SWITCH=true)
+    |no
+    v
+Same fingerprint in cooldown? ---yes----> Block (already investigated recently)
+    |no
+    v
+Enough occurrences? ----no-----> Block (below MIN_EVENT_COUNT_TO_SPAWN)
+    |yes
+    v
+At concurrency limit? ---yes----> Block (MAX_CONCURRENT_SPAWNS_ERROR reached)
+    |no
+    v
+Daily budget exhausted? --yes----> Block (DAILY_SPAWN_BUDGET_ERROR reached)
+    |no
+    v
+Dispatch agent
+```
+
+### Fix verification
+
+After a fix PR is merged, Dispatch monitors the error fingerprint for 48 hours:
+
+- **Error reappears** -- The fix is marked as failed. The issue reopens for another attempt.
+- **No recurrence for 48h** -- The fix is verified. The issue auto-closes.
+
+This works because the Loki webhook handler checks incoming errors against merged fix PRs. If the same `source|feature|msg` fingerprint fires again, Dispatch knows the fix didn't stick.
+
+### Using Sentry or other error trackers
+
+The built-in pipeline is designed for **Loki + Grafana** because it gives Dispatch the richest error context (full structured logs with source/feature/msg fields for fingerprinting).
+
+If you use **Sentry**, Dispatch has a basic integration:
+
+1. Create an Internal Integration in Sentry
+2. Set webhook URL: `https://your-dispatch-instance.com/api/sentry/webhook`
+3. Enable events: Issue Created, Issue Resolved
+
+Sentry issues will appear on your Dispatch board, but the autonomous fix loop (auto-spawn, fingerprint dedup, fix verification) only works with the Loki pipeline. Sentry issues must be manually dispatched to agents.
+
+**For other error trackers** (Datadog, Honeybadger, Rollbar, etc.), you can build a custom webhook handler that transforms their alert payloads into Dispatch issues via the API or MCP tools. The key is extracting `source`, `feature`, and `msg` from whatever format your tracker uses.
 
 ## Deployment
 
