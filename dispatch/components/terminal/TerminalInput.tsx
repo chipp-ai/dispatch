@@ -51,14 +51,14 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-// Rough cost estimate: Sonnet 4.5 pricing ($3/M input, $15/M output)
+// Rough cost estimate: Opus 4.6 pricing ($5/M input, $25/M output)
 function estimateCost(metrics: TurnMetrics): string {
-  const inputCost = (metrics.inputTokens / 1_000_000) * 3;
-  const outputCost = (metrics.outputTokens / 1_000_000) * 15;
+  const inputCost = (metrics.inputTokens / 1_000_000) * 5;
+  const outputCost = (metrics.outputTokens / 1_000_000) * 25;
   // Cache reads are 90% cheaper
-  const cacheReadCost = (metrics.cacheReadTokens / 1_000_000) * 0.3;
+  const cacheReadCost = (metrics.cacheReadTokens / 1_000_000) * 0.5;
   // Cache creation is 25% more expensive
-  const cacheCreateCost = (metrics.cacheCreationTokens / 1_000_000) * 3.75;
+  const cacheCreateCost = (metrics.cacheCreationTokens / 1_000_000) * 6.25;
   const total = inputCost + outputCost + cacheReadCost + cacheCreateCost;
   if (total < 0.001) return "$0.00";
   if (total < 0.01) return `$${total.toFixed(3)}`;
