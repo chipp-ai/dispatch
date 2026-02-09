@@ -59,7 +59,7 @@ Orchestrator (Claude API + tools)
 GitHub Actions (Claude Code agents)
     |
     v
-Your Codebase (PRs targeting staging)
+Your Codebase (PRs targeting your default branch)
     |
     v
 Dispatch API (activity, plans, terminal streaming)
@@ -83,9 +83,22 @@ npm install
 docker-compose up -d db
 ```
 
-Or use an existing PostgreSQL instance with the pgvector extension.
+Or use an existing PostgreSQL instance -- it needs the [pgvector](https://github.com/pgvector/pgvector) extension. If using your own Postgres:
 
-### 3. Configure environment
+```bash
+createdb dispatch
+psql dispatch -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+### 3. Run the init migration
+
+```bash
+psql postgresql://postgres:postgres@localhost:5432/dispatch -f scripts/migrations/001-init.sql
+```
+
+This creates all 21 tables, enums, and indexes in a single step.
+
+### 4. Configure environment
 
 ```bash
 cp .env.example .env
@@ -95,20 +108,13 @@ Edit `.env` with your values. Minimum required:
 
 ```env
 PG_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dispatch
-OPENAI_API_KEY=sk-...          # For semantic search embeddings
-ANTHROPIC_API_KEY=sk-ant-...   # For orchestrator + agents
-DISPATCH_PASSWORD=your-password # Web UI login
-GITHUB_REPO=your-org/your-repo # Target codebase
-GITHUB_TOKEN=ghp_...           # For dispatching agents
+ANTHROPIC_API_KEY=sk-ant-...    # For orchestrator + agents
+DISPATCH_PASSWORD=your-password  # Web UI login
+GITHUB_REPO=your-org/your-repo  # Target codebase
+GITHUB_TOKEN=ghp_...            # For dispatching agents (see note below)
 ```
 
-### 4. Run the init migration
-
-```bash
-psql $PG_DATABASE_URL -f scripts/migrations/001-init.sql
-```
-
-This creates all 21 tables, enums, and indexes in a single step.
+> **GitHub token:** Must be a **classic** Personal Access Token with **`repo`** and **`workflow`** scopes. OAuth tokens (`gho_*` from `gh auth`) and fine-grained PATs without workflow scope will fail with a 502 when dispatching agents. Create one at [github.com/settings/tokens/new](https://github.com/settings/tokens/new).
 
 ### 5. Personalize your instance (optional)
 
@@ -133,19 +139,44 @@ Open http://localhost:3002 and log in with your `DISPATCH_PASSWORD`.
 
 ## Setting up GitHub Actions agents
 
-The agent workflows live in `.github/workflows/`. Copy them to your target repository:
+Dispatch spawns agents by triggering GitHub Actions `workflow_dispatch` events on your target repository. The agent workflows ship with Dispatch and need to be copied into your target repo.
+
+### 1. Copy workflows to your target repo
 
 ```bash
 cp -r .github/workflows/{auto-investigate,prd-investigate,prd-implement,qa-test,deep-research}.yml ../your-repo/.github/workflows/
 ```
 
-Then add these GitHub secrets to your repo:
+### 2. Add secrets to your target repo
+
+Go to your target repo's **Settings > Secrets and variables > Actions** and add:
 
 | Secret | Description |
 |--------|-------------|
-| `ANTHROPIC_API_KEY` | Claude API key for agent runs |
-| `DISPATCH_API_URL` | Your Dispatch instance URL (e.g. `https://dispatch.yoursite.com`) |
-| `DISPATCH_API_KEY` | Same as `DISPATCH_API_KEY` in your `.env` |
+| `ANTHROPIC_API_KEY` | Claude API key. Agents use this to run Claude Code sessions during workflows. |
+| `DISPATCH_API_URL` | Your Dispatch instance URL (e.g. `https://dispatch.yoursite.com`). Agents call back to report activity, post plans, and stream terminal output. |
+| `DISPATCH_API_KEY` | Must match the `DISPATCH_API_KEY` in your Dispatch `.env`. Used to authenticate agent callbacks. |
+
+### 3. Configure your Dispatch `.env`
+
+These environment variables control how Dispatch dispatches workflows:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | **Must be a classic PAT** with `repo` and `workflow` scopes. OAuth tokens (`gho_*`) and fine-grained PATs without workflow scope will fail with 502. Create at [github.com/settings/tokens/new](https://github.com/settings/tokens/new). |
+| `GITHUB_REPO` | Yes | Target repo in `owner/repo` format (e.g. `acme/backend`). |
+| `GITHUB_REF` | No | Branch for workflow dispatch (default: `main`). Agents check out this branch when they run. Set this to your default branch if it's not `main`. |
+| `NEXT_PUBLIC_GITHUB_REPO` | No | Same `owner/repo` value. Enables "View on GitHub" links in the UI for workflow runs. |
+
+### 4. Branch configuration
+
+All workflows accept an optional `ref` input that controls which branch agents check out. The precedence is:
+
+1. `ref` input passed per-dispatch (set automatically from `GITHUB_REF`)
+2. Falls back to `github.ref_name` (the branch the workflow was dispatched on)
+3. Defaults to `main` if neither is set
+
+If your default branch is `main`, no extra configuration is needed. If it's something else (e.g. `develop`), set `GITHUB_REF=develop` in your `.env`.
 
 ## Setting up webhooks
 
@@ -303,7 +334,7 @@ Spawn gate (budget, cooldown, concurrency checks)
 GitHub Actions (Claude Code auto-investigate workflow)
     |
     v
-PR targeting staging + 48h fix verification
+PR targeting your default branch + 48h fix verification
 ```
 
 ### Pipeline components
@@ -321,10 +352,10 @@ PR targeting staging + 48h fix verification
    - **Min event count** -- Only spawn after an error occurs N times (`MIN_EVENT_COUNT_TO_SPAWN`)
 
 5. **Agent workflow** (`auto-investigate.yml`) -- GitHub Actions workflow that:
-   - Checks out your codebase at staging
+   - Checks out your codebase at your configured branch (`GITHUB_REF`, default: `main`)
    - Runs Claude Code with full error context
    - Investigates the root cause, attempts a fix
-   - Opens a PR targeting staging if changes are made
+   - Opens a PR if changes are made
    - Reports activity back to Dispatch via API
 
 6. **Fix verification** (`fixTrackingService.ts`) -- After a fix PR is merged, monitors for 48 hours. If the same error fingerprint reappears in Loki, the fix is marked as failed. If 48 hours pass with no recurrence, the fix is verified and the issue auto-closes.
