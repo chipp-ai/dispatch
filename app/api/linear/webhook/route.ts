@@ -230,7 +230,7 @@ async function handleIssueCreate(
   let assigneeId: string | null = null;
   if (issueData.assignee) {
     const existingAgent = await db.queryOne<{ id: string }>(
-      `SELECT id FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+      `SELECT id FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
       [workspace.id, issueData.assignee.name]
     );
     if (existingAgent) {
@@ -238,7 +238,7 @@ async function handleIssueCreate(
     } else {
       assigneeId = uuidv4();
       await db.query(
-        `INSERT INTO chipp_agent (id, workspace_id, name, description, is_active, created_at)
+        `INSERT INTO dispatch_agent (id, workspace_id, name, description, is_active, created_at)
          VALUES ($1, $2, $3, $4, true, NOW())`,
         [
           assigneeId,
@@ -255,7 +255,7 @@ async function handleIssueCreate(
   const issueNumber = parseInt(issueData.identifier.split("-")[1], 10);
 
   await db.query(
-    `INSERT INTO chipp_issue (
+    `INSERT INTO dispatch_issue (
       id, identifier, issue_number, title, description,
       status_id, priority, assignee_id, workspace_id,
       created_at, updated_at
@@ -278,7 +278,7 @@ async function handleIssueCreate(
   // Add labels
   for (const labelId of labelIds) {
     await db.query(
-      `INSERT INTO chipp_issue_label (issue_id, label_id)
+      `INSERT INTO dispatch_issue_label (issue_id, label_id)
        VALUES ($1, $2) ON CONFLICT DO NOTHING`,
       [issueId, labelId]
     );
@@ -299,7 +299,7 @@ async function handleIssueCreate(
 
   // Update workspace issue counter
   await db.query(
-    `UPDATE chipp_workspace SET next_issue_number = GREATEST(next_issue_number, $1 + 1) WHERE id = $2`,
+    `UPDATE dispatch_workspace SET next_issue_number = GREATEST(next_issue_number, $1 + 1) WHERE id = $2`,
     [issueNumber, workspace.id]
   );
 
@@ -349,8 +349,8 @@ async function handleIssueUpdate(
     status_name: string;
   }>(
     `SELECT i.status_id, s.name as status_name
-     FROM chipp_issue i
-     JOIN chipp_status s ON i.status_id = s.id
+     FROM dispatch_issue i
+     JOIN dispatch_status s ON i.status_id = s.id
      WHERE i.id = $1`,
     [existingLink.issue_id]
   );
@@ -369,7 +369,7 @@ async function handleIssueUpdate(
   let assigneeId: string | null = null;
   if (issueData.assignee) {
     const existingAgent = await db.queryOne<{ id: string }>(
-      `SELECT id FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+      `SELECT id FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
       [workspace.id, issueData.assignee.name]
     );
     if (existingAgent) {
@@ -377,7 +377,7 @@ async function handleIssueUpdate(
     } else {
       assigneeId = uuidv4();
       await db.query(
-        `INSERT INTO chipp_agent (id, workspace_id, name, description, is_active, created_at)
+        `INSERT INTO dispatch_agent (id, workspace_id, name, description, is_active, created_at)
          VALUES ($1, $2, $3, $4, true, NOW())`,
         [
           assigneeId,
@@ -391,7 +391,7 @@ async function handleIssueUpdate(
 
   // Update issue
   await db.query(
-    `UPDATE chipp_issue SET
+    `UPDATE dispatch_issue SET
       title = $1,
       description = $2,
       status_id = $3,
@@ -411,7 +411,7 @@ async function handleIssueUpdate(
 
   // Update labels if provided
   if (issueData.labels) {
-    await db.query(`DELETE FROM chipp_issue_label WHERE issue_id = $1`, [
+    await db.query(`DELETE FROM dispatch_issue_label WHERE issue_id = $1`, [
       existingLink.issue_id,
     ]);
 
@@ -424,7 +424,7 @@ async function handleIssueUpdate(
         });
       }
       await db.query(
-        `INSERT INTO chipp_issue_label (issue_id, label_id)
+        `INSERT INTO dispatch_issue_label (issue_id, label_id)
          VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [existingLink.issue_id, existingLabel.id]
       );
@@ -433,7 +433,7 @@ async function handleIssueUpdate(
 
   // Update external issue metadata
   await db.query(
-    `UPDATE chipp_external_issue SET metadata = $1 WHERE id = $2`,
+    `UPDATE dispatch_external_issue SET metadata = $1 WHERE id = $2`,
     [
       JSON.stringify({
         identifier: issueData.identifier,
@@ -501,7 +501,7 @@ async function handleIssueRemove(
   const issueId = existingLink.issue_id;
 
   // Delete the issue (cascades to labels, comments, external links)
-  await db.query(`DELETE FROM chipp_issue WHERE id = $1`, [issueId]);
+  await db.query(`DELETE FROM dispatch_issue WHERE id = $1`, [issueId]);
 
   // Broadcast deletion
   broadcastBoardEvent({

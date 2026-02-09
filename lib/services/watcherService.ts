@@ -21,7 +21,7 @@ export async function addWatcher(
   customerId: string
 ): Promise<void> {
   await db.query(
-    `INSERT INTO chipp_issue_watcher (issue_id, customer_id, added_at)
+    `INSERT INTO dispatch_issue_watcher (issue_id, customer_id, added_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (issue_id, customer_id) DO NOTHING`,
     [issueId, customerId]
@@ -36,7 +36,7 @@ export async function removeWatcher(
   customerId: string
 ): Promise<void> {
   await db.query(
-    `DELETE FROM chipp_issue_watcher
+    `DELETE FROM dispatch_issue_watcher
      WHERE issue_id = $1 AND customer_id = $2`,
     [issueId, customerId]
   );
@@ -55,8 +55,8 @@ export async function getWatchingCustomers(
     slack_channel_id: string | null;
   }>(
     `SELECT c.id, c.name, c.slack_channel_id
-     FROM chipp_issue_watcher w
-     JOIN chipp_customer c ON w.customer_id = c.id
+     FROM dispatch_issue_watcher w
+     JOIN dispatch_customer c ON w.customer_id = c.id
      WHERE w.issue_id = $1
      ORDER BY w.added_at ASC`,
     [issueId]
@@ -78,7 +78,7 @@ export async function isCustomerWatching(
 ): Promise<boolean> {
   const result = await db.queryOne<{ count: string }>(
     `SELECT COUNT(*)::text as count
-     FROM chipp_issue_watcher
+     FROM dispatch_issue_watcher
      WHERE issue_id = $1 AND customer_id = $2`,
     [issueId, customerId]
   );
@@ -93,7 +93,7 @@ export async function getWatchedIssueIds(
   customerId: string
 ): Promise<string[]> {
   const result = await db.query<{ issue_id: string }>(
-    `SELECT issue_id FROM chipp_issue_watcher WHERE customer_id = $1`,
+    `SELECT issue_id FROM dispatch_issue_watcher WHERE customer_id = $1`,
     [customerId]
   );
   return result.map((r) => r.issue_id);
@@ -104,7 +104,7 @@ export async function getWatchedIssueIds(
  */
 export async function getWatcherCount(issueId: string): Promise<number> {
   const result = await db.queryOne<{ count: string }>(
-    `SELECT COUNT(*)::text as count FROM chipp_issue_watcher WHERE issue_id = $1`,
+    `SELECT COUNT(*)::text as count FROM dispatch_issue_watcher WHERE issue_id = $1`,
     [issueId]
   );
   return result ? parseInt(result.count, 10) : 0;
@@ -120,7 +120,7 @@ export async function listWatchers(issueId: string): Promise<IssueWatcher[]> {
     added_at: Date;
   }>(
     `SELECT issue_id, customer_id, added_at
-     FROM chipp_issue_watcher
+     FROM dispatch_issue_watcher
      WHERE issue_id = $1
      ORDER BY added_at ASC`,
     [issueId]

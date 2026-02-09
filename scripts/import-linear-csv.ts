@@ -1,5 +1,5 @@
 /**
- * Import Linear CSV Export into Chipp Issues
+ * Import Linear CSV Export into Dispatch
  *
  * Usage:
  *   npx tsx scripts/import-linear-csv.ts /path/to/export.csv
@@ -190,7 +190,7 @@ async function generateBulkEmbeddings(
 }
 
 async function main() {
-  console.log(`\n📥 Chipp Issues - Linear CSV Import\n`);
+  console.log(`\n📥 Dispatch - Linear CSV Import\n`);
   console.log(`CSV File: ${csvPath}`);
   console.log(`Dry Run: ${dryRun}`);
   console.log(`Skip Embeddings: ${skipEmbeddings}`);
@@ -277,23 +277,23 @@ async function main() {
   try {
     // Get or create workspace
     let workspace = await pool
-      .query(`SELECT * FROM chipp_workspace LIMIT 1`)
+      .query(`SELECT * FROM dispatch_workspace LIMIT 1`)
       .then((r) => r.rows[0]);
 
     if (!workspace) {
       const wsId = uuidv4();
       await pool.query(
-        `INSERT INTO chipp_workspace (id, name, issue_prefix, next_issue_number)
-         VALUES ($1, 'Chipp', 'CHIPP', 1)`,
+        `INSERT INTO dispatch_workspace (id, name, issue_prefix, next_issue_number)
+         VALUES ($1, process.env.DEFAULT_WORKSPACE_NAME || 'My Workspace', process.env.DEFAULT_ISSUE_PREFIX || 'DISPATCH', 1)`,
         [wsId]
       );
-      workspace = { id: wsId, issue_prefix: "CHIPP" };
+      workspace = { id: wsId, issue_prefix: process.env.DEFAULT_ISSUE_PREFIX || "DISPATCH" };
       console.log(`✅ Created workspace\n`);
     }
 
     // Get status mapping
     const statusRows = await pool.query(
-      `SELECT id, name FROM chipp_status WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_status WHERE workspace_id = $1`,
       [workspace.id]
     );
     const statusMap = new Map<string, string>();
@@ -305,7 +305,7 @@ async function main() {
     console.log(`🏷️  Creating labels...`);
     const labelMap = new Map<string, string>();
     const existingLabels = await pool.query(
-      `SELECT id, name FROM chipp_label WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_label WHERE workspace_id = $1`,
       [workspace.id]
     );
     existingLabels.rows.forEach((r: { id: string; name: string }) => {
@@ -326,7 +326,7 @@ async function main() {
       if (!labelMap.has(label)) {
         const labelId = uuidv4();
         await pool.query(
-          `INSERT INTO chipp_label (id, workspace_id, name, color)
+          `INSERT INTO dispatch_label (id, workspace_id, name, color)
            VALUES ($1, $2, $3, $4)`,
           [labelId, workspace.id, label, colors[colorIdx % colors.length]]
         );
@@ -340,7 +340,7 @@ async function main() {
     console.log(`👤 Creating agents for assignees...`);
     const agentMap = new Map<string, string>();
     const existingAgents = await pool.query(
-      `SELECT id, name FROM chipp_agent WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_agent WHERE workspace_id = $1`,
       [workspace.id]
     );
     existingAgents.rows.forEach((r: { id: string; name: string }) => {
@@ -352,7 +352,7 @@ async function main() {
       if (!agentMap.has(name)) {
         const agentId = uuidv4();
         await pool.query(
-          `INSERT INTO chipp_agent (id, workspace_id, name, description)
+          `INSERT INTO dispatch_agent (id, workspace_id, name, description)
            VALUES ($1, $2, $3, $4)`,
           [agentId, workspace.id, name, `Imported from Linear: ${email}`]
         );
@@ -441,7 +441,7 @@ async function main() {
         try {
           // Insert issue
           await pool.query(
-            `INSERT INTO chipp_issue (
+            `INSERT INTO dispatch_issue (
               id, identifier, issue_number, title, description,
               status_id, priority, assignee_id, workspace_id,
               embedding, embedding_provider, embedding_model,
@@ -471,7 +471,7 @@ async function main() {
             const labelId = labelMap.get(labelName);
             if (labelId) {
               await pool.query(
-                `INSERT INTO chipp_issue_label (issue_id, label_id)
+                `INSERT INTO dispatch_issue_label (issue_id, label_id)
                  VALUES ($1, $2)
                  ON CONFLICT DO NOTHING`,
                 [issue.id, labelId]
@@ -496,7 +496,7 @@ async function main() {
 
     // Update workspace next_issue_number
     await pool.query(
-      `UPDATE chipp_workspace SET next_issue_number = $1 WHERE id = $2`,
+      `UPDATE dispatch_workspace SET next_issue_number = $1 WHERE id = $2`,
       [maxIssueNumber + 1, workspace.id]
     );
 

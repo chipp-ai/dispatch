@@ -41,7 +41,7 @@ export async function getWorkspaceWebhooks(
   workspaceId: string
 ): Promise<Webhook[]> {
   return db.query<Webhook>(
-    `SELECT * FROM chipp_webhook WHERE workspace_id = $1 AND enabled = true`,
+    `SELECT * FROM dispatch_webhook WHERE workspace_id = $1 AND enabled = true`,
     [workspaceId]
   );
 }
@@ -52,7 +52,7 @@ export async function getWebhooksForEvent(
   eventType: WebhookEventType
 ): Promise<Webhook[]> {
   return db.query<Webhook>(
-    `SELECT * FROM chipp_webhook
+    `SELECT * FROM dispatch_webhook
      WHERE workspace_id = $1
        AND enabled = true
        AND $2 = ANY(events)`,
@@ -70,13 +70,13 @@ export async function registerWebhook(
   const secret = crypto.randomBytes(32).toString("hex");
 
   await db.query(
-    `INSERT INTO chipp_webhook (id, workspace_id, url, secret, events, enabled, created_at)
+    `INSERT INTO dispatch_webhook (id, workspace_id, url, secret, events, enabled, created_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW())`,
     [id, workspaceId, url, secret, events]
   );
 
   const webhook = await db.queryOne<Webhook>(
-    `SELECT * FROM chipp_webhook WHERE id = $1`,
+    `SELECT * FROM dispatch_webhook WHERE id = $1`,
     [id]
   );
   return webhook!;
@@ -89,7 +89,7 @@ export async function updateAgentWebhook(
 ): Promise<void> {
   const secret = crypto.randomBytes(32).toString("hex");
   await db.query(
-    `UPDATE chipp_agent SET webhook_url = $1, webhook_secret = $2, updated_at = NOW() WHERE id = $3`,
+    `UPDATE dispatch_agent SET webhook_url = $1, webhook_secret = $2, updated_at = NOW() WHERE id = $3`,
     [webhookUrl, secret, agentId]
   );
 }
@@ -101,7 +101,7 @@ export async function getAgentWebhook(
   const agent = await db.queryOne<{
     webhook_url: string | null;
     webhook_secret: string | null;
-  }>(`SELECT webhook_url, webhook_secret FROM chipp_agent WHERE id = $1`, [
+  }>(`SELECT webhook_url, webhook_secret FROM dispatch_agent WHERE id = $1`, [
     agentId,
   ]);
   if (!agent?.webhook_url) return null;
@@ -110,7 +110,7 @@ export async function getAgentWebhook(
 
 // Deactivate a webhook
 export async function deactivateWebhook(webhookId: string): Promise<void> {
-  await db.query(`UPDATE chipp_webhook SET enabled = false WHERE id = $1`, [
+  await db.query(`UPDATE dispatch_webhook SET enabled = false WHERE id = $1`, [
     webhookId,
   ]);
 }
@@ -130,7 +130,7 @@ async function recordDelivery(
   successful: boolean
 ): Promise<void> {
   await db.query(
-    `INSERT INTO chipp_webhook_delivery (id, webhook_id, event, payload, status_code, response_body, successful, delivered_at)
+    `INSERT INTO dispatch_webhook_delivery (id, webhook_id, event, payload, status_code, response_body, successful, delivered_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
     [
       randomUUID(),

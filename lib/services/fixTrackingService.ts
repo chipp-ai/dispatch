@@ -102,18 +102,21 @@ export function extractSentryIdsFromPR(
 }
 
 /**
- * Extract Chipp Issues identifiers from PR title and body
- * Matches patterns like: CHIPP-123, [CHIPP-456]
- * These are used by auto-investigate PRs: "fix(source): title [CHIPP-123]"
+ * Extract Dispatch issue identifiers from PR title and body.
+ * Matches patterns like: PREFIX-123, [PREFIX-456]
+ * Used by auto-investigate PRs: "fix(source): title [DISPATCH-123]"
+ *
+ * Matches any UPPERCASE-DIGITS pattern to support any configured issue prefix.
  */
-export function extractChippIssueIdsFromPR(
+export function extractDispatchIssueIdsFromPR(
   title: string,
   body: string | null
 ): string[] {
   const combined = `${title}\n${body || ""}`;
 
-  // Match CHIPP-NNN identifiers (our issue tracker format)
-  const pattern = /\bCHIPP-(\d+)\b/gi;
+  // Match any UPPERCASE_LETTERS-DIGITS identifier pattern
+  // This handles any configured issue prefix (DISPATCH-123, MYPROJECT-123, etc.)
+  const pattern = /\b([A-Z]+-\d+)\b/g;
   const ids = new Set<string>();
 
   let match;
@@ -125,18 +128,18 @@ export function extractChippIssueIdsFromPR(
 }
 
 /**
- * Find chipp issues by their identifier (CHIPP-123 format)
+ * Find dispatch issues by their identifier (PREFIX-123 format)
  */
-export async function findIssuesForChippIds(
-  chippIds: string[]
+export async function findIssuesForDispatchIds(
+  dispatchIds: string[]
 ): Promise<Array<{ issueId: string; identifier: string }>> {
-  if (chippIds.length === 0) return [];
+  if (dispatchIds.length === 0) return [];
 
   const results: Array<{ issueId: string; identifier: string }> = [];
 
-  for (const identifier of chippIds) {
+  for (const identifier of dispatchIds) {
     const issue = await db.queryOne<{ id: string; identifier: string }>(
-      `SELECT id, identifier FROM chipp_issue WHERE identifier = $1`,
+      `SELECT id, identifier FROM dispatch_issue WHERE identifier = $1`,
       [identifier]
     );
 
@@ -149,7 +152,7 @@ export async function findIssuesForChippIds(
 }
 
 /**
- * Find chipp issues linked to the given Sentry IDs
+ * Find Dispatch issues linked to the given Sentry IDs
  */
 export async function findIssuesForSentryIds(
   sentryIds: string[]
@@ -171,7 +174,7 @@ export async function findIssuesForSentryIds(
       issue_id: string;
       metadata: { shortId?: string };
     }>(
-      `SELECT id, issue_id, metadata FROM chipp_external_issue
+      `SELECT id, issue_id, metadata FROM dispatch_external_issue
        WHERE source = 'sentry' AND metadata->>'shortId' = $1`,
       [sentryId]
     );
@@ -212,7 +215,7 @@ export async function createFixAttempt(
   const id = uuidv4();
 
   const result = await db.query<FixAttempt>(
-    `INSERT INTO chipp_fix_attempt
+    `INSERT INTO dispatch_fix_attempt
      (id, issue_id, pr_number, pr_url, pr_title, pr_body, merged_at, merged_sha, verification_status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'awaiting_deploy')
      RETURNING *`,
@@ -242,7 +245,7 @@ export async function getFixAttemptsForIssue(
   issueId: string
 ): Promise<FixAttempt[]> {
   return db.query<FixAttempt>(
-    `SELECT * FROM chipp_fix_attempt WHERE issue_id = $1 ORDER BY created_at DESC`,
+    `SELECT * FROM dispatch_fix_attempt WHERE issue_id = $1 ORDER BY created_at DESC`,
     [issueId]
   );
 }
@@ -254,7 +257,7 @@ export async function getLatestFixAttempt(
   issueId: string
 ): Promise<FixAttempt | null> {
   return db.queryOne<FixAttempt>(
-    `SELECT * FROM chipp_fix_attempt WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT * FROM dispatch_fix_attempt WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [issueId]
   );
 }
@@ -264,7 +267,7 @@ export async function getLatestFixAttempt(
  */
 export async function getFixAttemptsAwaitingDeploy(): Promise<FixAttempt[]> {
   return db.query<FixAttempt>(
-    `SELECT * FROM chipp_fix_attempt WHERE verification_status = 'awaiting_deploy'`
+    `SELECT * FROM dispatch_fix_attempt WHERE verification_status = 'awaiting_deploy'`
   );
 }
 
@@ -273,7 +276,7 @@ export async function getFixAttemptsAwaitingDeploy(): Promise<FixAttempt[]> {
  */
 export async function getFixAttemptsInMonitoring(): Promise<FixAttempt[]> {
   return db.query<FixAttempt>(
-    `SELECT * FROM chipp_fix_attempt WHERE verification_status = 'monitoring'`
+    `SELECT * FROM dispatch_fix_attempt WHERE verification_status = 'monitoring'`
   );
 }
 
@@ -297,7 +300,7 @@ export async function markFixAttemptsDeployed(
   // For simplicity, we mark all awaiting_deploy attempts as deployed
   // In production, you might want to verify the SHA relationship via git
   const result = await db.query<{ count: number }>(
-    `UPDATE chipp_fix_attempt
+    `UPDATE dispatch_fix_attempt
      SET deployed_sha = $1,
          deployed_at = $2,
          verification_status = 'monitoring',
@@ -364,7 +367,7 @@ export async function checkFixVerification(
 
   // Update last checked timestamp
   await db.query(
-    `UPDATE chipp_fix_attempt SET verification_checked_at = NOW() WHERE id = $1`,
+    `UPDATE dispatch_fix_attempt SET verification_checked_at = NOW() WHERE id = $1`,
     [fixAttempt.id]
   );
 
@@ -385,8 +388,8 @@ async function checkForPostDeployErrors(
     created_at: Date;
   }>(
     `SELECT sel.event_count, sel.created_at
-     FROM chipp_sentry_event_log sel
-     JOIN chipp_external_issue ei ON sel.external_issue_id = ei.id
+     FROM dispatch_sentry_event_log sel
+     JOIN dispatch_external_issue ei ON sel.external_issue_id = ei.id
      WHERE ei.issue_id = $1
        AND sel.created_at > $2
      ORDER BY sel.created_at DESC
@@ -404,7 +407,7 @@ async function checkForPostDeployErrors(
     last_seen_at: Date;
   }>(
     `SELECT event_count, last_seen_at
-     FROM chipp_external_issue
+     FROM dispatch_external_issue
      WHERE issue_id = $1
        AND source = 'loki'
        AND last_seen_at > $2`,
@@ -423,7 +426,7 @@ async function checkForPostDeployErrors(
  */
 export async function markFixAsVerified(fixAttemptId: string): Promise<void> {
   await db.query(
-    `UPDATE chipp_fix_attempt
+    `UPDATE dispatch_fix_attempt
      SET verification_status = 'verified',
          verification_checked_at = NOW(),
          updated_at = NOW()
@@ -444,7 +447,7 @@ export async function markFixAsFailed(
 ): Promise<void> {
   // Update the fix attempt record
   await db.query(
-    `UPDATE chipp_fix_attempt
+    `UPDATE dispatch_fix_attempt
      SET verification_status = 'failed',
          failure_reason = $2,
          sentry_events_post_deploy = $3,
@@ -456,7 +459,7 @@ export async function markFixAsFailed(
 
   // Get the fix attempt to find the issue
   const fixAttempt = await db.queryOne<FixAttempt>(
-    `SELECT * FROM chipp_fix_attempt WHERE id = $1`,
+    `SELECT * FROM dispatch_fix_attempt WHERE id = $1`,
     [fixAttemptId]
   );
 
@@ -528,7 +531,7 @@ This issue has been moved back to Backlog with increased priority. Please invest
 
   // 6. Add the label
   await db.query(
-    `INSERT INTO chipp_issue_label (issue_id, label_id)
+    `INSERT INTO dispatch_issue_label (issue_id, label_id)
      VALUES ($1, $2)
      ON CONFLICT (issue_id, label_id) DO NOTHING`,
     [fixAttempt.issue_id, fixFailedLabel.id]
@@ -606,7 +609,7 @@ export async function canMoveToCloseStatus(
 ): Promise<{ allowed: boolean; reason?: string }> {
   // Check if issue has an error source link (Sentry or Loki)
   const errorLink = await db.queryOne<{ id: string; source: string }>(
-    `SELECT id, source FROM chipp_external_issue WHERE issue_id = $1 AND source IN ('sentry', 'loki')`,
+    `SELECT id, source FROM dispatch_external_issue WHERE issue_id = $1 AND source IN ('sentry', 'loki')`,
     [issueId]
   );
 

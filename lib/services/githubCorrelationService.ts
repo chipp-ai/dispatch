@@ -49,7 +49,7 @@ export async function findSuspectedCommits(
   lookbackHours: number = 48
 ): Promise<CorrelationResult> {
   const githubToken = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO; // e.g., "BenchmarkAI/chipp-monorepo"
+  const repo = process.env.GITHUB_REPO; // e.g., "myorg/myrepo"
 
   if (!githubToken || !repo) {
     console.warn(

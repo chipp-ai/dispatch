@@ -165,7 +165,7 @@ async function processAlert(alert: GrafanaAlert): Promise<{
   if (existingLink) {
     // Known error: increment event count and update last_seen
     await db.query(
-      `UPDATE chipp_external_issue
+      `UPDATE dispatch_external_issue
        SET event_count = event_count + $1,
            last_seen_at = NOW()
        WHERE id = $2`,
@@ -228,7 +228,7 @@ async function processAlert(alert: GrafanaAlert): Promise<{
   // (linkExternalIssue sets event_count=1 by default, we may need more)
   if (context.eventCount > 1) {
     await db.query(
-      `UPDATE chipp_external_issue
+      `UPDATE dispatch_external_issue
        SET event_count = $1
        WHERE source = 'loki' AND external_id = $2`,
       [context.eventCount, context.fingerprint]
@@ -262,7 +262,7 @@ async function processAlert(alert: GrafanaAlert): Promise<{
 }
 
 /**
- * Create a Chipp Issue from Loki error context.
+ * Create a Dispatch issue from Loki error context.
  */
 async function createIssueFromLokiContext(
   context: LokiErrorContext
@@ -352,7 +352,7 @@ async function maybeSpawnForExistingIssue(
     description: string | null;
     spawn_status: string | null;
   }>(
-    `SELECT id, identifier, title, description, spawn_status FROM chipp_issue WHERE id = $1`,
+    `SELECT id, identifier, title, description, spawn_status FROM dispatch_issue WHERE id = $1`,
     [issueId]
   );
 

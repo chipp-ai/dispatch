@@ -57,7 +57,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (body.statusId && body.statusId !== previousStatusId) {
       // Check if the target status is a closed status
       const targetStatus = await db.queryOne<{ is_closed: boolean }>(
-        `SELECT is_closed FROM chipp_status WHERE id = $1`,
+        `SELECT is_closed FROM dispatch_status WHERE id = $1`,
         [body.statusId]
       );
 

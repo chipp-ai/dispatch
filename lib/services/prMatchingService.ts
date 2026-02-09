@@ -108,8 +108,8 @@ async function findExplicitMatches(pr: PRData): Promise<IssueCandidate[]> {
   const placeholders = uniqueIdentifiers.map((_, i) => `$${i + 1}`).join(", ");
   return db.query<IssueCandidate>(
     `SELECT i.id, i.identifier, i.title, i.description, s.name as status_name, 0.9 as similarity
-     FROM chipp_issue i
-     JOIN chipp_status s ON i.status_id = s.id
+     FROM dispatch_issue i
+     JOIN dispatch_status s ON i.status_id = s.id
      WHERE i.identifier IN (${placeholders})`,
     uniqueIdentifiers
   );
@@ -134,8 +134,8 @@ async function findSemanticMatches(
         i.id, i.identifier, i.title, i.description,
         s.name as status_name,
         1 - (i.embedding <=> $1::vector) as similarity
-      FROM chipp_issue i
-      JOIN chipp_status s ON i.status_id = s.id
+      FROM dispatch_issue i
+      JOIN dispatch_status s ON i.status_id = s.id
       WHERE i.workspace_id = $2
         AND i.embedding IS NOT NULL
         AND NOT s.is_closed
@@ -284,8 +284,8 @@ export async function analyzeReleasePR(
   // Get all issues in "In Staging" status
   const inStagingIssues = await db.query<IssueCandidate>(
     `SELECT i.id, i.identifier, i.title, i.description, s.name as status_name, 1.0 as similarity
-     FROM chipp_issue i
-     JOIN chipp_status s ON i.status_id = s.id
+     FROM dispatch_issue i
+     JOIN dispatch_status s ON i.status_id = s.id
      WHERE i.workspace_id = $1
        AND LOWER(s.name) = 'in staging'`,
     [workspaceId]

@@ -80,10 +80,10 @@ export async function GET(
               c.logo_url as customer_logo_url,
               u.slack_display_name as reporter_name,
               u.slack_avatar_url as reporter_avatar_url
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
-       LEFT JOIN chipp_customer c ON i.customer_id = c.id
-       LEFT JOIN chipp_customer_user u ON i.reporter_id = u.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
+       LEFT JOIN dispatch_customer c ON i.customer_id = c.id
+       LEFT JOIN dispatch_customer_user u ON i.reporter_id = u.id
        WHERE i.identifier = $1`,
       [identifier.toUpperCase()]
     );

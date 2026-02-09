@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Resolve issue ID and identifier (accept both UUID and identifier like CHIPP-123)
     const issue = await db.queryOne<{ id: string; identifier: string }>(
-      `SELECT id, identifier FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+      `SELECT id, identifier FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
       [id]
     );
 

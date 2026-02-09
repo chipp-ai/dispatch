@@ -1,21 +1,21 @@
 # External Issue Linking
 
-This document describes the external issue linking system used to connect chipp-issues with external tracking systems like Sentry, GitHub, and Linear.
+This document describes the external issue linking system used to connect Dispatch with external tracking systems like Sentry, GitHub, and Linear.
 
 ## Overview
 
 The external issue linking system provides:
 
-- **Deduplication**: Prevent creating duplicate chipp-issues for the same external issue
-- **Traceability**: Link chipp-issues back to their source (Sentry error, GitHub issue, etc.)
+- **Deduplication**: Prevent creating duplicate Dispatch for the same external issue
+- **Traceability**: Link Dispatch back to their source (Sentry error, GitHub issue, etc.)
 - **Metadata storage**: Keep relevant context from the external system
 
 ## Database Schema
 
 ```sql
-CREATE TABLE chipp_external_issue (
+CREATE TABLE dispatch_external_issue (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    issue_id TEXT NOT NULL REFERENCES chipp_issue(id) ON DELETE CASCADE,
+    issue_id TEXT NOT NULL REFERENCES dispatch_issue(id) ON DELETE CASCADE,
     source TEXT NOT NULL,           -- 'sentry', 'github', 'linear'
     external_id TEXT NOT NULL,      -- ID in the external system
     external_url TEXT,              -- Direct link to the external issue
@@ -25,9 +25,9 @@ CREATE TABLE chipp_external_issue (
 );
 
 -- Indexes for efficient lookups
-CREATE INDEX chipp_external_issue_issue_id_idx ON chipp_external_issue(issue_id);
-CREATE INDEX chipp_external_issue_source_idx ON chipp_external_issue(source);
-CREATE INDEX chipp_external_issue_external_id_idx ON chipp_external_issue(external_id);
+CREATE INDEX dispatch_external_issue_issue_id_idx ON dispatch_external_issue(issue_id);
+CREATE INDEX dispatch_external_issue_source_idx ON dispatch_external_issue(source);
+CREATE INDEX dispatch_external_issue_external_id_idx ON dispatch_external_issue(external_id);
 ```
 
 ## Service API
@@ -36,7 +36,7 @@ The `externalIssueService.ts` provides the following functions:
 
 ### findByExternalId
 
-Find an existing chipp-issue linked to an external issue.
+Find an existing Dispatch issue linked to an external issue.
 
 ```typescript
 import { findByExternalId } from "@/lib/services/externalIssueService";
@@ -49,13 +49,13 @@ if (link) {
 
 ### linkExternalIssue
 
-Create a new link between a chipp-issue and an external issue.
+Create a new link between a Dispatch issue and an external issue.
 
 ```typescript
 import { linkExternalIssue } from "@/lib/services/externalIssueService";
 
 await linkExternalIssue({
-  issueId: "chipp-issue-uuid",
+  issueId: "Dispatch issue-uuid",
   source: "sentry",
   externalId: "12345",
   externalUrl: "https://sentry.io/issues/12345/",
@@ -69,12 +69,12 @@ await linkExternalIssue({
 
 ### getExternalLinksForIssue
 
-Get all external links for a chipp-issue.
+Get all external links for a Dispatch issue.
 
 ```typescript
 import { getExternalLinksForIssue } from "@/lib/services/externalIssueService";
 
-const links = await getExternalLinksForIssue("chipp-issue-uuid");
+const links = await getExternalLinksForIssue("Dispatch issue-uuid");
 // Returns array of ExternalIssue objects
 ```
 
@@ -87,7 +87,7 @@ import { isExternalIssueLinked } from "@/lib/services/externalIssueService";
 
 const exists = await isExternalIssueLinked(
   "github",
-  "BenchmarkAI/chipp-monorepo#123"
+  "yourorg/yourrepo#123"
 );
 if (exists) {
   // Skip creating a new issue
@@ -99,7 +99,7 @@ if (exists) {
 | Source   | Description           | External ID Format                                           |
 | -------- | --------------------- | ------------------------------------------------------------ |
 | `sentry` | Sentry error tracking | Sentry issue ID (e.g., `12345`)                              |
-| `github` | GitHub issues/PRs     | `owner/repo#number` (e.g., `BenchmarkAI/chipp-monorepo#123`) |
+| `github` | GitHub issues/PRs     | `owner/repo#number` (e.g., `yourorg/yourrepo#123`) |
 | `linear` | Linear issues         | Linear issue ID (e.g., `ENG-123`)                            |
 
 ## Usage Pattern
@@ -121,7 +121,7 @@ async function handleExternalWebhook(externalId: string, data: ExternalData) {
     return { deduplicated: true, issueId: existingLink.issue_id };
   }
 
-  // 2. Create the chipp-issue
+  // 2. Create the Dispatch issue
   const issue = await createIssue(workspaceId, {
     title: data.title,
     description: data.description,
@@ -167,7 +167,7 @@ async function handleExternalWebhook(externalId: string, data: ExternalData) {
 
 ```json
 {
-  "repo": "BenchmarkAI/chipp-monorepo",
+  "repo": "yourorg/yourrepo",
   "number": 123,
   "state": "open",
   "author": "username",
@@ -198,7 +198,7 @@ The `UNIQUE(source, external_id)` constraint ensures:
 
 ### Cascade Delete
 
-When a chipp-issue is deleted, all its external links are automatically deleted via `ON DELETE CASCADE`. This maintains referential integrity.
+When a Dispatch issue is deleted, all its external links are automatically deleted via `ON DELETE CASCADE`. This maintains referential integrity.
 
 ## Querying
 
@@ -206,8 +206,8 @@ When a chipp-issue is deleted, all its external links are automatically deleted 
 
 ```sql
 SELECT i.*, e.external_url as sentry_url
-FROM chipp_issue i
-JOIN chipp_external_issue e ON i.id = e.issue_id
+FROM dispatch_issue i
+JOIN dispatch_external_issue e ON i.id = e.issue_id
 WHERE e.source = 'sentry';
 ```
 
@@ -215,8 +215,8 @@ WHERE e.source = 'sentry';
 
 ```sql
 SELECT i.*
-FROM chipp_issue i
-LEFT JOIN chipp_external_issue e ON i.id = e.issue_id
+FROM dispatch_issue i
+LEFT JOIN dispatch_external_issue e ON i.id = e.issue_id
 WHERE e.id IS NULL;
 ```
 
@@ -224,7 +224,7 @@ WHERE e.id IS NULL;
 
 ```sql
 SELECT source, COUNT(*) as count
-FROM chipp_external_issue
+FROM dispatch_external_issue
 GROUP BY source;
 ```
 
@@ -232,15 +232,15 @@ GROUP BY source;
 
 ### Bidirectional Sync
 
-Currently, links are one-way (external → chipp-issues). Future enhancements could:
+Currently, links are one-way (external → Dispatch). Future enhancements could:
 
-- Update external issue status when chipp-issue is resolved
-- Add comments to external issues with chipp-issues activity
+- Update external issue status when Dispatch issue is resolved
+- Add comments to external issues with Dispatch activity
 - Sync assignees between systems
 
 ### Multiple Links
 
-A single chipp-issue could potentially link to multiple external issues:
+A single Dispatch issue could potentially link to multiple external issues:
 
 - A Sentry error that also has a GitHub issue
 - Related errors across different Sentry projects
@@ -252,5 +252,5 @@ The schema already supports this via the `issue_id` foreign key (not unique).
 Could add a `status` column to track:
 
 - `active` - Normal link
-- `stale` - External issue was resolved but chipp-issue wasn't
+- `stale` - External issue was resolved but Dispatch issue wasn't
 - `broken` - External issue was deleted

@@ -47,10 +47,10 @@ const SPAWN_DELAY_MINUTES = parseInt(
 );
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-// Parse owner/name from GITHUB_REPO (e.g. "BenchmarkAI/chipp-deno") as fallback
+// Parse owner/name from GITHUB_REPO (e.g. "myorg/myrepo") as fallback
 const [_repoOwner, _repoName] = (process.env.GITHUB_REPO || "").split("/");
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || _repoOwner || "";
-const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || _repoName || "chipp-deno";
+const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || _repoName || "";
 
 // Workflow IDs for each type
 const WORKFLOW_IDS: Record<WorkflowType, string> = {
@@ -133,13 +133,13 @@ export async function getActiveSpawnCount(
   if (workflowType) {
     const isErrorType = workflowType === "error_fix";
     const sql = isErrorType
-      ? `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running' AND (spawn_type IS NULL OR spawn_type = 'error_fix')`
-      : `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement', 'qa', 'research')`;
+      ? `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running' AND (spawn_type IS NULL OR spawn_type = 'error_fix')`
+      : `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement', 'qa', 'research')`;
     const result = await db.queryOne<{ count: string }>(sql);
     return parseInt(result?.count || "0", 10);
   }
   const result = await db.queryOne<{ count: string }>(
-    `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running'`
+    `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running'`
   );
   return parseInt(result?.count || "0", 10);
 }
@@ -151,7 +151,7 @@ async function getDailySpawnCount(
   budgetType: string = "error_fix"
 ): Promise<number> {
   const result = await db.queryOne<{ spawn_count: number }>(
-    `SELECT spawn_count FROM chipp_spawn_budget WHERE date = CURRENT_DATE AND spawn_type = $1`,
+    `SELECT spawn_count FROM dispatch_spawn_budget WHERE date = CURRENT_DATE AND spawn_type = $1`,
     [budgetType]
   );
   return result?.spawn_count || 0;
@@ -162,7 +162,7 @@ async function getDailySpawnCount(
  */
 export async function isInCooldown(fp: string): Promise<boolean> {
   const result = await db.queryOne<{ cooldown_until: Date | null }>(
-    `SELECT cooldown_until FROM chipp_external_issue
+    `SELECT cooldown_until FROM dispatch_external_issue
      WHERE source = 'loki' AND external_id = $1
      AND cooldown_until IS NOT NULL AND cooldown_until > NOW()`,
     [fp]
@@ -175,7 +175,7 @@ export async function isInCooldown(fp: string): Promise<boolean> {
  */
 export async function hasEnoughEvents(fp: string): Promise<boolean> {
   const result = await db.queryOne<{ event_count: number }>(
-    `SELECT event_count FROM chipp_external_issue
+    `SELECT event_count FROM dispatch_external_issue
      WHERE source = 'loki' AND external_id = $1`,
     [fp]
   );
@@ -187,7 +187,7 @@ export async function hasEnoughEvents(fp: string): Promise<boolean> {
  */
 export async function hasPassedSpawnDelay(fp: string): Promise<boolean> {
   const result = await db.queryOne<{ created_at: Date }>(
-    `SELECT created_at FROM chipp_external_issue
+    `SELECT created_at FROM dispatch_external_issue
      WHERE source = 'loki' AND external_id = $1`,
     [fp]
   );
@@ -256,7 +256,7 @@ export async function dispatchWorkflow(
   }
 
   // Pass tunnel URL for local dev so GH Actions streams back to localhost
-  const callbackUrl = process.env.CHIPP_ISSUES_CALLBACK_URL;
+  const callbackUrl = process.env.DISPATCH_CALLBACK_URL;
   if (callbackUrl) {
     inputs.callback_url = callbackUrl;
     console.log(`[Spawn] Using callback URL: ${callbackUrl}`);
@@ -320,7 +320,7 @@ export async function recordSpawn(
   };
   const agentStatus = agentStatusMap[spawnType] || "investigating";
   await db.query(
-    `UPDATE chipp_issue
+    `UPDATE dispatch_issue
      SET spawn_status = 'running',
          spawn_run_id = $2,
          spawn_started_at = NOW(),
@@ -353,10 +353,10 @@ export async function incrementDailyBudget(
       ? DAILY_SPAWN_BUDGET_ERROR
       : DAILY_SPAWN_BUDGET_PRD);
   await db.query(
-    `INSERT INTO chipp_spawn_budget (date, spawn_count, max_spawns, spawn_type)
+    `INSERT INTO dispatch_spawn_budget (date, spawn_count, max_spawns, spawn_type)
      VALUES (CURRENT_DATE, 1, $1, $2)
      ON CONFLICT (date, spawn_type)
-     DO UPDATE SET spawn_count = chipp_spawn_budget.spawn_count + 1`,
+     DO UPDATE SET spawn_count = dispatch_spawn_budget.spawn_count + 1`,
     [max, budgetType]
   );
 }
@@ -370,7 +370,7 @@ export async function setCooldown(fp: string): Promise<void> {
   );
 
   await db.query(
-    `UPDATE chipp_external_issue
+    `UPDATE dispatch_external_issue
      SET cooldown_until = $2
      WHERE source = 'loki' AND external_id = $1`,
     [fp, cooldownUntil]

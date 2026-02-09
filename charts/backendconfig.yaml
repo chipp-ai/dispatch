@@ -1,7 +1,7 @@
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
-  name: chipp-issues
+  name: dispatch
 spec:
   connectionDraining:
     drainingTimeoutSec: 300

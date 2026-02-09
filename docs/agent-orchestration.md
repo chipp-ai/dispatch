@@ -80,7 +80,7 @@ Click to expand and see:
 
 ### From the Issue Detail Page
 
-1. Navigate to any issue (`/issue/CHIPP-XX`)
+1. Navigate to any issue (`/issue/DISPATCH-XX`)
 2. In the **AI Agent** sidebar section, click:
    - **Investigate** - Spawn an investigation workflow (explores code, writes a plan)
    - **Start Implementation** - Spawn implementation (only after plan is approved)
@@ -172,7 +172,7 @@ The **Agent Activity** section shows structured events:
 
 ### Daily Spawn Budgets
 
-Each workflow type has a daily spawn limit (configured in `chipp_spawn_budget` table):
+Each workflow type has a daily spawn limit (configured in `dispatch_spawn_budget` table):
 
 | Type | Default Limit | Purpose |
 |------|--------------|---------|
@@ -199,7 +199,7 @@ For auto-spawned error fixes, there's a cooldown per error fingerprint to preven
 ```
 Production error detected in Loki
   → Grafana alert fires
-  → Chipp Issues webhook creates/deduplicates issue
+  → Dispatch webhook creates/deduplicates issue
   → Agent auto-spawned (investigate + fix)
   → PR opened targeting staging
   → Fix verified over 48h monitoring window

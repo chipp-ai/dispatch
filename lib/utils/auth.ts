@@ -1,13 +1,13 @@
 import { cookies, headers } from "next/headers";
 import crypto from "crypto";
 
-const SESSION_COOKIE_NAME = "chipp_issues_session";
+const SESSION_COOKIE_NAME = "dispatch_session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export async function verifyPassword(password: string): Promise<boolean> {
-  const correctPassword = process.env.CHIPP_ISSUES_PASSWORD;
+  const correctPassword = process.env.DISPATCH_PASSWORD;
   if (!correctPassword) {
-    console.error("CHIPP_ISSUES_PASSWORD not set");
+    console.error("DISPATCH_PASSWORD not set");
     return false;
   }
   return password === correctPassword;
@@ -49,7 +49,7 @@ export async function requireAuth(): Promise<boolean> {
   const authHeader = headerStore.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
-    const apiKey = process.env.CHIPP_ISSUES_API_KEY;
+    const apiKey = process.env.DISPATCH_API_KEY;
     if (apiKey && token === apiKey) return true;
 
     // In dev mode, accept any valid Bearer token (for ngrok tunnel callbacks

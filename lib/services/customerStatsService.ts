@@ -52,7 +52,7 @@ export async function getCustomerHealthMetrics(
 ): Promise<CustomerHealthMetrics | null> {
   // Get customer name
   const customer = await db.queryOne<{ id: string; name: string }>(
-    `SELECT id, name FROM chipp_customer WHERE id = $1`,
+    `SELECT id, name FROM dispatch_customer WHERE id = $1`,
     [customerId]
   );
 
@@ -73,30 +73,30 @@ export async function getCustomerHealthMetrics(
   ] = await Promise.all([
     // Total issues
     db.queryOne<{ count: string }>(
-      `SELECT COUNT(*) as count FROM chipp_issue WHERE customer_id = $1`,
+      `SELECT COUNT(*) as count FROM dispatch_issue WHERE customer_id = $1`,
       [customerId]
     ),
     // Open issues (not in "done" type status)
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1 AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`,
       [customerId]
     ),
     // Closed issues
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1 AND LOWER(s.name) IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`,
       [customerId]
     ),
     // Stale issues (no updates in 3+ days, still open)
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1
          AND i.updated_at < NOW() - INTERVAL '3 days'
          AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`,
@@ -105,8 +105,8 @@ export async function getCustomerHealthMetrics(
     // Critical stale (P1/P2 with no updates in 2+ days)
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1
          AND i.priority IN ('P1', 'P2')
          AND i.updated_at < NOW() - INTERVAL '2 days'
@@ -116,18 +116,18 @@ export async function getCustomerHealthMetrics(
     // Unresponded issues (no comments at all)
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1
          AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')
-         AND NOT EXISTS (SELECT 1 FROM chipp_comment c WHERE c.issue_id = i.id)`,
+         AND NOT EXISTS (SELECT 1 FROM dispatch_comment c WHERE c.issue_id = i.id)`,
       [customerId]
     ),
     // High priority open
     db.queryOne<{ count: string }>(
       `SELECT COUNT(*) as count
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
        WHERE i.customer_id = $1
          AND i.priority IN ('P1', 'P2')
          AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`,
@@ -136,23 +136,23 @@ export async function getCustomerHealthMetrics(
     // Last activity (most recent issue update or comment)
     db.queryOne<{ last_activity: Date | null }>(
       `SELECT GREATEST(
-         (SELECT MAX(updated_at) FROM chipp_issue WHERE customer_id = $1),
-         (SELECT MAX(c.created_at) FROM chipp_comment c JOIN chipp_issue i ON c.issue_id = i.id WHERE i.customer_id = $1)
+         (SELECT MAX(updated_at) FROM dispatch_issue WHERE customer_id = $1),
+         (SELECT MAX(c.created_at) FROM dispatch_comment c JOIN dispatch_issue i ON c.issue_id = i.id WHERE i.customer_id = $1)
        ) as last_activity`,
       [customerId]
     ),
     // Last issue created
     db.queryOne<{ created_at: Date | null }>(
-      `SELECT MAX(created_at) as created_at FROM chipp_issue WHERE customer_id = $1`,
+      `SELECT MAX(created_at) as created_at FROM dispatch_issue WHERE customer_id = $1`,
       [customerId]
     ),
     // Average response time (time to first comment)
     db.queryOne<{ avg_hours: string | null }>(
       `SELECT AVG(EXTRACT(EPOCH FROM (first_comment.created_at - i.created_at)) / 3600) as avg_hours
-       FROM chipp_issue i
+       FROM dispatch_issue i
        JOIN LATERAL (
          SELECT MIN(created_at) as created_at
-         FROM chipp_comment c
+         FROM dispatch_comment c
          WHERE c.issue_id = i.id
        ) first_comment ON TRUE
        WHERE i.customer_id = $1 AND first_comment.created_at IS NOT NULL`,
@@ -205,7 +205,7 @@ export async function getCustomerIssuesWithHealth(
     whereClause += ` AND i.updated_at < NOW() - INTERVAL '3 days'
       AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`;
   } else if (filter === "unresponded") {
-    whereClause += ` AND NOT EXISTS (SELECT 1 FROM chipp_comment c WHERE c.issue_id = i.id)
+    whereClause += ` AND NOT EXISTS (SELECT 1 FROM dispatch_comment c WHERE c.issue_id = i.id)
       AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled')`;
   } else if (filter === "critical") {
     whereClause += ` AND i.priority IN ('P1', 'P2')
@@ -227,9 +227,9 @@ export async function getCustomerIssuesWithHealth(
       i.id, i.identifier, i.title, i.priority,
       s.name as status_name, s.color as status_color,
       i.created_at, i.updated_at,
-      (SELECT COUNT(*) FROM chipp_comment c WHERE c.issue_id = i.id) as comment_count
-     FROM chipp_issue i
-     JOIN chipp_status s ON i.status_id = s.id
+      (SELECT COUNT(*) FROM dispatch_comment c WHERE c.issue_id = i.id) as comment_count
+     FROM dispatch_issue i
+     JOIN dispatch_status s ON i.status_id = s.id
      ${whereClause}
      ORDER BY
        CASE i.priority WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END,
@@ -279,9 +279,9 @@ export async function getCustomerRecentActivity(
       i.id as issue_id, i.identifier as issue_identifier, i.title as issue_title,
       c.body, c.created_at,
       a.name as author_name
-     FROM chipp_comment c
-     JOIN chipp_issue i ON c.issue_id = i.id
-     LEFT JOIN chipp_agent a ON c.author_id = a.id
+     FROM dispatch_comment c
+     JOIN dispatch_issue i ON c.issue_id = i.id
+     LEFT JOIN dispatch_agent a ON c.author_id = a.id
      WHERE i.customer_id = $1
      ORDER BY c.created_at DESC
      LIMIT $2`,
@@ -296,7 +296,7 @@ export async function getCustomerRecentActivity(
     created_at: Date;
   }>(
     `SELECT id, identifier, title, created_at
-     FROM chipp_issue
+     FROM dispatch_issue
      WHERE customer_id = $1
      ORDER BY created_at DESC
      LIMIT $2`,
@@ -380,9 +380,9 @@ export async function getAllCustomersHealthSummary(
       COUNT(CASE WHEN i.priority IN ('P1', 'P2')
         AND LOWER(s.name) NOT IN ('done', 'deployed', 'closed', 'cancelled', 'canceled') THEN 1 END) as high_priority_open,
       MAX(i.updated_at) as last_activity
-     FROM chipp_customer c
-     LEFT JOIN chipp_issue i ON c.id = i.customer_id
-     LEFT JOIN chipp_status s ON i.status_id = s.id
+     FROM dispatch_customer c
+     LEFT JOIN dispatch_issue i ON c.id = i.customer_id
+     LEFT JOIN dispatch_status s ON i.status_id = s.id
      WHERE c.workspace_id = $1
      GROUP BY c.id, c.name, c.slug, c.slack_channel_id
      ORDER BY critical_stale DESC, stale_issues DESC, c.name ASC`,
