@@ -55,9 +55,9 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 className="text-[20px] font-semibold text-[#f5f5f5] mb-1">
-            Chipp Issues
+            Chippy Dispatch
           </h1>
-          <p className="text-[13px] text-[#666]">AI Agent Issue Tracker</p>
+          <p className="text-[13px] text-[#666]">Autonomous Agent Command Center</p>
         </div>
 
         {/* Login form */}

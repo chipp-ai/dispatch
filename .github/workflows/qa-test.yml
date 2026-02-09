@@ -1,0 +1,551 @@
+name: QA Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Chipp Issues issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. CHIPP-456)"
+        required: true
+        type: string
+      title:
+        description: "Mission title"
+        required: true
+        type: string
+      description:
+        description: "Mission description (markdown)"
+        required: true
+        type: string
+      plan_content:
+        description: "Implementation plan that was executed (markdown)"
+        required: false
+        type: string
+      test_instructions:
+        description: "Specific test instructions or scenarios to cover"
+        required: false
+        type: string
+      pr_url:
+        description: "URL of the implementation PR to test against"
+        required: false
+        type: string
+      additional_context:
+        description: "Additional instructions from human retry (optional)"
+        required: false
+        type: string
+      callback_url:
+        description: "Override API callback URL (for local dev tunnels)"
+        required: false
+        type: string
+
+# Only one QA run per mission at a time
+concurrency:
+  group: qa-test-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: QA ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    # SECURITY: All user-provided inputs are passed through env vars to
+    # prevent command injection. They are NEVER interpolated in run: blocks.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CHIPP_ISSUES_API_URL: ${{ inputs.callback_url || secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_PLAN_CONTENT: ${{ inputs.plan_content }}
+      INPUT_TEST_INSTRUCTIONS: ${{ inputs.test_instructions }}
+      INPUT_PR_URL: ${{ inputs.pr_url }}
+      INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chipp_deno
+        ports:
+          - 5436:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install MCP browser-devtools dependencies
+        run: cd tools/mcp-browser-devtools && npm ci
+
+      - name: Pre-cache Deno MCP server dependencies
+        run: |
+          deno cache tools/mcp-database/index.ts
+          echo "Deno MCP server dependencies cached"
+
+      - name: Register MCP servers
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          claude mcp add-json browser-devtools '{"type":"stdio","command":"node","args":["tools/mcp-browser-devtools/index.js"],"env":{"CDP_HOST":"localhost","CDP_PORT":"9222"}}'
+          claude mcp add-json chipp-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-database/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:postgres@localhost:5436/chipp_deno"}}'
+          rm -f .mcp.json
+          claude mcp list
+
+      - name: Notify Chipp Issues - Testing
+        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          PAYLOAD=$(jq -n \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            --arg agent_status "testing" \
+            --arg spawn_type "qa" \
+            '{spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at, agent_status: $agent_status, spawn_type: $spawn_type}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+
+      - name: Setup database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          deno task db:migrate || echo "Warning: Migration failed (may need manual schema setup)"
+
+      - name: Seed test data
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          psql "$DATABASE_URL" -f scripts/seed-test-data.sql
+
+      - name: Install web dependencies
+        run: cd web && npm ci
+
+      - name: Start dev servers
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+          NODE_ENV: development
+          PORT: "8000"
+        run: |
+          mkdir -p .scratch/logs
+
+          deno task dev > .scratch/logs/api-server.log 2>&1 &
+          echo "API server started (PID: $!)"
+
+          LOGDIR="$(pwd)/.scratch/logs"
+          (cd web && npm run dev > "$LOGDIR/vite-server.log" 2>&1) &
+          echo "Vite server started (PID: $!)"
+
+          echo "Waiting for API server at localhost:8000..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "API server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "WARNING: API server not responding after 30s"
+              cat .scratch/logs/api-server.log 2>/dev/null || echo "(no log file)"
+            fi
+            sleep 1
+          done
+
+          echo "Waiting for Vite server at localhost:5173..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              echo "Vite server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "WARNING: Vite server not responding after 30s"
+              cat .scratch/logs/vite-server.log 2>/dev/null || echo "(no log file)"
+            fi
+            sleep 1
+          done
+
+          echo "Dev servers are running."
+
+      - name: Start Chrome for browser testing
+        run: |
+          google-chrome --headless --no-sandbox --disable-gpu \
+            --disable-dbus \
+            --remote-debugging-port=9222 \
+            --remote-debugging-address=127.0.0.1 \
+            about:blank &
+
+          echo "Waiting for Chrome DevTools at localhost:9222..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:9222/json/version > /dev/null 2>&1; then
+              echo "Chrome DevTools ready after ${i}s"
+              curl -sf http://localhost:9222/json/version
+              break
+            fi
+            if [ $i -eq 15 ]; then
+              echo "WARNING: Chrome DevTools not responding after 15s"
+            fi
+            sleep 1
+          done
+
+      - name: Build QA prompt
+        run: |
+          mkdir -p .scratch
+
+          jq -n \
+            --arg identifier "$INPUT_ISSUE_IDENTIFIER" \
+            --arg title "$INPUT_TITLE" \
+            --arg description "$INPUT_DESCRIPTION" \
+            --arg plan "$INPUT_PLAN_CONTENT" \
+            --arg test_instructions "$INPUT_TEST_INSTRUCTIONS" \
+            --arg pr_url "$INPUT_PR_URL" \
+            --arg additional_context "$INPUT_ADDITIONAL_CONTEXT" \
+            '{identifier: $identifier, title: $title, description: $description, plan: $plan, test_instructions: $test_instructions, pr_url: $pr_url, additional_context: $additional_context}' \
+            > .scratch/prompt-data.json
+
+          python3 << 'PYEOF'
+          import json
+          d = json.load(open('.scratch/prompt-data.json'))
+          prompt = f"""You are a QA agent testing an implementation for the chipp-deno project.
+          Your goal is to thoroughly test the feature described below and write a test report.
+          You are READ-ONLY -- do NOT create branches, modify files, or write code.
+
+          Mission: {d['identifier']} - {d['title']}
+
+          Description:
+          {d['description']}
+          """ + (f"""
+          Implementation Plan:
+          {d['plan']}
+          """ if d.get('plan') else "") + (f"""
+          Test Instructions:
+          {d['test_instructions']}
+          """ if d.get('test_instructions') else "") + (f"""
+          PR URL: {d['pr_url']}
+          """ if d.get('pr_url') else "") + (f"""
+          ADDITIONAL CONTEXT FROM HUMAN:
+          {d['additional_context']}
+          """ if d.get('additional_context') else "") + """
+
+          RUNNING ENVIRONMENT:
+          A full-stack dev environment is running and available:
+          - API server: http://localhost:8000
+          - Frontend: http://localhost:5173 (Vite dev server)
+          - Database: postgresql://postgres:postgres@localhost:5436/chipp_deno (seeded with test data)
+          - Chrome: headless Chrome with DevTools Protocol on port 9222
+          - Server logs: .scratch/logs/api-server.log and .scratch/logs/vite-server.log
+
+          BROWSER TESTING (MCP tools available):
+          - mcp__browser-devtools__browser_navigate: Navigate to a URL
+          - mcp__browser-devtools__browser_take_screenshot: Take a screenshot
+          - mcp__browser-devtools__browser_click: Click elements
+          - mcp__browser-devtools__browser_type: Type into input fields
+          - mcp__browser-devtools__browser_get_element: Inspect element text/attributes
+          - mcp__browser-devtools__browser_wait_for: Wait for elements to appear
+          - mcp__browser-devtools__browser_get_console_logs: Check for console errors
+          - mcp__browser-devtools__browser_get_network_requests: Check API calls
+          - mcp__browser-devtools__browser_execute_js: Run JS in the browser context
+
+          DATABASE (MCP tools available):
+          - mcp__chipp-database__db_query: Run SELECT queries
+          - mcp__chipp-database__db_describe_table: Show table schema
+
+          Test data in the database:
+          - Organization: id=11111111-1111-1111-1111-111111111111, name='Test Organization'
+          - User: id=22222222-2222-2222-2222-222222222222, email='test-developer@example.com'
+          - Application: id=00000000-0000-0000-0000-000000000003, app_name_id='test-chat-app'
+          - Consumer: id=44444444-4444-4444-4444-444444444444, email='test-consumer@example.com'
+          - Session: id=00000000-0000-0000-0000-000000000005 (valid for 30 days)
+
+          Instructions:
+          1. Read CLAUDE.md first to understand the codebase
+          2. Navigate the UI and test the feature end-to-end
+          3. Test API endpoints with curl
+          4. Verify database state with MCP tools
+          5. Check for console errors and network failures
+          6. Take screenshots at key points
+          7. Write a comprehensive test report to .scratch/qa-report.md with:
+             - Summary (pass/fail)
+             - Tests Performed (table: test name, result, notes)
+             - Screenshots (reference .scratch/screenshots/ files)
+             - Issues Found (any bugs, regressions, or edge cases)
+             - Console Errors (if any)
+             - Recommendation (ready to merge / needs fixes)
+
+          MANDATORY - RUN RESULT DECLARATION:
+          Before exiting, you MUST write .scratch/run-result.json with:
+          {{
+            "outcome": "completed|blocked|failed",
+            "summary": "1-2 sentence QA summary",
+            "changes_made": false,
+            "files_changed": [],
+            "pr_needed": false
+          }}
+
+          - Use "completed" if you produced a test report.
+          - Use "blocked" if the dev environment is broken or you can't test.
+          - Use "failed" if you could not complete testing.
+          """
+          with open('.scratch/qa-prompt.md', 'w') as f:
+              f.write(prompt)
+          PYEOF
+
+      - name: Run QA Tests
+        id: qa
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5436/chipp_deno
+        run: |
+          mkdir -p .scratch/screenshots
+
+          cat > .scratch/stream-filter.py << 'PYEOF'
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  t = event.get("type", "")
+                  if t == "assistant":
+                      for c in event.get("message", {}).get("content", []):
+                          if c.get("type") == "text" and c.get("text"):
+                              print(c["text"], flush=True)
+                          elif c.get("type") == "tool_use":
+                              name = c.get("name", "unknown")
+                              inp = c.get("input", {})
+                              parts = [f"{k}={str(v)[:80]}" for k, v in list(inp.items())[:3]]
+                              print(f"[TOOL] {name}({', '.join(parts)})", flush=True)
+                  elif t == "tool_result":
+                      content = event.get("content", "")
+                      if isinstance(content, list):
+                          content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                      preview = str(content)[:200] + ("..." if len(str(content)) > 200 else "")
+                      print(f"[RESULT] {preview}", flush=True)
+                  elif t == "result":
+                      print(f"\n[COMPLETED] Cost: ${event.get('total_cost_usd', 0):.2f}, Turns: {event.get('num_turns', 0)}", flush=True)
+              except (json.JSONDecodeError, KeyError):
+                  print(line, flush=True)
+          PYEOF
+
+          PROMPT=$(cat .scratch/qa-prompt.md)
+
+          claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions \
+            "$PROMPT" > .scratch/claude-raw.log 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude QA agent started (PID: $CLAUDE_PID)"
+
+          PREV_LINES=0
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 10
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              CHUNK=$(sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$CHUNK"
+
+              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 &
+              fi
+
+              PREV_LINES=$CURR_LINES
+            fi
+          done
+          wait $CLAUDE_PID
+          CLAUDE_EXIT=$?
+
+          [ -f .scratch/claude-raw.log ] && {
+            FINAL_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
+            if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+              FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$FINAL_CHUNK"
+              if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 || true
+              fi
+            fi
+          }
+
+          echo "=== Claude QA exited with code $CLAUDE_EXIT ==="
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log 2>/dev/null || cp .scratch/claude-raw.log .scratch/claude-output.log
+
+          python3 -c "
+          import json
+          for line in open('.scratch/claude-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      cost = event.get('total_cost_usd', 0)
+                      turns = event.get('num_turns', 0)
+                      model = event.get('model', 'unknown')
+                      with open('.scratch/claude-cost.json', 'w') as f:
+                          json.dump({'cost_usd': cost, 'num_turns': turns, 'model': model}, f)
+                      print(f'Cost: \${cost:.4f}, Turns: {turns}, Model: {model}')
+              except (json.JSONDecodeError, KeyError): pass
+          " 2>/dev/null || echo "Warning: Could not extract cost data"
+
+          exit $CLAUDE_EXIT
+
+      - name: Parse run result
+        id: run-result
+        if: always()
+        run: |
+          if [ ! -f .scratch/run-result.json ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "Agent exited without declaring an outcome" > .scratch/outcome-summary.txt
+            echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+            echo "changes_made=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          OUTCOME=$(jq -r '.outcome // "failed"' .scratch/run-result.json)
+          SUMMARY=$(jq -r '.summary // "No summary provided"' .scratch/run-result.json)
+
+          case "$OUTCOME" in
+            completed|blocked|failed) ;;
+            *) OUTCOME="failed"; SUMMARY="Invalid outcome: $OUTCOME" ;;
+          esac
+
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" > .scratch/outcome-summary.txt
+          echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+          echo "changes_made=false" >> "$GITHUB_OUTPUT"
+
+          echo "QA outcome: $OUTCOME"
+          echo "Summary: $SUMMARY"
+
+      - name: Post QA report to Chipp Issues
+        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        env:
+          JOB_STATUS: ${{ job.status }}
+          OUTCOME: ${{ steps.run-result.outputs.outcome }}
+        run: |
+          REPORT_FILE=".scratch/qa-report.md"
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No QA report produced." > "$REPORT_FILE"
+          fi
+
+          SPAWN_STATUS="completed"
+          if [ "$JOB_STATUS" != "success" ]; then
+            SPAWN_STATUS="failed"
+          fi
+
+          COST_USD="0"
+          NUM_TURNS="0"
+          MODEL="unknown"
+          if [ -f .scratch/claude-cost.json ]; then
+            COST_USD=$(jq -r '.cost_usd // 0' .scratch/claude-cost.json)
+            NUM_TURNS=$(jq -r '.num_turns // 0' .scratch/claude-cost.json)
+            MODEL=$(jq -r '.model // "unknown"' .scratch/claude-cost.json)
+          fi
+
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "qa_complete" \
+            --rawfile content "$REPORT_FILE" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "qa", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post QA activity (non-fatal)"
+
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            --arg run_outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Report failure
+        if: failure() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "qa_failed" \
+            --arg content "QA test workflow failed." \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, error_tail: $error_tail}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || true
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg agent_status "idle" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || true
