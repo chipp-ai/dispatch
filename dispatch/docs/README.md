@@ -1,6 +1,6 @@
-# Chipp Issues Documentation
+# Dispatch Documentation
 
-This folder contains documentation for the chipp-issues application - an issue tracking system designed for AI agent workflows.
+This folder contains documentation for Dispatch - an autonomous agent orchestration platform designed for AI agent workflows.
 
 ## Table of Contents
 
@@ -11,7 +11,7 @@ This folder contains documentation for the chipp-issues application - an issue t
 ### Integrations
 
 - [Sentry Integration](./sentry-integration.md) - Automatic issue creation from production errors
-- [External Issue Linking](./external-issue-linking.md) - Connecting chipp-issues with external tracking systems
+- [External Issue Linking](./external-issue-linking.md) - Connecting Dispatch with external tracking systems
 
 ### Architecture
 
@@ -41,7 +41,7 @@ See [.env.example](../.env.example) for required environment variables:
 
 - `PG_DATABASE_URL` - PostgreSQL connection string
 - `OPENAI_API_KEY` - For generating embeddings
-- `CHIPP_ISSUES_PASSWORD` - Web UI authentication
+- `DISPATCH_PASSWORD` - Web UI authentication
 - `SENTRY_CLIENT_SECRET` - Sentry webhook verification
 
 ## API Endpoints
@@ -67,13 +67,13 @@ See [.env.example](../.env.example) for required environment variables:
 
 | Table                  | Purpose                                    |
 | ---------------------- | ------------------------------------------ |
-| `chipp_workspace`      | Multi-tenant workspace configuration       |
-| `chipp_issue`          | Core issue data                            |
-| `chipp_status`         | Workflow statuses (columns)                |
-| `chipp_label`          | Issue labels/tags                          |
-| `chipp_agent`          | AI agents that can be assigned             |
-| `chipp_external_issue` | Links to external systems (Sentry, GitHub) |
-| `chipp_agent_activity` | Agent investigation logs                   |
+| `dispatch_workspace`      | Multi-tenant workspace configuration       |
+| `dispatch_issue`          | Core issue data                            |
+| `dispatch_status`         | Workflow statuses (columns)                |
+| `dispatch_label`          | Issue labels/tags                          |
+| `dispatch_agent`          | AI agents that can be assigned             |
+| `dispatch_external_issue` | Links to external systems (Sentry, GitHub) |
+| `dispatch_agent_activity` | Agent investigation logs                   |
 
 ## Contributing
 

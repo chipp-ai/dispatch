@@ -57,7 +57,7 @@ export async function linkPRToIssue(
 ): Promise<IssuePR> {
   // Check if this PR is already linked
   const existing = await db.queryOne<IssuePR>(
-    `SELECT * FROM chipp_issue_pr WHERE issue_id = $1 AND pr_number = $2`,
+    `SELECT * FROM dispatch_issue_pr WHERE issue_id = $1 AND pr_number = $2`,
     [input.issueId, input.prNumber]
   );
 
@@ -71,7 +71,7 @@ export async function linkPRToIssue(
   }
 
   const result = await db.query<IssuePR>(
-    `INSERT INTO chipp_issue_pr (
+    `INSERT INTO dispatch_issue_pr (
       id, issue_id, pr_number, pr_url, pr_title, pr_status,
       branch_name, author, base_branch, head_branch,
       ai_summary, match_confidence, created_at, updated_at
@@ -118,7 +118,7 @@ export async function updateIssuePR(
 ): Promise<IssuePR> {
   // Get existing PR
   const existing = await db.queryOne<IssuePR>(
-    `SELECT * FROM chipp_issue_pr WHERE id = $1`,
+    `SELECT * FROM dispatch_issue_pr WHERE id = $1`,
     [prId]
   );
 
@@ -127,7 +127,7 @@ export async function updateIssuePR(
   }
 
   const result = await db.query<IssuePR>(
-    `UPDATE chipp_issue_pr SET
+    `UPDATE dispatch_issue_pr SET
       pr_status = COALESCE($1, pr_status),
       pr_title = COALESCE($2, pr_title),
       ai_summary = COALESCE($3, ai_summary),
@@ -161,14 +161,14 @@ export async function getIssuePRs(
 ): Promise<IssuePR[]> {
   // First resolve the issue ID if identifier was provided
   const issue = await db.queryOne<{ id: string }>(
-    `SELECT id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT id FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [issueIdOrIdentifier]
   );
 
   if (!issue) return [];
 
   return db.query<IssuePR>(
-    `SELECT * FROM chipp_issue_pr
+    `SELECT * FROM dispatch_issue_pr
      WHERE issue_id = $1
      ORDER BY created_at DESC`,
     [issue.id]
@@ -180,7 +180,7 @@ export async function getIssuePRs(
  */
 export async function getPRByNumber(prNumber: number): Promise<IssuePR | null> {
   return db.queryOne<IssuePR>(
-    `SELECT * FROM chipp_issue_pr WHERE pr_number = $1`,
+    `SELECT * FROM dispatch_issue_pr WHERE pr_number = $1`,
     [prNumber]
   );
 }
@@ -193,9 +193,9 @@ export async function getPRsByIssueStatus(
 ): Promise<(IssuePR & { issue_identifier: string })[]> {
   return db.query(
     `SELECT pr.*, i.identifier as issue_identifier
-     FROM chipp_issue_pr pr
-     JOIN chipp_issue i ON pr.issue_id = i.id
-     JOIN chipp_status s ON i.status_id = s.id
+     FROM dispatch_issue_pr pr
+     JOIN dispatch_issue i ON pr.issue_id = i.id
+     JOIN dispatch_status s ON i.status_id = s.id
      WHERE LOWER(s.name) = LOWER($1)`,
     [statusName]
   );
@@ -210,17 +210,17 @@ export async function unlinkPR(
   actorName?: string
 ): Promise<boolean> {
   const pr = await db.queryOne<IssuePR>(
-    `SELECT * FROM chipp_issue_pr WHERE id = $1`,
+    `SELECT * FROM dispatch_issue_pr WHERE id = $1`,
     [prId]
   );
 
   if (!pr) return false;
 
-  await db.query(`DELETE FROM chipp_issue_pr WHERE id = $1`, [prId]);
+  await db.query(`DELETE FROM dispatch_issue_pr WHERE id = $1`, [prId]);
 
   // Record in history
   await db.query(
-    `INSERT INTO chipp_issue_history (
+    `INSERT INTO dispatch_issue_history (
       id, issue_id, action, old_value, actor_type, actor_name, created_at
     ) VALUES (
       gen_random_uuid(), $1, 'pr_unlinked', $2, $3, $4, NOW()
@@ -260,7 +260,7 @@ export async function findPotentialIssueMatches(
   // Look up issues by identifier
   const placeholders = allMatches.map((_, i) => `$${i + 1}`).join(", ");
   return db.query(
-    `SELECT id, identifier, title FROM chipp_issue
+    `SELECT id, identifier, title FROM dispatch_issue
      WHERE identifier IN (${placeholders})`,
     allMatches
   );

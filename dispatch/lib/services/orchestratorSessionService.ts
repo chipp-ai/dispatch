@@ -24,7 +24,7 @@ export async function createSession(
 ): Promise<OrchestratorSession> {
   const id = uuidv4();
   const result = await db.query<OrchestratorSession>(
-    `INSERT INTO chipp_orchestrator_session (id, workspace_id, messages, created_at, updated_at)
+    `INSERT INTO dispatch_orchestrator_session (id, workspace_id, messages, created_at, updated_at)
      VALUES ($1, $2, '[]'::jsonb, NOW(), NOW())
      RETURNING *`,
     [id, workspaceId]
@@ -36,7 +36,7 @@ export async function getSession(
   sessionId: string
 ): Promise<OrchestratorSession | null> {
   const result = await db.queryOne<OrchestratorSession>(
-    `SELECT * FROM chipp_orchestrator_session WHERE id = $1`,
+    `SELECT * FROM dispatch_orchestrator_session WHERE id = $1`,
     [sessionId]
   );
   return result ? parseSession(result) : null;
@@ -46,7 +46,7 @@ export async function getLatestSession(
   workspaceId: string
 ): Promise<OrchestratorSession | null> {
   const result = await db.queryOne<OrchestratorSession>(
-    `SELECT * FROM chipp_orchestrator_session
+    `SELECT * FROM dispatch_orchestrator_session
      WHERE workspace_id = $1
      ORDER BY updated_at DESC
      LIMIT 1`,
@@ -60,7 +60,7 @@ export async function saveMessages(
   messages: MessageParam[]
 ): Promise<void> {
   await db.query(
-    `UPDATE chipp_orchestrator_session
+    `UPDATE dispatch_orchestrator_session
      SET messages = $2::jsonb, updated_at = NOW()
      WHERE id = $1`,
     [sessionId, JSON.stringify(messages)]
@@ -68,7 +68,7 @@ export async function saveMessages(
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  await db.query(`DELETE FROM chipp_orchestrator_session WHERE id = $1`, [
+  await db.query(`DELETE FROM dispatch_orchestrator_session WHERE id = $1`, [
     sessionId,
   ]);
 }
@@ -80,7 +80,7 @@ export async function cleanupOldSessions(
   workspaceId: string
 ): Promise<number> {
   const result = await db.query(
-    `DELETE FROM chipp_orchestrator_session
+    `DELETE FROM dispatch_orchestrator_session
      WHERE workspace_id = $1 AND updated_at < NOW() - INTERVAL '30 days'
      RETURNING id`,
     [workspaceId]

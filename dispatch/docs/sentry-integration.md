@@ -1,10 +1,10 @@
 # Sentry Integration
 
-This document describes how chipp-issues integrates with Sentry to automatically create issues from production errors.
+This document describes how Dispatch integrates with Sentry to automatically create issues from production errors.
 
 ## Overview
 
-The Sentry integration allows chipp-issues to:
+The Sentry integration allows Dispatch to:
 
 - Automatically create issues when new errors occur in production
 - Track regressed errors (errors that come back after being resolved)
@@ -15,7 +15,7 @@ The Sentry integration allows chipp-issues to:
 
 ```
 ┌─────────────┐         ┌──────────────────────┐         ┌──────────────────┐
-│   Sentry    │ webhook │   chipp-issues       │ creates │   chipp_issue    │
+│   Sentry    │ webhook │   Dispatch       │ creates │   dispatch_issue    │
 │   (errors)  │────────▶│   /api/sentry/webhook│────────▶│   (database)     │
 └─────────────┘         └──────────────────────┘         └──────────────────┘
                                   │
@@ -23,7 +23,7 @@ The Sentry integration allows chipp-issues to:
                           │ links         │ correlates
                           ▼               ▼
                 ┌──────────────────┐  ┌──────────────────┐
-                │chipp_external_   │  │   GitHub API     │
+                │dispatch_external_   │  │   GitHub API     │
                 │issue (dedup)     │  │  (commits/deploy)│
                 └──────────────────┘  └──────────────────┘
 ```
@@ -36,9 +36,9 @@ The Sentry integration allows chipp-issues to:
 2. Click **Create New Integration**
 3. Configure the integration:
 
-   - **Name**: `Chipp Issues`
+   - **Name**: `Dispatch`
    - **Webhook URL**: `https://your-domain.com/api/sentry/webhook`
-   - **Overview**: "Automatically creates issues in Chipp Issues tracker"
+   - **Overview**: "Automatically creates issues in Dispatch tracker"
 
 4. Under **Webhooks**, enable:
 
@@ -110,7 +110,7 @@ The integration handles the following Sentry webhook events:
 
 ## Deduplication
 
-The integration uses the `chipp_external_issue` table to track which Sentry issues have already been linked to chipp-issues. This prevents creating duplicate issues when:
+The integration uses the `dispatch_external_issue` table to track which Sentry issues have already been linked to Dispatch. This prevents creating duplicate issues when:
 
 - Sentry sends multiple webhooks for the same issue
 - An error regresses but we already have an open issue for it
@@ -118,9 +118,9 @@ The integration uses the `chipp_external_issue` table to track which Sentry issu
 ### Database Schema
 
 ```sql
-CREATE TABLE chipp_external_issue (
+CREATE TABLE dispatch_external_issue (
     id TEXT PRIMARY KEY,
-    issue_id TEXT NOT NULL REFERENCES chipp_issue(id) ON DELETE CASCADE,
+    issue_id TEXT NOT NULL REFERENCES dispatch_issue(id) ON DELETE CASCADE,
     source TEXT NOT NULL,           -- 'sentry', 'github', etc.
     external_id TEXT NOT NULL,      -- Sentry issue ID
     external_url TEXT,              -- Link to Sentry issue
@@ -160,11 +160,11 @@ When a Sentry webhook triggers issue creation, the following happens:
 [project-slug] Error message
 ```
 
-Example: `[chipp-admin] TypeError: Cannot read property 'foo' of undefined`
+Example: `[my-app] TypeError: Cannot read property 'foo' of undefined`
 
 ### 2. Priority Mapping
 
-| Sentry Priority | Chipp Priority |
+| Sentry Priority | Dispatch Priority |
 | --------------- | -------------- |
 | high            | P1             |
 | medium          | P2             |
@@ -210,15 +210,15 @@ Example description:
 
 ## Project
 
-- **Name:** chipp-admin
+- **Name:** my-app
 - **Platform:** javascript
 - **Level:** error
 - **Unhandled:** Yes
 
 ## Links
 
-- [View in Sentry](https://sentry.io/organizations/chipp/issues/12345/)
-- Sentry ID: `CHIPP-ADMIN-1234`
+- [View in Sentry](https://sentry.io/organizations/your-org/issues/12345/)
+- Sentry ID: `MYPROJECT-1234`
 ```
 
 ## Security
@@ -279,7 +279,7 @@ Enable verbose logging by checking server logs for entries like:
 
 ```
 [Sentry Webhook] Received: resource=issue, action=created, substatus=new, issue=MYPROJECT-1234
-[Sentry Webhook] Created issue CHIPP-5 from Sentry MYPROJECT-1234
+[Sentry Webhook] Created issue DISPATCH-5 from Sentry MYPROJECT-1234
 ```
 
 Or for skipped events:
@@ -318,7 +318,7 @@ Receives Sentry webhook events.
   "success": true,
   "issue": {
     "id": "uuid",
-    "identifier": "CHIPP-5"
+    "identifier": "DISPATCH-5"
   },
   "sentry": {
     "id": "12345",
@@ -335,13 +335,13 @@ Receives Sentry webhook events.
   "deduplicated": true,
   "issue": {
     "id": "uuid",
-    "identifier": "CHIPP-3"
+    "identifier": "DISPATCH-3"
   },
   "sentry": {
     "id": "12345",
     "shortId": "MYPROJECT-1234"
   },
-  "message": "Issue already tracked as CHIPP-3"
+  "message": "Issue already tracked as DISPATCH-3"
 }
 ```
 
@@ -366,7 +366,7 @@ Health check endpoint.
 
 ## GitHub Correlation
 
-When a new error is detected, chipp-issues automatically correlates it with recent GitHub activity to help identify the root cause.
+When a new error is detected, Dispatch automatically correlates it with recent GitHub activity to help identify the root cause.
 
 ### How It Works
 
@@ -384,7 +384,7 @@ Add these environment variables to enable GitHub correlation:
 GITHUB_TOKEN=ghp_...
 
 # Repository in format "owner/repo"
-GITHUB_REPO=BenchmarkAI/chipp-monorepo
+GITHUB_REPO=yourorg/yourrepo
 ```
 
 ### Issue Description Output
@@ -401,7 +401,7 @@ These commits were made shortly before the error first appeared:
 - [`abc1234`](https://github.com/...) - fix: update user handler
   - **Author:** John Doe
   - **Date:** 12/13/2024, 10:30:00 AM
-  - **Files:** apps/chipp-admin/lib/userHandler.ts
+  - **Files:** apps/my-app/lib/userHandler.ts
 
 ### Recent Deployments
 
@@ -409,7 +409,7 @@ These commits were made shortly before the error first appeared:
 
 ### Files in Stack Trace Modified Recently
 
-- `apps/chipp-admin/lib/userHandler.ts`
+- `apps/my-app/lib/userHandler.ts`
 ```
 
 ### Limitations
@@ -422,8 +422,8 @@ These commits were made shortly before the error first appeared:
 
 Potential improvements for the integration:
 
-1. **Auto-resolve**: When a Sentry issue is resolved, automatically close the chipp-issue
+1. **Auto-resolve**: When a Sentry issue is resolved, automatically close the Dispatch issue
 2. **Comments**: Add comments to existing issues when they regress or escalate
-3. **Assignee sync**: Map Sentry assignees to chipp-issues agents
+3. **Assignee sync**: Map Sentry assignees to Dispatch agents
 4. **Metric alerts**: Support Sentry metric alerts (e.g., error rate thresholds)
 5. **Project filtering**: Only create issues for specific Sentry projects

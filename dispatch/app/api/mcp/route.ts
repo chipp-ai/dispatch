@@ -8,7 +8,7 @@ const transports = new Map<string, StreamableHTTPServerTransport>();
 
 // API key authentication (optional for development)
 function authenticate(request: NextRequest): boolean {
-  const apiKey = process.env.CHIPP_ISSUES_API_KEY;
+  const apiKey = process.env.DISPATCH_API_KEY;
 
   // Skip auth if no API key configured (development mode)
   if (!apiKey) return true;

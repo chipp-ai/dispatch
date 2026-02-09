@@ -2,23 +2,13 @@
 
 import { useRef, useEffect } from "react";
 import TerminalMessage from "./TerminalMessage";
+import { BRAND_BRAILLE } from "@/lib/brand/logo-braille";
 import type { OrchestratorMessage } from "./useOrchestrator";
 
 interface TerminalMessagesProps {
   messages: OrchestratorMessage[];
   isStreaming: boolean;
 }
-
-const CHIPPY_BRAILLE = `⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡶⠛⠛⠳⣦
-⠀⠀⠀⠀⠀⠀⢀⣀⣀⣸⣧⡤⠆⠀⢸⡇
-⠀⠀⠀⣠⡴⣛⣩⣭⣭⣭⣤⣤⣤⣤⣭⣛⠶⣄
-⠀⠀⣼⢫⣾⣿⣿⣿⣿⠋⢹⣿⣿⡟⠉⣿⣷⣌⢷⡀
-⢀⡾⢡⣿⣿⣿⣿⣿⣿⠀⢾⣿⣿⡇⠰⣿⣿⣿⡎⣷
-⣾⠁⠸⣿⣿⣿⣿⣿⣿⣄⣸⣿⣿⣧⣀⣿⣿⣿⡇⣿
-⣿⠀⠀⢻⣿⣿⣿⣿⣿⣿⣏⠙⠻⠛⢉⣿⣿⡿⣱⠏
-⠹⡆⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣶⣾⣿⠿⠋⣴⠋
-⢸⡇⠀⠈⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠾⠁
-⠈⠷⣤⡤⠶⠒⠶⠶⠶⠶⠶⠶⠶⠚⠋⠁`;
 
 export default function TerminalMessages({
   messages,
@@ -45,14 +35,14 @@ export default function TerminalMessages({
           "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', 'Courier New', monospace",
       }}
     >
-      {/* Chippy banner -- always at top, like Claude Code */}
+      {/* Banner -- always at top, like Claude Code */}
       <div className="flex items-start gap-4 mb-4">
         <pre className="text-[11px] text-[#f9db00] leading-[1.15] opacity-50 shrink-0">
-          {CHIPPY_BRAILLE}
+          {BRAND_BRAILLE}
         </pre>
         <div className="pt-1 text-[12px] font-mono space-y-0.5">
           <div>
-            <span className="text-[#f9db00] font-semibold">Chippy Dispatch</span>{" "}
+            <span className="text-[#f9db00] font-semibold">{process.env.NEXT_PUBLIC_APP_NAME || "Dispatch"}</span>{" "}
             <span className="text-[#665e00]">v0.1</span>
           </div>
           <div className="text-[#665e00]">
@@ -80,7 +70,7 @@ export default function TerminalMessages({
           </p>
           <p>
             <span className="text-[#f9db00]">{">"}</span>{" "}
-            {"run QA on CHIPP-42"}
+            {"run QA on DISPATCH-42"}
           </p>
         </div>
       ) : (

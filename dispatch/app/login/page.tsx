@@ -55,9 +55,9 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 className="text-[20px] font-semibold text-[#f5f5f5] mb-1">
-            Chippy Dispatch
+            {process.env.NEXT_PUBLIC_APP_NAME || "Dispatch"}
           </h1>
-          <p className="text-[13px] text-[#666]">Autonomous Agent Command Center</p>
+          <p className="text-[13px] text-[#666]">{process.env.NEXT_PUBLIC_APP_DESCRIPTION || "Autonomous Agent Orchestration Platform"}</p>
         </div>
 
         {/* Login form */}

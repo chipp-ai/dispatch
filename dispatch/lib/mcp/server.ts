@@ -11,8 +11,8 @@ import {
   getSimilarIssues,
   getAgentActivity,
   createAgentActivity,
-  type ChippPriority,
-  type ChippAgentStatus,
+  type Priority,
+  type AgentStatus,
   type AgentActivityType,
 } from "../services/issueService";
 import { broadcastActivity } from "../services/activityBroadcast";
@@ -149,23 +149,34 @@ export function queueWebhookEvent(event: WebhookEvent): void {
 
 // Helper: Get default workspace (creates if needed)
 async function getDefaultWorkspace(): Promise<Workspace> {
+  const issuePrefix = process.env.DEFAULT_ISSUE_PREFIX || "DISPATCH";
+  const workspaceName = process.env.DEFAULT_WORKSPACE_NAME || "My Workspace";
+
   let workspace = await db.queryOne<Workspace>(
-    `SELECT * FROM chipp_workspace WHERE issue_prefix = $1`,
-    ["CHIPP"]
+    `SELECT * FROM dispatch_workspace WHERE issue_prefix = $1`,
+    [issuePrefix]
   );
 
   if (workspace) return workspace;
 
+  // Also check for legacy "CHIPP" prefix from pre-rename deployments
+  if (issuePrefix !== "CHIPP") {
+    workspace = await db.queryOne<Workspace>(
+      `SELECT * FROM dispatch_workspace WHERE issue_prefix = 'CHIPP'`
+    );
+    if (workspace) return workspace;
+  }
+
   const workspaceId = randomUUID();
   await db.query(
-    `INSERT INTO chipp_workspace (id, name, issue_prefix, next_issue_number, created_at)
+    `INSERT INTO dispatch_workspace (id, name, issue_prefix, next_issue_number, created_at)
      VALUES ($1, $2, $3, $4, NOW())`,
-    [workspaceId, "Chipp Workspace", "CHIPP", 1]
+    [workspaceId, workspaceName, issuePrefix, 1]
   );
 
   for (const status of DEFAULT_STATUSES) {
     await db.query(
-      `INSERT INTO chipp_status (id, workspace_id, name, color, position, is_triage, is_closed)
+      `INSERT INTO dispatch_status (id, workspace_id, name, color, position, is_triage, is_closed)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         randomUUID(),
@@ -181,14 +192,14 @@ async function getDefaultWorkspace(): Promise<Workspace> {
 
   for (const label of DEFAULT_LABELS) {
     await db.query(
-      `INSERT INTO chipp_label (id, workspace_id, name, color)
+      `INSERT INTO dispatch_label (id, workspace_id, name, color)
        VALUES ($1, $2, $3, $4)`,
       [randomUUID(), workspaceId, label.name, label.color]
     );
   }
 
   workspace = await db.queryOne<Workspace>(
-    `SELECT * FROM chipp_workspace WHERE id = $1`,
+    `SELECT * FROM dispatch_workspace WHERE id = $1`,
     [workspaceId]
   );
 
@@ -201,7 +212,7 @@ async function getOrCreateAgent(
   name: string
 ): Promise<Agent> {
   let agent = await db.queryOne<Agent>(
-    `SELECT * FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+    `SELECT * FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
     [workspaceId, name]
   );
 
@@ -209,12 +220,12 @@ async function getOrCreateAgent(
 
   const id = randomUUID();
   await db.query(
-    `INSERT INTO chipp_agent (id, workspace_id, name, is_active, created_at)
+    `INSERT INTO dispatch_agent (id, workspace_id, name, is_active, created_at)
      VALUES ($1, $2, $3, true, NOW())`,
     [id, workspaceId, name]
   );
 
-  return (await db.queryOne<Agent>(`SELECT * FROM chipp_agent WHERE id = $1`, [
+  return (await db.queryOne<Agent>(`SELECT * FROM dispatch_agent WHERE id = $1`, [
     id,
   ]))!;
 }
@@ -222,7 +233,7 @@ async function getOrCreateAgent(
 // Create and configure MCP server
 export function createMcpServer(): McpServer {
   const server = new McpServer({
-    name: "chipp-issues",
+    name: "dispatch",
     version: "1.0.0",
   });
 
@@ -253,9 +264,9 @@ export function createMcpServer(): McpServer {
           SELECT ci.id, ci.identifier, ci.title, ci.description, ci.priority,
                  cs.name as status_name, ca.name as assignee_name,
                  1 - (ci.embedding <=> $1::vector) as similarity
-          FROM chipp_issue ci
-          LEFT JOIN chipp_status cs ON ci.status_id = cs.id
-          LEFT JOIN chipp_agent ca ON ci.assignee_id = ca.id
+          FROM dispatch_issue ci
+          LEFT JOIN dispatch_status cs ON ci.status_id = cs.id
+          LEFT JOIN dispatch_agent ca ON ci.assignee_id = ca.id
           WHERE ci.workspace_id = $2 AND ci.embedding IS NOT NULL
         `;
         const params: unknown[] = [embeddingStr, workspace.id];
@@ -341,9 +352,9 @@ export function createMcpServer(): McpServer {
         const workspace = await getDefaultWorkspace();
         let sql = `
           SELECT ci.id, ci.identifier, ci.title, ci.priority, cs.name as status_name, ca.name as assignee_name
-          FROM chipp_issue ci
-          LEFT JOIN chipp_status cs ON ci.status_id = cs.id
-          LEFT JOIN chipp_agent ca ON ci.assignee_id = ca.id
+          FROM dispatch_issue ci
+          LEFT JOIN dispatch_status cs ON ci.status_id = cs.id
+          LEFT JOIN dispatch_agent ca ON ci.assignee_id = ca.id
           WHERE ci.workspace_id = $1
         `;
         const params: unknown[] = [workspace.id];
@@ -397,7 +408,7 @@ export function createMcpServer(): McpServer {
     "get_issue",
     "Get full details of a specific issue.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
     },
     async ({ identifier }) => {
       try {
@@ -517,7 +528,7 @@ export function createMcpServer(): McpServer {
         const issue = await createIssue(workspace.id, {
           title,
           description,
-          priority: priority as ChippPriority,
+          priority: priority as Priority,
           assigneeName: assignee,
           customerId,
           reporterId,
@@ -536,7 +547,7 @@ export function createMcpServer(): McpServer {
           const customer = await getCustomerBySlackChannel(slackChannelId);
           if (customer) {
             const baseUrl =
-              process.env.NEXT_PUBLIC_APP_URL || "https://issues.chipp.ai";
+              process.env.NEXT_PUBLIC_APP_URL || "";
             portalUrl = buildPortalUrl(
               baseUrl,
               customer.slug,
@@ -600,7 +611,7 @@ export function createMcpServer(): McpServer {
         let statusId: string | undefined;
         if (status) {
           const statusRecord = await db.queryOne<Status>(
-            `SELECT id FROM chipp_status WHERE LOWER(name) LIKE LOWER($1)`,
+            `SELECT id FROM dispatch_status WHERE LOWER(name) LIKE LOWER($1)`,
             [`%${status}%`]
           );
           statusId = statusRecord?.id;
@@ -610,7 +621,7 @@ export function createMcpServer(): McpServer {
           title,
           description,
           statusId,
-          priority: priority as ChippPriority,
+          priority: priority as Priority,
           assigneeName: assignee,
         });
 
@@ -811,7 +822,7 @@ export function createMcpServer(): McpServer {
         if (error) agentOutput.error = error;
 
         const issue = await updateIssue(identifier.toUpperCase(), {
-          agent_status: status as ChippAgentStatus,
+          agent_status: status as AgentStatus,
           agent_output:
             Object.keys(agentOutput).length > 0 ? agentOutput : undefined,
         });
@@ -872,7 +883,7 @@ export function createMcpServer(): McpServer {
         const secret = crypto.randomBytes(32).toString("hex");
 
         await db.query(
-          `UPDATE chipp_agent SET webhook_url = $1, webhook_secret = $2, updated_at = NOW() WHERE id = $3`,
+          `UPDATE dispatch_agent SET webhook_url = $1, webhook_secret = $2, updated_at = NOW() WHERE id = $3`,
           [webhookUrl, secret, agent.id]
         );
 
@@ -942,7 +953,7 @@ export function createMcpServer(): McpServer {
       try {
         const workspace = await getDefaultWorkspace();
         const agent = await db.queryOne<Agent>(
-          `SELECT * FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+          `SELECT * FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
           [workspace.id, agentName]
         );
 
@@ -959,8 +970,8 @@ export function createMcpServer(): McpServer {
 
         const issues = await db.query(
           `SELECT ci.identifier, ci.title, ci.priority, cs.name as status
-           FROM chipp_issue ci
-           JOIN chipp_status cs ON ci.status_id = cs.id
+           FROM dispatch_issue ci
+           JOIN dispatch_status cs ON ci.status_id = cs.id
            WHERE ci.assignee_id = $1 AND cs.is_closed = false
            ORDER BY ci.priority, ci.created_at`,
           [agent.id]
@@ -1017,7 +1028,7 @@ export function createMcpServer(): McpServer {
         const agent = await getOrCreateAgent(workspace.id, authorName);
 
         await db.query(
-          `INSERT INTO chipp_comment (id, issue_id, author_id, body, created_at, updated_at)
+          `INSERT INTO dispatch_comment (id, issue_id, author_id, body, created_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
           [randomUUID(), issue.id, agent.id, content]
         );
@@ -1053,7 +1064,7 @@ export function createMcpServer(): McpServer {
     "add_watcher",
     "Add a customer as a watcher to an issue. Use this when deduplicating issues - if a customer reports an issue that already exists, add them as a watcher.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
       slackChannelId: z
         .string()
         .describe("Slack channel ID of the customer to add as watcher"),
@@ -1124,7 +1135,7 @@ export function createMcpServer(): McpServer {
     "list_watchers",
     "List all customers watching an issue.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
     },
     async ({ identifier }) => {
       try {
@@ -1181,7 +1192,7 @@ export function createMcpServer(): McpServer {
     "get_portal_url",
     "Get the portal URL for a customer to view an issue. Returns a shareable link with rich OG previews.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
       slackChannelId: z.string().describe("Slack channel ID of the customer"),
     },
     async ({ identifier, slackChannelId }) => {
@@ -1210,7 +1221,7 @@ export function createMcpServer(): McpServer {
         }
 
         const baseUrl =
-          process.env.NEXT_PUBLIC_APP_URL || "https://issues.chipp.ai";
+          process.env.NEXT_PUBLIC_APP_URL || "";
         const portalUrl = buildPortalUrl(
           baseUrl,
           customer.slug,
@@ -1254,7 +1265,7 @@ export function createMcpServer(): McpServer {
     "post_plan",
     "Post a structured implementation plan for human review. Sets the issue status to awaiting_review. The plan should include: Summary, Files to Create/Modify, DB Changes, API Changes, UI Changes, Dependencies, Testing Strategy, Risks, Stop Conditions.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
       content: z
         .string()
         .describe("Full plan content in markdown format"),
@@ -1331,7 +1342,7 @@ export function createMcpServer(): McpServer {
     "report_blocker",
     "Report that you are blocked and cannot proceed. This is the correct action when you encounter an obstacle you cannot resolve. Working around blockers instead of reporting them is a FAILURE.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
       reason: z
         .string()
         .describe("Detailed description of what is blocking you"),
@@ -1418,7 +1429,7 @@ export function createMcpServer(): McpServer {
     "get_approved_plan",
     "Retrieve the approved plan for an issue. Use this at the start of an implementation session to get the plan you should follow.",
     {
-      identifier: z.string().describe("Issue identifier (e.g., CHIPP-123)"),
+      identifier: z.string().describe("Issue identifier (e.g., DISPATCH-123)"),
     },
     async ({ identifier }) => {
       try {

@@ -98,7 +98,7 @@ async function getIssueSlackInfo(
 ): Promise<IssueSlackInfo | null> {
   return db.queryOne<IssueSlackInfo>(
     `SELECT slack_channel_id, slack_thread_ts, slack_message_ts, customer_id
-     FROM chipp_issue WHERE id = $1`,
+     FROM dispatch_issue WHERE id = $1`,
     [issueId]
   );
 }
@@ -266,7 +266,7 @@ export async function notifyIssueCreated(issue: IssueCreated): Promise<void> {
       // If this was a new message (not a thread reply), store the message_ts for future thread replies
       if (result.ts && !issue.slackThreadTs) {
         await db.query(
-          `UPDATE chipp_issue SET slack_message_ts = $1 WHERE id = $2`,
+          `UPDATE dispatch_issue SET slack_message_ts = $1 WHERE id = $2`,
           [result.ts, issue.issueId]
         );
         console.log(
@@ -570,6 +570,6 @@ function buildPortalUrl(
   portalToken: string,
   issueIdentifier: string
 ): string {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://issues.chipp.ai";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "";
   return `${baseUrl}/portal/${customerSlug}/issue/${issueIdentifier}?token=${portalToken}`;
 }

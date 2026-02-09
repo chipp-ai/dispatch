@@ -1,7 +1,7 @@
 /**
  * Linear API Service
  *
- * Handles fetching issues from Linear and mapping them to Chipp Issues format.
+ * Handles fetching issues from Linear and mapping them to Dispatch format.
  * Uses the Linear SDK for type-safe API interactions.
  */
 
@@ -196,7 +196,7 @@ export async function fetchLinearIssue(
 }
 
 /**
- * Map Linear priority (0-4) to Chipp priority (P1-P4).
+ * Map Linear priority (0-4) to Dispatch priority (P1-P4).
  */
 export function mapLinearPriority(
   linearPriority: number
@@ -216,8 +216,8 @@ export function mapLinearPriority(
 }
 
 /**
- * Map Linear status name to Chipp Issues status name.
- * Linear and Chipp Issues statuses should match exactly after migration.
+ * Map Linear status name to Dispatch status name.
+ * Linear and Dispatch statuses should match exactly after migration.
  */
 export function mapLinearStatus(linearStatusName: string): string {
   // Direct mapping - statuses should match exactly

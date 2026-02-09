@@ -51,13 +51,13 @@ export interface ReconciliationResult {
 // Default GitHub repo config - should be set via environment
 // GITHUB_REPO can be "owner/repo" format or just "repo" with separate GITHUB_OWNER
 function getGitHubConfig() {
-  const repoEnv = process.env.GITHUB_REPO || "BenchmarkAI/chipp-monorepo";
+  const repoEnv = process.env.GITHUB_REPO || "";
   if (repoEnv.includes("/")) {
     const [owner, repo] = repoEnv.split("/");
     return { owner, repo };
   }
   return {
-    owner: process.env.GITHUB_OWNER || "BenchmarkAI",
+    owner: process.env.GITHUB_OWNER || "",
     repo: repoEnv,
   };
 }
@@ -71,7 +71,7 @@ export async function getLastReconciliation(
   workspaceId: string
 ): Promise<Reconciliation | null> {
   return db.queryOne<Reconciliation>(
-    `SELECT * FROM chipp_reconciliation
+    `SELECT * FROM dispatch_reconciliation
      WHERE workspace_id = $1 AND status = 'completed'
      ORDER BY completed_at DESC
      LIMIT 1`,
@@ -102,7 +102,7 @@ async function startReconciliation(workspaceId: string): Promise<string> {
   const id = uuidv4();
 
   await db.query(
-    `INSERT INTO chipp_reconciliation (id, workspace_id, started_at, status)
+    `INSERT INTO dispatch_reconciliation (id, workspace_id, started_at, status)
      VALUES ($1, $2, NOW(), 'running')`,
     [id, workspaceId]
   );
@@ -120,7 +120,7 @@ async function completeReconciliation(
   metadata?: Record<string, unknown>
 ): Promise<void> {
   await db.query(
-    `UPDATE chipp_reconciliation
+    `UPDATE dispatch_reconciliation
      SET completed_at = NOW(),
          prs_processed = $2,
          issues_updated = $3,
@@ -141,7 +141,7 @@ async function completeReconciliation(
  */
 async function failReconciliation(id: string, error: string): Promise<void> {
   await db.query(
-    `UPDATE chipp_reconciliation
+    `UPDATE dispatch_reconciliation
      SET completed_at = NOW(),
          status = 'failed',
          error = $2
@@ -445,7 +445,7 @@ export async function getReconciliationHistory(
   limit: number = 10
 ): Promise<Reconciliation[]> {
   return db.query<Reconciliation>(
-    `SELECT * FROM chipp_reconciliation
+    `SELECT * FROM dispatch_reconciliation
      WHERE workspace_id = $1
      ORDER BY started_at DESC
      LIMIT $2`,

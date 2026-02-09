@@ -3,8 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import { generateEmbeddingForIssue, vectorToString } from "../utils/embeddings";
 import { dispatchToAgent, buildWebhookPayload } from "./webhookService";
 
-export type ChippPriority = "P1" | "P2" | "P3" | "P4";
-export type ChippAgentStatus =
+export type Priority = "P1" | "P2" | "P3" | "P4";
+export type AgentStatus =
   | "idle"
   | "investigating"
   | "implementing"
@@ -44,13 +44,13 @@ export interface Issue {
   title: string;
   description: string | null;
   status_id: string;
-  priority: ChippPriority;
+  priority: Priority;
   assignee_id: string | null;
   workspace_id: string;
   created_at: Date;
   updated_at: Date;
   // Agent fields
-  agent_status: ChippAgentStatus;
+  agent_status: AgentStatus;
   agent_output: AgentOutput | null;
   agent_confidence: number | null;
   agent_tokens_used: number | null;
@@ -89,7 +89,7 @@ export interface CreateIssueInput {
   title: string;
   description?: string | null;
   statusId?: string;
-  priority?: ChippPriority;
+  priority?: Priority;
   assigneeName?: string;
   labelIds?: string[];
   // Customer/Reporter fields
@@ -103,11 +103,11 @@ export interface UpdateIssueInput {
   title?: string;
   description?: string | null;
   statusId?: string;
-  priority?: ChippPriority;
+  priority?: Priority;
   assigneeName?: string;
   labelIds?: string[];
   // Agent fields
-  agent_status?: ChippAgentStatus;
+  agent_status?: AgentStatus;
   agent_output?: AgentOutput | null;
   agent_confidence?: number | null;
   agent_tokens_used?: number | null;
@@ -139,7 +139,7 @@ export async function createIssue(
   return db.transaction(async (client: PoolClient) => {
     // Get workspace and increment counter
     const workspaceResult = await client.query(
-      `UPDATE chipp_workspace
+      `UPDATE dispatch_workspace
        SET next_issue_number = next_issue_number + 1
        WHERE id = $1
        RETURNING issue_prefix, next_issue_number - 1 as issue_number`,
@@ -152,7 +152,7 @@ export async function createIssue(
     let statusId = input.statusId;
     if (!statusId) {
       const statusResult = await client.query(
-        `SELECT id FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC LIMIT 1`,
+        `SELECT id FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC LIMIT 1`,
         [workspaceId]
       );
       statusId = statusResult.rows[0]?.id;
@@ -162,7 +162,7 @@ export async function createIssue(
     let assigneeId: string | null = null;
     if (input.assigneeName) {
       const agentResult = await client.query(
-        `SELECT id FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+        `SELECT id FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
         [workspaceId, input.assigneeName]
       );
       if (agentResult.rows[0]) {
@@ -170,7 +170,7 @@ export async function createIssue(
       } else {
         assigneeId = uuidv4();
         await client.query(
-          `INSERT INTO chipp_agent (id, workspace_id, name) VALUES ($1, $2, $3)`,
+          `INSERT INTO dispatch_agent (id, workspace_id, name) VALUES ($1, $2, $3)`,
           [assigneeId, workspaceId, input.assigneeName]
         );
       }
@@ -191,7 +191,7 @@ export async function createIssue(
     // Insert issue
     const issueId = uuidv4();
     const issueResult = await client.query(
-      `INSERT INTO chipp_issue (
+      `INSERT INTO dispatch_issue (
         id, identifier, issue_number, title, description,
         status_id, priority, assignee_id, workspace_id,
         customer_id, reporter_id, slack_channel_id, slack_thread_ts,
@@ -226,7 +226,7 @@ export async function createIssue(
     if (input.labelIds && input.labelIds.length > 0) {
       for (const labelId of input.labelIds) {
         await client.query(
-          `INSERT INTO chipp_issue_label (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          `INSERT INTO dispatch_issue_label (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
           [issueId, labelId]
         );
       }
@@ -241,7 +241,7 @@ export async function updateIssue(
   input: UpdateIssueInput
 ): Promise<Issue | null> {
   const existing = await db.queryOne<Issue>(
-    `SELECT * FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT * FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [issueId]
   );
   if (!existing) return null;
@@ -254,7 +254,7 @@ export async function updateIssue(
         assigneeId = null;
       } else if (input.assigneeName) {
         const agentResult = await client.query(
-          `SELECT id FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+          `SELECT id FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
           [existing.workspace_id, input.assigneeName]
         );
         if (agentResult.rows[0]) {
@@ -262,7 +262,7 @@ export async function updateIssue(
         } else {
           assigneeId = uuidv4();
           await client.query(
-            `INSERT INTO chipp_agent (id, workspace_id, name) VALUES ($1, $2, $3)`,
+            `INSERT INTO dispatch_agent (id, workspace_id, name) VALUES ($1, $2, $3)`,
             [assigneeId, existing.workspace_id, input.assigneeName]
           );
         }
@@ -319,7 +319,7 @@ export async function updateIssue(
 
     // Update issue
     const updateResult = await client.query(
-      `UPDATE chipp_issue SET
+      `UPDATE dispatch_issue SET
         title = COALESCE($1, title),
         description = COALESCE($2, description),
         status_id = COALESCE($3, status_id),
@@ -386,12 +386,12 @@ export async function updateIssue(
 
     // Update labels if provided
     if (input.labelIds !== undefined) {
-      await client.query(`DELETE FROM chipp_issue_label WHERE issue_id = $1`, [
+      await client.query(`DELETE FROM dispatch_issue_label WHERE issue_id = $1`, [
         existing.id,
       ]);
       for (const labelId of input.labelIds) {
         await client.query(
-          `INSERT INTO chipp_issue_label (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          `INSERT INTO dispatch_issue_label (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
           [existing.id, labelId]
         );
       }
@@ -403,14 +403,14 @@ export async function updateIssue(
     if (assigneeId !== existing.assignee_id && assigneeId) {
       // Get status name for webhook payload
       const status = await client.query<{ name: string }>(
-        `SELECT name FROM chipp_status WHERE id = $1`,
+        `SELECT name FROM dispatch_status WHERE id = $1`,
         [updatedIssue.status_id]
       );
       const statusName = status.rows[0]?.name || "Unknown";
 
       // Get assignee name
       const agent = await client.query<{ name: string }>(
-        `SELECT name FROM chipp_agent WHERE id = $1`,
+        `SELECT name FROM dispatch_agent WHERE id = $1`,
         [assigneeId]
       );
       const assigneeName = agent.rows[0]?.name || null;
@@ -451,9 +451,9 @@ export async function getIssue(
       s.name as status_name,
       s.color as status_color,
       a.name as assignee_name
-    FROM chipp_issue i
-    JOIN chipp_status s ON i.status_id = s.id
-    LEFT JOIN chipp_agent a ON i.assignee_id = a.id
+    FROM dispatch_issue i
+    JOIN dispatch_status s ON i.status_id = s.id
+    LEFT JOIN dispatch_agent a ON i.assignee_id = a.id
     WHERE i.id = $1 OR i.identifier = $1`,
     [issueIdOrIdentifier]
   );
@@ -467,8 +467,8 @@ export async function getIssue(
     color: string;
   }>(
     `SELECT il.label_id, l.name, l.color
-     FROM chipp_issue_label il
-     JOIN chipp_label l ON il.label_id = l.id
+     FROM dispatch_issue_label il
+     JOIN dispatch_label l ON il.label_id = l.id
      WHERE il.issue_id = $1`,
     [issue.id]
   );
@@ -504,9 +504,9 @@ export async function listIssues(
       s.name as status_name,
       s.color as status_color,
       a.name as assignee_name
-    FROM chipp_issue i
-    JOIN chipp_status s ON i.status_id = s.id
-    LEFT JOIN chipp_agent a ON i.assignee_id = a.id
+    FROM dispatch_issue i
+    JOIN dispatch_status s ON i.status_id = s.id
+    LEFT JOIN dispatch_agent a ON i.assignee_id = a.id
     WHERE i.workspace_id = $1
     ORDER BY i.created_at DESC`,
     [workspaceId]
@@ -522,8 +522,8 @@ export async function listIssues(
     color: string;
   }>(
     `SELECT il.issue_id, il.label_id, l.name, l.color
-     FROM chipp_issue_label il
-     JOIN chipp_label l ON il.label_id = l.id
+     FROM dispatch_issue_label il
+     JOIN dispatch_label l ON il.label_id = l.id
      WHERE il.issue_id = ANY($1)`,
     [issueIds]
   );
@@ -579,8 +579,8 @@ export async function searchIssuesSemantic(
       i.id, i.identifier, i.title, i.description, i.priority,
       s.name as status_name, s.color as status_color,
       1 - (i.embedding <=> $1::vector) as similarity
-    FROM chipp_issue i
-    JOIN chipp_status s ON i.status_id = s.id
+    FROM dispatch_issue i
+    JOIN dispatch_status s ON i.status_id = s.id
     WHERE i.workspace_id = $2 AND i.embedding IS NOT NULL
     ORDER BY i.embedding <=> $1::vector
     LIMIT $3`,
@@ -603,7 +603,7 @@ export async function getSimilarIssues(
 > {
   // Get the issue's embedding directly from the database
   const result = await db.query<{ id: string; workspace_id: string }>(
-    `SELECT id, workspace_id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT id, workspace_id FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [issueIdOrIdentifier]
   );
 
@@ -616,14 +616,14 @@ export async function getSimilarIssues(
       i.id, i.identifier, i.title,
       s.name as status_name,
       s.color as status_color,
-      1 - (i.embedding <=> (SELECT embedding FROM chipp_issue WHERE id = $1)) as similarity
-    FROM chipp_issue i
-    JOIN chipp_status s ON i.status_id = s.id
+      1 - (i.embedding <=> (SELECT embedding FROM dispatch_issue WHERE id = $1)) as similarity
+    FROM dispatch_issue i
+    JOIN dispatch_status s ON i.status_id = s.id
     WHERE i.workspace_id = $2
       AND i.id != $1
       AND i.embedding IS NOT NULL
-      AND (SELECT embedding FROM chipp_issue WHERE id = $1) IS NOT NULL
-    ORDER BY i.embedding <=> (SELECT embedding FROM chipp_issue WHERE id = $1)
+      AND (SELECT embedding FROM dispatch_issue WHERE id = $1) IS NOT NULL
+    ORDER BY i.embedding <=> (SELECT embedding FROM dispatch_issue WHERE id = $1)
     LIMIT $3`,
     [issueId, workspaceId, limit]
   );
@@ -631,7 +631,7 @@ export async function getSimilarIssues(
 
 export async function deleteIssue(issueId: string): Promise<boolean> {
   const result = await db.query(
-    `DELETE FROM chipp_issue WHERE id = $1 OR identifier = $1 RETURNING id`,
+    `DELETE FROM dispatch_issue WHERE id = $1 OR identifier = $1 RETURNING id`,
     [issueId]
   );
   return result.length > 0;
@@ -681,8 +681,8 @@ export async function getIssueForBoard(
       i.assignee_id, a.name as assignee_name, i.created_at,
       i.agent_status, i.plan_status, i.blocked_reason, i.cost_usd,
       i.run_outcome, i.outcome_summary
-    FROM chipp_issue i
-    LEFT JOIN chipp_agent a ON i.assignee_id = a.id
+    FROM dispatch_issue i
+    LEFT JOIN dispatch_agent a ON i.assignee_id = a.id
     WHERE i.id = $1 OR i.identifier = $1`,
     [issueIdOrIdentifier]
   );
@@ -696,8 +696,8 @@ export async function getIssueForBoard(
     color: string;
   }>(
     `SELECT il.label_id, l.name, l.color
-     FROM chipp_issue_label il
-     JOIN chipp_label l ON il.label_id = l.id
+     FROM dispatch_issue_label il
+     JOIN dispatch_label l ON il.label_id = l.id
      WHERE il.issue_id = $1`,
     [issue.id]
   );
@@ -774,7 +774,7 @@ export async function getAgentActivity(
 > {
   // First resolve the issue ID
   const issue = await db.queryOne<{ id: string }>(
-    `SELECT id FROM chipp_issue WHERE id = $1 OR identifier = $1`,
+    `SELECT id FROM dispatch_issue WHERE id = $1 OR identifier = $1`,
     [issueIdOrIdentifier]
   );
 
@@ -782,7 +782,7 @@ export async function getAgentActivity(
 
   const activities = await db.query<AgentActivity>(
     `SELECT id, issue_id, type, content, metadata, created_at
-     FROM chipp_agent_activity
+     FROM dispatch_agent_activity
      WHERE issue_id = $1
      ORDER BY created_at ASC
      LIMIT $2`,
@@ -805,7 +805,7 @@ export async function createAgentActivity(
   metadata?: AgentActivityMetadata
 ): Promise<AgentActivity> {
   const result = await db.query<AgentActivity>(
-    `INSERT INTO chipp_agent_activity (id, issue_id, type, content, metadata, created_at)
+    `INSERT INTO dispatch_agent_activity (id, issue_id, type, content, metadata, created_at)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW())
      RETURNING *`,
     [issueId, type, content, metadata ? JSON.stringify(metadata) : null]
@@ -814,7 +814,7 @@ export async function createAgentActivity(
 }
 
 export async function clearAgentActivity(issueId: string): Promise<void> {
-  await db.query(`DELETE FROM chipp_agent_activity WHERE issue_id = $1`, [
+  await db.query(`DELETE FROM dispatch_agent_activity WHERE issue_id = $1`, [
     issueId,
   ]);
 }

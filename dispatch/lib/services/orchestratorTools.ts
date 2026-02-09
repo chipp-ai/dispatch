@@ -13,7 +13,7 @@ import {
   getIssue,
   getIssueForBoard,
 } from "./issueService";
-import type { ChippPriority } from "./issueService";
+import type { Priority } from "./issueService";
 import {
   canSpawn,
   dispatchWorkflow,
@@ -195,7 +195,7 @@ async function executeDispatchInvestigation(input: ToolInput): Promise<string> {
   const workspace = await getOrCreateDefaultWorkspace();
   const title = input.title as string;
   const description = input.description as string;
-  const priority = (input.priority as ChippPriority) || "P3";
+  const priority = (input.priority as Priority) || "P3";
 
   // Create the mission
   const issue = await createIssue(workspace.id, {
@@ -436,7 +436,7 @@ async function executeGetFleetStatus(): Promise<string> {
     spawn_started_at: string;
   }>(
     `SELECT identifier, title, agent_status, spawn_type, spawn_started_at
-     FROM chipp_issue
+     FROM dispatch_issue
      WHERE workspace_id = $1 AND spawn_status = 'running'
      ORDER BY spawn_started_at DESC`,
     [workspace.id]
@@ -451,7 +451,7 @@ async function executeGetFleetStatus(): Promise<string> {
     spawn_completed_at: string;
   }>(
     `SELECT identifier, title, run_outcome, COALESCE(cost_usd, 0) as cost_usd, spawn_completed_at
-     FROM chipp_issue
+     FROM dispatch_issue
      WHERE workspace_id = $1
        AND spawn_status = 'completed'
        AND spawn_completed_at >= NOW() - INTERVAL '24 hours'
@@ -463,7 +463,7 @@ async function executeGetFleetStatus(): Promise<string> {
   // Daily cost
   const costResult = await db.queryOne<{ total: string }>(
     `SELECT COALESCE(SUM(cost_usd), 0) as total
-     FROM chipp_issue
+     FROM dispatch_issue
      WHERE workspace_id = $1
        AND spawn_started_at >= CURRENT_DATE`,
     [workspace.id]
@@ -472,13 +472,13 @@ async function executeGetFleetStatus(): Promise<string> {
 
   // Budget usage
   const budgetResult = await db.queryOne<{ spawn_count: number; max_spawns: number }>(
-    `SELECT spawn_count, max_spawns FROM chipp_spawn_budget
+    `SELECT spawn_count, max_spawns FROM dispatch_spawn_budget
      WHERE date = CURRENT_DATE AND spawn_type = 'prd'`
   );
 
   // Total missions
   const totalResult = await db.queryOne<{ count: string }>(
-    `SELECT COUNT(*) as count FROM chipp_issue WHERE workspace_id = $1`,
+    `SELECT COUNT(*) as count FROM dispatch_issue WHERE workspace_id = $1`,
     [workspace.id]
   );
 
