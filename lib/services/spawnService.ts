@@ -405,6 +405,13 @@ export async function checkSpawnGate(fp: string): Promise<{
     };
   }
 
+  if (!(await hasPassedSpawnDelay(fp))) {
+    return {
+      allowed: false,
+      reason: `spawn_delay (waiting ${SPAWN_DELAY_MINUTES}m after first seen)`,
+    };
+  }
+
   if (!(await canSpawn("error_fix"))) {
     return { allowed: false, reason: "budget_or_concurrency" };
   }
