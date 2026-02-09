@@ -112,7 +112,11 @@ GITHUB_REPO=your-org/your-repo  # Target codebase
 GITHUB_TOKEN=ghp_...            # For dispatching agents (see note below)
 ```
 
-> **GitHub token:** Must be a **classic** Personal Access Token with **`repo`** and **`workflow`** scopes. OAuth tokens (`gho_*` from `gh auth`) and fine-grained PATs without workflow scope will fail with a 502 when dispatching agents. Create one at [github.com/settings/tokens/new](https://github.com/settings/tokens/new).
+> **GitHub token:** Must have **`repo`** and **`workflow`** scopes. Two options:
+> - **Classic PAT** (recommended): Create at [github.com/settings/tokens/new](https://github.com/settings/tokens/new) with `repo` and `workflow` scopes selected.
+> - **`gh auth` token**: Run `gh auth refresh -h github.com -s workflow` to add the required `workflow` scope to your existing token, then use `gh auth token` to get the value.
+>
+> Tokens without `workflow` scope will fail with a **502 Server Error** when dispatching agents.
 
 ### 5. Personalize your instance (optional)
 
@@ -149,11 +153,13 @@ cp -r .github/workflows/{auto-investigate,prd-investigate,prd-implement,qa-test,
 
 Go to your target repo's **Settings > Secrets and variables > Actions** and add:
 
-| Secret | Description |
-|--------|-------------|
-| `ANTHROPIC_API_KEY` | Claude API key. Agents use this to run Claude Code sessions during workflows. |
-| `DISPATCH_API_URL` | Your Dispatch instance URL (e.g. `https://dispatch.yoursite.com`). Agents call back to report activity, post plans, and stream terminal output. |
-| `DISPATCH_API_KEY` | Must match the `DISPATCH_API_KEY` in your Dispatch `.env`. Used to authenticate agent callbacks. |
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Claude API key. Agents use this to run Claude Code sessions during workflows. |
+| `DISPATCH_API_URL` | For callbacks | Your Dispatch instance URL (e.g. `https://dispatch.yoursite.com`). Agents call back to report activity, post plans, and stream terminal output. Without this, agents still run but can't report back. |
+| `DISPATCH_API_KEY` | For callbacks | Must match the `DISPATCH_API_KEY` in your Dispatch `.env`. Used to authenticate agent callbacks. |
+
+> **Tip:** For initial testing, you only need `ANTHROPIC_API_KEY`. The agent will run and investigate your codebase. Add `DISPATCH_API_URL` and `DISPATCH_API_KEY` when you're ready for live terminal streaming and activity tracking.
 
 ### 3. Configure your Dispatch `.env`
 
@@ -161,7 +167,7 @@ These environment variables control how Dispatch dispatches workflows:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | **Must be a classic PAT** with `repo` and `workflow` scopes. OAuth tokens (`gho_*`) and fine-grained PATs without workflow scope will fail with 502. Create at [github.com/settings/tokens/new](https://github.com/settings/tokens/new). |
+| `GITHUB_TOKEN` | Yes | Must have `repo` and `workflow` scopes. Use a [classic PAT](https://github.com/settings/tokens/new), or run `gh auth refresh -h github.com -s workflow` then `gh auth token`. Without `workflow` scope, dispatches fail with 502. |
 | `GITHUB_REPO` | Yes | Target repo in `owner/repo` format (e.g. `acme/backend`). |
 | `GITHUB_REF` | No | Branch for workflow dispatch (default: `main`). Agents check out this branch when they run. Set this to your default branch if it's not `main`. |
 | `NEXT_PUBLIC_GITHUB_REPO` | No | Same `owner/repo` value. Enables "View on GitHub" links in the UI for workflow runs. |
@@ -620,6 +626,57 @@ npm run build          # Production build
 npm run test           # Run tests
 npm run lint           # Lint check
 npm run generate-logo  # Generate braille art from an image
+```
+
+## Troubleshooting
+
+**502 when clicking Investigate / dispatching agents**
+
+Your `GITHUB_TOKEN` is missing the `workflow` scope. This is the most common setup issue.
+
+```bash
+# Check your current scopes
+gh auth status
+# Look for 'workflow' in the Token scopes list
+
+# Add the workflow scope
+gh auth refresh -h github.com -s workflow
+
+# Get the new token for your .env
+gh auth token
+```
+
+Or create a new [classic PAT](https://github.com/settings/tokens/new) with `repo` + `workflow` scopes.
+
+**Agent runs but doesn't report back to Dispatch**
+
+The GitHub Actions workflow needs `DISPATCH_API_URL` and `DISPATCH_API_KEY` secrets set on your target repo. Without them, the agent still runs and can open PRs, but it can't stream terminal output or post activity updates back to the Dispatch UI.
+
+**`GITHUB_REPO_OWNER not configured` error**
+
+Set `GITHUB_REPO=owner/repo` in your `.env` (e.g. `GITHUB_REPO=acme/backend`). The owner and repo name are parsed from this value.
+
+**Database migration fails with "extension vector does not exist"**
+
+Install pgvector before running migrations:
+
+```bash
+psql dispatch -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+If using Docker Compose, the included `db` service has pgvector pre-installed.
+
+**Port 3002 already in use / dev server won't start**
+
+```bash
+# Find and kill the stale process
+lsof -ti :3002 | xargs kill -9
+
+# Remove stale lock file if present
+rm -f .next/dev/lock
+
+# Restart
+npm run dev
 ```
 
 ## License
