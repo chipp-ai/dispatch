@@ -15,21 +15,21 @@ import { db } from "../db";
 const MAX_CONCURRENT_SPAWNS_ERROR = parseInt(
   process.env.MAX_CONCURRENT_SPAWNS_ERROR ||
     process.env.MAX_CONCURRENT_SPAWNS ||
-    "2",
+    "100",
   10
 );
 const MAX_CONCURRENT_SPAWNS_PRD = parseInt(
-  process.env.MAX_CONCURRENT_SPAWNS_PRD || "1",
+  process.env.MAX_CONCURRENT_SPAWNS_PRD || "100",
   10
 );
 const DAILY_SPAWN_BUDGET_ERROR = parseInt(
   process.env.DAILY_SPAWN_BUDGET_ERROR ||
     process.env.DAILY_SPAWN_BUDGET ||
-    "10",
+    "1000",
   10
 );
 const DAILY_SPAWN_BUDGET_PRD = parseInt(
-  process.env.DAILY_SPAWN_BUDGET_PRD || "5",
+  process.env.DAILY_SPAWN_BUDGET_PRD || "1000",
   10
 );
 
@@ -38,11 +38,11 @@ const SPAWN_COOLDOWN_HOURS = parseInt(
   10
 );
 const MIN_EVENT_COUNT_TO_SPAWN = parseInt(
-  process.env.MIN_EVENT_COUNT_TO_SPAWN || "3",
+  process.env.MIN_EVENT_COUNT_TO_SPAWN || "1",
   10
 );
 const SPAWN_DELAY_MINUTES = parseInt(
-  process.env.SPAWN_DELAY_MINUTES || "5",
+  process.env.SPAWN_DELAY_MINUTES || "1",
   10
 );
 
