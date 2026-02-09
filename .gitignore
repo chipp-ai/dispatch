@@ -5,3 +5,4 @@ dist/
 .env.local
 .scratch/
 *.tsbuildinfo
+.DS_Store
