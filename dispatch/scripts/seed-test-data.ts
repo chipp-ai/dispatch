@@ -20,7 +20,7 @@ async function seedTestData() {
     id: string;
     issue_prefix: string;
     next_issue_number: number;
-  }>(`SELECT id, issue_prefix, next_issue_number FROM chipp_workspace LIMIT 1`);
+  }>(`SELECT id, issue_prefix, next_issue_number FROM dispatch_workspace LIMIT 1`);
 
   if (!workspace) {
     console.error("❌ No workspace found. Please create a workspace first.");
@@ -33,7 +33,7 @@ async function seedTestData() {
 
   // Get default status
   const defaultStatus = await db.queryOne<{ id: string; name: string }>(
-    `SELECT id, name FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC LIMIT 1`,
+    `SELECT id, name FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC LIMIT 1`,
     [workspace.id]
   );
 
@@ -46,7 +46,7 @@ async function seedTestData() {
 
   // Check if test data already exists
   const existingCustomer = await db.queryOne<{ id: string }>(
-    `SELECT id FROM chipp_customer WHERE slack_channel_id = 'C_ACME_TEST_001'`
+    `SELECT id FROM dispatch_customer WHERE slack_channel_id = 'C_ACME_TEST_001'`
   );
 
   if (existingCustomer) {
@@ -57,14 +57,14 @@ async function seedTestData() {
       portal_token: string;
       name: string;
     }>(
-      `SELECT slug, portal_token, name FROM chipp_customer WHERE slack_channel_id = 'C_ACME_TEST_001'`
+      `SELECT slug, portal_token, name FROM dispatch_customer WHERE slack_channel_id = 'C_ACME_TEST_001'`
     );
     const customer2 = await db.queryOne<{
       slug: string;
       portal_token: string;
       name: string;
     }>(
-      `SELECT slug, portal_token, name FROM chipp_customer WHERE slack_channel_id = 'C_BETA_TEST_002'`
+      `SELECT slug, portal_token, name FROM dispatch_customer WHERE slack_channel_id = 'C_BETA_TEST_002'`
     );
 
     if (customer1 && customer2) {
@@ -78,7 +78,7 @@ async function seedTestData() {
   const customer1Id = uuidv4();
   const customer1Token = generatePortalToken();
   await db.query(
-    `INSERT INTO chipp_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, created_at, updated_at)
+    `INSERT INTO dispatch_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
     [
       customer1Id,
@@ -96,7 +96,7 @@ async function seedTestData() {
   const customer2Id = uuidv4();
   const customer2Token = generatePortalToken();
   await db.query(
-    `INSERT INTO chipp_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, created_at, updated_at)
+    `INSERT INTO dispatch_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
     [
       customer2Id,
@@ -113,7 +113,7 @@ async function seedTestData() {
   console.log("\nCreating users for Acme Corp...");
   const user1Id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
+    `INSERT INTO dispatch_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())`,
     [user1Id, customer1Id, "U_ALICE_001", "Alice Smith", "alice@acme.test"]
   );
@@ -121,7 +121,7 @@ async function seedTestData() {
 
   const user2Id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
+    `INSERT INTO dispatch_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())`,
     [user2Id, customer1Id, "U_BOB_002", "Bob Jones", "bob@acme.test"]
   );
@@ -131,7 +131,7 @@ async function seedTestData() {
   console.log("\nCreating users for Beta Inc...");
   const user3Id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
+    `INSERT INTO dispatch_customer_user (id, customer_id, slack_user_id, slack_display_name, email, email_notifications_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())`,
     [
       user3Id,
@@ -151,7 +151,7 @@ async function seedTestData() {
   const issue1Id = uuidv4();
   const issue1Identifier = `${workspace.issue_prefix}-${issueNum++}`;
   await db.query(
-    `INSERT INTO chipp_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
+    `INSERT INTO dispatch_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`,
     [
       issue1Id,
@@ -168,7 +168,7 @@ async function seedTestData() {
     ]
   );
   await db.query(
-    `INSERT INTO chipp_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
+    `INSERT INTO dispatch_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
     [issue1Id, customer1Id]
   );
   console.log(
@@ -179,7 +179,7 @@ async function seedTestData() {
   const issue2Id = uuidv4();
   const issue2Identifier = `${workspace.issue_prefix}-${issueNum++}`;
   await db.query(
-    `INSERT INTO chipp_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
+    `INSERT INTO dispatch_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`,
     [
       issue2Id,
@@ -196,11 +196,11 @@ async function seedTestData() {
     ]
   );
   await db.query(
-    `INSERT INTO chipp_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
+    `INSERT INTO dispatch_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
     [issue2Id, customer1Id]
   );
   await db.query(
-    `INSERT INTO chipp_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
+    `INSERT INTO dispatch_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
     [issue2Id, customer2Id]
   );
   console.log(
@@ -211,7 +211,7 @@ async function seedTestData() {
   const issue3Id = uuidv4();
   const issue3Identifier = `${workspace.issue_prefix}-${issueNum++}`;
   await db.query(
-    `INSERT INTO chipp_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
+    `INSERT INTO dispatch_issue (id, identifier, issue_number, workspace_id, title, description, status_id, priority, customer_id, reporter_id, slack_channel_id, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`,
     [
       issue3Id,
@@ -228,7 +228,7 @@ async function seedTestData() {
     ]
   );
   await db.query(
-    `INSERT INTO chipp_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
+    `INSERT INTO dispatch_issue_watcher (issue_id, customer_id, added_at) VALUES ($1, $2, NOW())`,
     [issue3Id, customer2Id]
   );
   console.log(
@@ -237,7 +237,7 @@ async function seedTestData() {
 
   // Update workspace issue counter
   await db.query(
-    `UPDATE chipp_workspace SET next_issue_number = $1 WHERE id = $2`,
+    `UPDATE dispatch_workspace SET next_issue_number = $1 WHERE id = $2`,
     [issueNum, workspace.id]
   );
 

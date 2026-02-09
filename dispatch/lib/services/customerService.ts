@@ -68,7 +68,7 @@ export async function validatePortalToken(
   token: string
 ): Promise<Customer | null> {
   const customer = await db.queryOne<CustomerRow>(
-    `SELECT * FROM chipp_customer WHERE portal_token = $1`,
+    `SELECT * FROM dispatch_customer WHERE portal_token = $1`,
     [token]
   );
 
@@ -84,7 +84,7 @@ export async function getCustomerBySlug(
   slug: string
 ): Promise<Customer | null> {
   const customer = await db.queryOne<CustomerRow>(
-    `SELECT * FROM chipp_customer WHERE workspace_id = $1 AND slug = $2`,
+    `SELECT * FROM dispatch_customer WHERE workspace_id = $1 AND slug = $2`,
     [workspaceId, slug]
   );
 
@@ -97,7 +97,7 @@ export async function getCustomerBySlug(
  */
 export async function getCustomerById(id: string): Promise<Customer | null> {
   const customer = await db.queryOne<CustomerRow>(
-    `SELECT * FROM chipp_customer WHERE id = $1`,
+    `SELECT * FROM dispatch_customer WHERE id = $1`,
     [id]
   );
 
@@ -112,7 +112,7 @@ export async function getCustomerBySlackChannel(
   slackChannelId: string
 ): Promise<Customer | null> {
   const customer = await db.queryOne<CustomerRow>(
-    `SELECT * FROM chipp_customer WHERE slack_channel_id = $1`,
+    `SELECT * FROM dispatch_customer WHERE slack_channel_id = $1`,
     [slackChannelId]
   );
 
@@ -128,8 +128,8 @@ export async function listCustomers(
 ): Promise<CustomerWithIssueCount[]> {
   const customers = await db.query<CustomerRowWithCount>(
     `SELECT c.*,
-            (SELECT COUNT(*) FROM chipp_issue WHERE customer_id = c.id) as issue_count
-     FROM chipp_customer c
+            (SELECT COUNT(*) FROM dispatch_issue WHERE customer_id = c.id) as issue_count
+     FROM dispatch_customer c
      WHERE c.workspace_id = $1
      ORDER BY c.name ASC`,
     [workspaceId]
@@ -157,7 +157,7 @@ export async function createCustomer(params: {
   const sanitizedSlug = params.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
   const customer = await db.queryOne<CustomerRow>(
-    `INSERT INTO chipp_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, brand_color, logo_url, created_at, updated_at)
+    `INSERT INTO dispatch_customer (id, workspace_id, name, slug, slack_channel_id, portal_token, brand_color, logo_url, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
      RETURNING *`,
     [
@@ -217,7 +217,7 @@ export async function updateCustomer(
   values.push(id);
 
   const customer = await db.queryOne<CustomerRow>(
-    `UPDATE chipp_customer SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
+    `UPDATE dispatch_customer SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
     values
   );
 
@@ -231,7 +231,7 @@ export async function regeneratePortalToken(id: string): Promise<string> {
   const newToken = generatePortalToken();
 
   await db.query(
-    `UPDATE chipp_customer SET portal_token = $1, updated_at = NOW() WHERE id = $2`,
+    `UPDATE dispatch_customer SET portal_token = $1, updated_at = NOW() WHERE id = $2`,
     [newToken, id]
   );
 
@@ -244,12 +244,12 @@ export async function regeneratePortalToken(id: string): Promise<string> {
 export async function deleteCustomer(id: string): Promise<void> {
   // First, unlink all issues from this customer
   await db.query(
-    `UPDATE chipp_issue SET customer_id = NULL WHERE customer_id = $1`,
+    `UPDATE dispatch_issue SET customer_id = NULL WHERE customer_id = $1`,
     [id]
   );
 
   // Then delete the customer
-  await db.query(`DELETE FROM chipp_customer WHERE id = $1`, [id]);
+  await db.query(`DELETE FROM dispatch_customer WHERE id = $1`, [id]);
 }
 
 /**

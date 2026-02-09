@@ -111,7 +111,7 @@ function verifySignature(
   );
 }
 
-// Map Sentry priority to Chipp priority
+// Map Sentry priority to Dispatch priority
 function mapSentryPriority(sentryPriority: string): "P1" | "P2" | "P3" | "P4" {
   switch (sentryPriority.toLowerCase()) {
     case "high":

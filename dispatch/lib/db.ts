@@ -1,4 +1,4 @@
-// PostgreSQL client for chipp-issues
+// PostgreSQL client for Dispatch
 // Uses the same pattern as shared/utils-server/src/pgClient.ts
 
 import pg from "pg";

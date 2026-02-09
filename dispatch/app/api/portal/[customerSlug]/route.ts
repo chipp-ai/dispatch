@@ -58,8 +58,8 @@ export async function GET(
 
   // Get all statuses for the workspace (filter closed statuses if needed)
   const statusQuery = showClosed
-    ? `SELECT * FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC`
-    : `SELECT * FROM chipp_status WHERE workspace_id = $1 AND is_closed = false ORDER BY position ASC`;
+    ? `SELECT * FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC`
+    : `SELECT * FROM dispatch_status WHERE workspace_id = $1 AND is_closed = false ORDER BY position ASC`;
 
   const statuses = await db.query<StatusRow>(statusQuery, [
     customer.workspaceId,
@@ -70,18 +70,18 @@ export async function GET(
     ? `SELECT i.*,
               s.name as status_name, s.color as status_color, s.position as status_position,
               u.slack_display_name as reporter_name
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
-       LEFT JOIN chipp_customer_user u ON i.reporter_id = u.id
-       WHERE EXISTS (SELECT 1 FROM chipp_issue_watcher w WHERE w.issue_id = i.id AND w.customer_id = $1)
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
+       LEFT JOIN dispatch_customer_user u ON i.reporter_id = u.id
+       WHERE EXISTS (SELECT 1 FROM dispatch_issue_watcher w WHERE w.issue_id = i.id AND w.customer_id = $1)
        ORDER BY i.updated_at DESC`
     : `SELECT i.*,
               s.name as status_name, s.color as status_color, s.position as status_position,
               u.slack_display_name as reporter_name
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
-       LEFT JOIN chipp_customer_user u ON i.reporter_id = u.id
-       WHERE EXISTS (SELECT 1 FROM chipp_issue_watcher w WHERE w.issue_id = i.id AND w.customer_id = $1)
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
+       LEFT JOIN dispatch_customer_user u ON i.reporter_id = u.id
+       WHERE EXISTS (SELECT 1 FROM dispatch_issue_watcher w WHERE w.issue_id = i.id AND w.customer_id = $1)
          AND s.is_closed = false
        ORDER BY i.updated_at DESC`;
 

@@ -23,7 +23,7 @@ export async function getOrCreateAgentByName(
 ): Promise<Agent> {
   // Try to find existing agent by name (case-insensitive)
   const existing = await db.queryOne<Agent>(
-    `SELECT * FROM chipp_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+    `SELECT * FROM dispatch_agent WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
     [workspaceId, name]
   );
 
@@ -34,12 +34,12 @@ export async function getOrCreateAgentByName(
   // Create new agent
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_agent (id, workspace_id, name, is_active, created_at)
+    `INSERT INTO dispatch_agent (id, workspace_id, name, is_active, created_at)
      VALUES ($1, $2, $3, true, NOW())`,
     [id, workspaceId, name]
   );
 
-  return (await db.queryOne<Agent>(`SELECT * FROM chipp_agent WHERE id = $1`, [
+  return (await db.queryOne<Agent>(`SELECT * FROM dispatch_agent WHERE id = $1`, [
     id,
   ]))!;
 }
@@ -50,13 +50,13 @@ export async function listAgents(
 ): Promise<Agent[]> {
   if (includeInactive) {
     return db.query<Agent>(
-      `SELECT * FROM chipp_agent WHERE workspace_id = $1 ORDER BY name ASC`,
+      `SELECT * FROM dispatch_agent WHERE workspace_id = $1 ORDER BY name ASC`,
       [workspaceId]
     );
   }
 
   return db.query<Agent>(
-    `SELECT * FROM chipp_agent WHERE workspace_id = $1 AND is_active = true ORDER BY name ASC`,
+    `SELECT * FROM dispatch_agent WHERE workspace_id = $1 AND is_active = true ORDER BY name ASC`,
     [workspaceId]
   );
 }
@@ -67,7 +67,7 @@ export async function createAgent(
 ): Promise<Agent> {
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_agent (id, workspace_id, name, description, webhook_url, is_active, created_at)
+    `INSERT INTO dispatch_agent (id, workspace_id, name, description, webhook_url, is_active, created_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW())`,
     [
       id,
@@ -78,13 +78,13 @@ export async function createAgent(
     ]
   );
 
-  return (await db.queryOne<Agent>(`SELECT * FROM chipp_agent WHERE id = $1`, [
+  return (await db.queryOne<Agent>(`SELECT * FROM dispatch_agent WHERE id = $1`, [
     id,
   ]))!;
 }
 
 export async function getAgent(agentId: string): Promise<Agent | null> {
-  return db.queryOne<Agent>(`SELECT * FROM chipp_agent WHERE id = $1`, [
+  return db.queryOne<Agent>(`SELECT * FROM dispatch_agent WHERE id = $1`, [
     agentId,
   ]);
 }
@@ -97,7 +97,7 @@ export async function updateAgent(
   if (!existing) return null;
 
   await db.query(
-    `UPDATE chipp_agent SET
+    `UPDATE dispatch_agent SET
       name = COALESCE($1, name),
       description = COALESCE($2, description),
       webhook_url = COALESCE($3, webhook_url),
@@ -106,7 +106,7 @@ export async function updateAgent(
     [input.name, input.description, input.webhookUrl, input.isActive, agentId]
   );
 
-  return (await db.queryOne<Agent>(`SELECT * FROM chipp_agent WHERE id = $1`, [
+  return (await db.queryOne<Agent>(`SELECT * FROM dispatch_agent WHERE id = $1`, [
     agentId,
   ]))!;
 }

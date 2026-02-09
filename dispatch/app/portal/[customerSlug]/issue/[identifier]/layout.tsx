@@ -24,16 +24,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       `SELECT i.id, i.identifier, i.title, i.description, i.priority,
               s.name as status_name,
               c.name as customer_name
-       FROM chipp_issue i
-       JOIN chipp_status s ON i.status_id = s.id
-       LEFT JOIN chipp_customer c ON i.customer_id = c.id
+       FROM dispatch_issue i
+       JOIN dispatch_status s ON i.status_id = s.id
+       LEFT JOIN dispatch_customer c ON i.customer_id = c.id
        WHERE i.identifier = $1`,
       [identifier.toUpperCase()]
     );
 
     if (!issue) {
       return {
-        title: "Issue Not Found - Chipp Issues",
+        title: `Issue Not Found - ${process.env.NEXT_PUBLIC_APP_NAME || "Dispatch"}`,
       };
     }
 
@@ -51,8 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         : issue.description
       : `${priorityLabel} priority issue - ${issue.status_name}`;
 
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL || "https://issues.chipp.ai";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "";
     const ogImageUrl = `${baseUrl}/api/og/issue/${issue.identifier}`;
 
     return {
@@ -81,7 +80,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   } catch (error) {
     console.error("Error generating metadata:", error);
     return {
-      title: "Chipp Issues",
+      title: process.env.NEXT_PUBLIC_APP_NAME || "Dispatch",
     };
   }
 }
