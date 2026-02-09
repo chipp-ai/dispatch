@@ -9,9 +9,11 @@ interface SidebarProps {
   onOpenGuide?: () => void;
   isOpen?: boolean;
   onClose?: () => void;
+  viewType?: "terminal" | "board";
+  onViewTypeChange?: (viewType: "terminal" | "board") => void;
 }
 
-export default function Sidebar({ onCreateIssue, onOpenGuide, isOpen, onClose }: SidebarProps) {
+export default function Sidebar({ onCreateIssue, onOpenGuide, isOpen, onClose, viewType, onViewTypeChange }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -101,6 +103,36 @@ export default function Sidebar({ onCreateIssue, onOpenGuide, isOpen, onClose }:
           </kbd>
         </div>
       </div>
+
+      {/* View toggle */}
+      {onViewTypeChange && (
+        <div className="px-3 mb-3">
+          <div className="flex items-center bg-[#1a1a1a] border border-[#252525] rounded-md p-0.5">
+            <button
+              onClick={() => { onViewTypeChange("terminal"); onClose?.(); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-[12px] rounded transition-colors ${
+                viewType === "terminal"
+                  ? "bg-[#252525] text-[#f5f5f5]"
+                  : "text-[#666] hover:text-[#888]"
+              }`}
+            >
+              <TerminalIcon />
+              Terminal
+            </button>
+            <button
+              onClick={() => { onViewTypeChange("board"); onClose?.(); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-[12px] rounded transition-colors ${
+                viewType === "board"
+                  ? "bg-[#252525] text-[#f5f5f5]"
+                  : "text-[#666] hover:text-[#888]"
+              }`}
+            >
+              <BoardIcon />
+              Board
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
@@ -302,6 +334,24 @@ function BacklogIcon() {
         strokeLinejoin="round"
         strokeWidth={1.5}
         d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+      />
+    </svg>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+    >
+      <path
+        d="M4 6l2 2-2 2M7 10h4"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
