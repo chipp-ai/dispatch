@@ -86,8 +86,25 @@ export default function GuideContent() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Table of Contents -- desktop only */}
-      <nav className="hidden lg:block w-[220px] flex-shrink-0 border-r border-[#1f1f1f] overflow-y-auto py-6 px-4">
+      {/* Prose content -- centered */}
+      <div
+        ref={contentRef}
+        className="flex-1 overflow-y-auto px-6 md:px-10 py-8"
+      >
+        <div className="max-w-3xl mx-auto">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={docsMarkdownComponents}
+          >
+            {guideContent}
+          </ReactMarkdown>
+          {/* Bottom padding so last section can scroll into view */}
+          <div className="h-40" />
+        </div>
+      </div>
+
+      {/* Table of Contents -- right side, desktop only */}
+      <nav className="hidden lg:block w-[220px] flex-shrink-0 border-l border-[#1f1f1f] overflow-y-auto py-6 px-4">
         <div className="sticky top-0">
           <span className="text-[11px] font-medium text-[#555] uppercase tracking-wider">
             On this page
@@ -110,21 +127,6 @@ export default function GuideContent() {
           </ul>
         </div>
       </nav>
-
-      {/* Prose content */}
-      <div
-        ref={contentRef}
-        className="flex-1 overflow-y-auto px-6 md:px-10 py-8 max-w-3xl"
-      >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={docsMarkdownComponents}
-        >
-          {guideContent}
-        </ReactMarkdown>
-        {/* Bottom padding so last section can scroll into view */}
-        <div className="h-40" />
-      </div>
     </div>
   );
 }
