@@ -1,0 +1,415 @@
+name: Deep Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Chipp Issues issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. CHIPP-456)"
+        required: true
+        type: string
+      title:
+        description: "Research topic title"
+        required: true
+        type: string
+      description:
+        description: "Research topic description and goals (markdown)"
+        required: true
+        type: string
+      additional_context:
+        description: "Additional instructions from human retry (optional)"
+        required: false
+        type: string
+      callback_url:
+        description: "Override API callback URL (for local dev tunnels)"
+        required: false
+        type: string
+
+# Only one research agent per mission at a time
+concurrency:
+  group: deep-research-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  research:
+    name: Research ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    # SECURITY: All user-provided inputs are passed through env vars to
+    # prevent command injection. They are NEVER interpolated in run: blocks.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CHIPP_ISSUES_API_URL: ${{ inputs.callback_url || secrets.CHIPP_ISSUES_API_URL }}
+      CHIPP_ISSUES_API_KEY: ${{ secrets.CHIPP_ISSUES_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout staging
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Notify Chipp Issues - Researching
+        if: env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          PAYLOAD=$(jq -n \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            --arg agent_status "researching" \
+            --arg spawn_type "research" \
+            '{spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at, agent_status: $agent_status, spawn_type: $spawn_type}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Chipp Issues (non-fatal)"
+
+      - name: Build research prompt
+        run: |
+          mkdir -p .scratch
+
+          jq -n \
+            --arg identifier "$INPUT_ISSUE_IDENTIFIER" \
+            --arg title "$INPUT_TITLE" \
+            --arg description "$INPUT_DESCRIPTION" \
+            --arg additional_context "$INPUT_ADDITIONAL_CONTEXT" \
+            '{identifier: $identifier, title: $title, description: $description, additional_context: $additional_context}' \
+            > .scratch/prompt-data.json
+
+          python3 -c "
+          import json, sys
+          d = json.load(open('.scratch/prompt-data.json'))
+          additional_section = ''
+          if d.get('additional_context'):
+              additional_section = f\"\"\"\n\nADDITIONAL CONTEXT FROM HUMAN:\n{d['additional_context']}\n\"\"\"
+          prompt = f\"\"\"You are a deep research agent for the chipp-deno project.
+          Your goal is to search the internet and explore the codebase to produce a comprehensive research report.
+          You are READ-ONLY -- do NOT create branches, modify files, or write code.
+
+          Research Topic: {d['identifier']} - {d['title']}
+
+          Description / Goals:
+          {d['description']}{additional_section}
+
+          TOOLS AVAILABLE:
+          - WebSearch: Search the internet for documentation, best practices, prior art, and current information
+          - WebFetch: Fetch and analyze specific web pages
+          - Read/Glob/Grep: Explore the codebase for related patterns, existing implementations, and conventions
+          - All standard file exploration tools
+
+          Instructions:
+          1. Read CLAUDE.md first to understand the codebase structure
+          2. Search the internet for relevant documentation, tutorials, best practices, and prior art
+          3. Explore the codebase for related patterns, existing implementations, and relevant code
+          4. Cross-reference external findings with the codebase to identify gaps and opportunities
+          5. Write a comprehensive research report to .scratch/research-report.md with these sections:
+
+          ## Executive Summary
+          Brief overview of findings and key recommendations.
+
+          ## Research Question
+          Restate the research topic and goals.
+
+          ## External Research
+          ### Documentation & Standards
+          Relevant official docs, RFCs, specs.
+          ### Best Practices
+          Industry patterns and recommendations.
+          ### Prior Art
+          How others have solved this problem.
+          ### Tools & Libraries
+          Relevant packages, services, or tools.
+
+          ## Codebase Analysis
+          ### Current State
+          What exists in the codebase today related to this topic.
+          ### Patterns & Conventions
+          Relevant patterns already in use.
+          ### Integration Points
+          Where new work would connect to existing code.
+
+          ## Recommendations
+          Actionable recommendations with trade-offs.
+
+          ## Sources
+          Links to all referenced documentation, articles, and repositories.
+
+          6. Be thorough -- search multiple sources, cross-reference findings
+          7. Do NOT attempt any code changes
+          8. Do NOT create branches
+          9. If you cannot find sufficient information, document what you found and what gaps remain
+
+          MANDATORY - RUN RESULT DECLARATION:
+          Before exiting, you MUST write .scratch/run-result.json with:
+          {{
+            \"outcome\": \"completed|blocked|failed\",
+            \"summary\": \"1-2 sentence research summary\",
+            \"changes_made\": false,
+            \"files_changed\": [],
+            \"pr_needed\": false
+          }}
+
+          - Use \"completed\" if you produced a research report.
+          - Use \"blocked\" if the topic is too vague to research meaningfully.
+          - Use \"failed\" if you could not complete the research.
+          \"\"\"
+          with open('.scratch/research-prompt.md', 'w') as f:
+              f.write(prompt)
+          "
+
+      - name: Run Research
+        id: research
+        run: |
+          cat > .scratch/stream-filter.py << 'PYEOF'
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  t = event.get("type", "")
+                  if t == "assistant":
+                      for c in event.get("message", {}).get("content", []):
+                          if c.get("type") == "text" and c.get("text"):
+                              print(c["text"], flush=True)
+                          elif c.get("type") == "tool_use":
+                              name = c.get("name", "unknown")
+                              inp = c.get("input", {})
+                              parts = [f"{k}={str(v)[:80]}" for k, v in list(inp.items())[:3]]
+                              print(f"[TOOL] {name}({', '.join(parts)})", flush=True)
+                  elif t == "tool_result":
+                      content = event.get("content", "")
+                      if isinstance(content, list):
+                          content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                      preview = str(content)[:200] + ("..." if len(str(content)) > 200 else "")
+                      print(f"[RESULT] {preview}", flush=True)
+                  elif t == "result":
+                      print(f"\n[COMPLETED] Cost: ${event.get('total_cost_usd', 0):.2f}, Turns: {event.get('num_turns', 0)}", flush=True)
+              except (json.JSONDecodeError, KeyError):
+                  print(line, flush=True)
+          PYEOF
+
+          cat > .scratch/run-claude.sh << 'RUNEOF'
+          #!/bin/bash
+          PROMPT=$(cat .scratch/research-prompt.md)
+          exec claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
+          RUNEOF
+          chmod +x .scratch/run-claude.sh
+
+          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude research agent started (PID: $CLAUDE_PID)"
+
+          PREV_LINES=0
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 15
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              CHUNK=$(sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$CHUNK"
+
+              if [ -n "$CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+                jq -n --arg content "$CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 &
+              fi
+
+              PREV_LINES=$CURR_LINES
+            else
+              echo "[$(date -u +%H:%M:%S)] Agent researching... ($CURR_LINES lines)"
+            fi
+          done
+          wait $CLAUDE_PID
+          CLAUDE_EXIT=$?
+          echo "=== Claude research exited with code $CLAUDE_EXIT ==="
+
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+            FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py)
+            echo "$FINAL_CHUNK"
+            if [ -n "$FINAL_CHUNK" ] && [ -n "$CHIPP_ISSUES_API_URL" ] && [ -n "$CHIPP_ISSUES_API_KEY" ]; then
+              jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
+                curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                  -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+                  -H "Content-Type: application/json" \
+                  -d @- > /dev/null 2>&1 || true
+            fi
+          fi
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
+
+          python3 -c "
+          import json
+          for line in open('.scratch/claude-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      cost = event.get('total_cost_usd', 0)
+                      turns = event.get('num_turns', 0)
+                      model = event.get('model', 'unknown')
+                      with open('.scratch/claude-cost.json', 'w') as f:
+                          json.dump({'cost_usd': cost, 'num_turns': turns, 'model': model}, f)
+                      print(f'Cost: \${cost:.4f}, Turns: {turns}, Model: {model}')
+              except (json.JSONDecodeError, KeyError): pass
+          " 2>/dev/null || echo "Warning: Could not extract cost data"
+
+          exit $CLAUDE_EXIT
+
+      - name: Parse run result
+        id: run-result
+        if: always()
+        run: |
+          if [ ! -f .scratch/run-result.json ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "Agent exited without declaring an outcome" > .scratch/outcome-summary.txt
+            echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+            echo "changes_made=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          OUTCOME=$(jq -r '.outcome // "failed"' .scratch/run-result.json)
+          SUMMARY=$(jq -r '.summary // "No summary provided"' .scratch/run-result.json)
+
+          case "$OUTCOME" in
+            completed|blocked|failed) ;;
+            *) OUTCOME="failed"; SUMMARY="Invalid outcome: $OUTCOME" ;;
+          esac
+
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" > .scratch/outcome-summary.txt
+          echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+          echo "changes_made=false" >> "$GITHUB_OUTPUT"
+
+          echo "Research outcome: $OUTCOME"
+          echo "Summary: $SUMMARY"
+
+      - name: Post research report to Chipp Issues
+        if: always() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        env:
+          JOB_STATUS: ${{ job.status }}
+          OUTCOME: ${{ steps.run-result.outputs.outcome }}
+        run: |
+          REPORT_FILE=".scratch/research-report.md"
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No research report produced." > "$REPORT_FILE"
+          fi
+
+          SPAWN_STATUS="completed"
+          if [ "$JOB_STATUS" != "success" ]; then
+            SPAWN_STATUS="failed"
+          fi
+
+          COST_USD="0"
+          NUM_TURNS="0"
+          MODEL="unknown"
+          if [ -f .scratch/claude-cost.json ]; then
+            COST_USD=$(jq -r '.cost_usd // 0' .scratch/claude-cost.json)
+            NUM_TURNS=$(jq -r '.num_turns // 0' .scratch/claude-cost.json)
+            MODEL=$(jq -r '.model // "unknown"' .scratch/claude-cost.json)
+          fi
+
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "research_complete" \
+            --rawfile content "$REPORT_FILE" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "deep_research", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post research activity (non-fatal)"
+
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            --arg run_outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+      - name: Report failure
+        if: failure() && env.CHIPP_ISSUES_API_URL != '' && env.CHIPP_ISSUES_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "research_failed" \
+            --arg content "Deep research workflow failed." \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, error_tail: $error_tail}}')
+
+          curl -sf -X POST "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || true
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg agent_status "idle" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, agent_status: $agent_status}')
+
+          curl -sf -X PATCH "${CHIPP_ISSUES_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${CHIPP_ISSUES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || true

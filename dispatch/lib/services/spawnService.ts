@@ -57,11 +57,13 @@ const WORKFLOW_IDS: Record<WorkflowType, string> = {
   error_fix: process.env.GITHUB_WORKFLOW_ID || "auto-investigate.yml",
   prd_investigate: "prd-investigate.yml",
   prd_implement: "prd-implement.yml",
+  qa: "qa-test.yml",
+  deep_research: "deep-research.yml",
 };
 
 // --- Types ---
 
-export type WorkflowType = "error_fix" | "prd_investigate" | "prd_implement";
+export type WorkflowType = "error_fix" | "prd_investigate" | "prd_implement" | "qa" | "deep_research";
 
 export interface SpawnableIssue {
   id: string;
@@ -73,6 +75,7 @@ export interface SpawnableIssue {
   plan_content?: string | null;
   plan_feedback?: string | null;
   additional_context?: string;
+  test_instructions?: string | null;
 }
 
 // --- Safety Gates ---
@@ -99,6 +102,7 @@ export async function canSpawn(
   const maxBudget = isErrorType
     ? DAILY_SPAWN_BUDGET_ERROR
     : DAILY_SPAWN_BUDGET_PRD;
+  // qa and deep_research share the prd budget
   const budgetType = isErrorType ? "error_fix" : "prd";
 
   const activeCount = await getActiveSpawnCount(workflowType);
@@ -130,7 +134,7 @@ export async function getActiveSpawnCount(
     const isErrorType = workflowType === "error_fix";
     const sql = isErrorType
       ? `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running' AND (spawn_type IS NULL OR spawn_type = 'error_fix')`
-      : `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement')`;
+      : `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement', 'qa', 'research')`;
     const result = await db.queryOne<{ count: string }>(sql);
     return parseInt(result?.count || "0", 10);
   }
@@ -237,6 +241,13 @@ export async function dispatchWorkflow(
     inputs.plan_content = issue.plan_content
       ? issue.plan_content.slice(0, 5000)
       : "";
+  } else if (workflowType === "qa") {
+    inputs.plan_content = issue.plan_content
+      ? issue.plan_content.slice(0, 5000)
+      : "";
+    if (issue.test_instructions) {
+      inputs.test_instructions = issue.test_instructions.slice(0, 2000);
+    }
   }
 
   // Pass additional context from retry dialog (all workflow types)
@@ -300,8 +311,14 @@ export async function recordSpawn(
   runId: string,
   spawnType: string = "error_fix"
 ): Promise<void> {
-  const agentStatus =
-    spawnType === "implement" ? "implementing" : "investigating";
+  const agentStatusMap: Record<string, string> = {
+    implement: "implementing",
+    investigate: "investigating",
+    error_fix: "investigating",
+    qa: "testing",
+    research: "researching",
+  };
+  const agentStatus = agentStatusMap[spawnType] || "investigating";
   await db.query(
     `UPDATE chipp_issue
      SET spawn_status = 'running',

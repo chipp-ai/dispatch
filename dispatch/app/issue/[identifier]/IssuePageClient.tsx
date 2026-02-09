@@ -74,7 +74,16 @@ interface AgentActivity {
     | "complete"
     | "error"
     | "agent_heartbeat"
-    | "agent_full_log";
+    | "agent_full_log"
+    | "investigation_complete"
+    | "implementation_complete"
+    | "investigation_failed"
+    | "implementation_failed"
+    | "blocker_reported"
+    | "qa_complete"
+    | "qa_failed"
+    | "research_complete"
+    | "research_failed";
   content: string;
   metadata?: {
     tool?: string;

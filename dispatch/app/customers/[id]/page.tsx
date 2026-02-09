@@ -142,7 +142,7 @@ export default function CustomerDetailPage({
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar onCreateIssue={() => router.push("/board")} />
+      <Sidebar />
 
       <div className="flex-1 flex flex-col overflow-hidden bg-[#0d0d0d]">
         {/* Header */}
