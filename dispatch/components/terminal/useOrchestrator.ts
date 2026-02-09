@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 
 export interface ToolCallEvent {
   id: string;
@@ -40,12 +40,7 @@ interface SSEEvent {
 export function useOrchestrator() {
   const [messages, setMessages] = useState<OrchestratorMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("dispatch_orchestrator_session");
-    }
-    return null;
-  });
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeToolName, setActiveToolName] = useState<string | null>(null);
   const [turnMetrics, setTurnMetrics] = useState<TurnMetrics | null>(null);
@@ -54,90 +49,9 @@ export function useOrchestrator() {
 
   const nextId = () => `msg_${++msgIdCounter.current}_${Date.now()}`;
 
-  // Restore session history on mount
-  useEffect(() => {
-    if (!sessionId) return;
-
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/orchestrator?sessionId=${encodeURIComponent(sessionId)}`
-        );
-        if (!res.ok) {
-          // Session expired or not found — clear it
-          if (res.status === 404) {
-            setSessionId(null);
-            localStorage.removeItem("dispatch_orchestrator_session");
-          }
-          return;
-        }
-        const { messages: rawMessages } = await res.json();
-        if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
-
-        // Convert Anthropic-format messages to our display format
-        const restored: OrchestratorMessage[] = [];
-        for (const msg of rawMessages) {
-          if (msg.role === "user") {
-            // User messages: content can be string or array of content blocks
-            if (typeof msg.content === "string") {
-              restored.push({
-                id: nextId(),
-                role: "user",
-                content: msg.content,
-              });
-            } else if (Array.isArray(msg.content)) {
-              // Could be tool_result blocks (from tool loop) — skip those
-              const textParts = msg.content.filter(
-                (b: { type: string }) => b.type === "text"
-              );
-              if (textParts.length > 0) {
-                restored.push({
-                  id: nextId(),
-                  role: "user",
-                  content: textParts.map((b: { text: string }) => b.text).join(""),
-                });
-              }
-            }
-          } else if (msg.role === "assistant") {
-            const blocks = Array.isArray(msg.content)
-              ? msg.content
-              : [{ type: "text", text: msg.content }];
-
-            const textContent = blocks
-              .filter((b: { type: string }) => b.type === "text")
-              .map((b: { text: string }) => b.text)
-              .join("");
-
-            const toolCalls: ToolCallEvent[] = blocks
-              .filter((b: { type: string }) => b.type === "tool_use")
-              .map((b: { id: string; name: string }) => ({
-                id: b.id,
-                name: b.name,
-                isRunning: false,
-                // We don't store results in the assistant content blocks
-              }));
-
-            if (textContent || toolCalls.length > 0) {
-              restored.push({
-                id: nextId(),
-                role: "assistant",
-                content: textContent,
-                toolCalls,
-              });
-            }
-          }
-        }
-
-        if (restored.length > 0) {
-          setMessages(restored);
-        }
-      } catch {
-        // Silently fail — empty conversation is fine
-      }
-    })();
-    // Only run on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // No session restore — every page load starts fresh.
+  // The orchestrator has tools (search_missions, get_mission, get_fleet_status)
+  // that give it full access to mission history, so chat memory isn't needed.
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -211,10 +125,6 @@ export function useOrchestrator() {
             switch (event.type) {
               case "session_id": {
                 setSessionId(event.data);
-                localStorage.setItem(
-                  "dispatch_orchestrator_session",
-                  event.data
-                );
                 break;
               }
 
@@ -343,7 +253,6 @@ export function useOrchestrator() {
     setMessages([]);
     setSessionId(null);
     setError(null);
-    localStorage.removeItem("dispatch_orchestrator_session");
   }, []);
 
   return {
