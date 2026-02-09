@@ -170,6 +170,76 @@ claude mcp add dispatch --transport streamable-http https://your-dispatch-instan
 
 Available tools: `search_issues`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `dispatch_investigation`, `dispatch_implementation`, `post_plan`, `report_blocker`, and more.
 
+## Customer portal
+
+Give your customers a branded, read-only portal to track the issues that matter to them. Each customer gets a unique portal link -- no login required, authenticated via a secure token in the URL. Customers see a kanban board of their issues and can drill into issue details with activity timelines.
+
+### Why use it
+
+- **Client visibility** -- Share real-time issue status with external stakeholders without giving them access to your internal tools.
+- **Branded experience** -- Each customer's portal uses their brand color for a white-labeled feel.
+- **Zero friction** -- Portal links work without any signup or login. Share via email, Slack, or embed in your support workflow.
+- **Health tracking** -- The admin-side customer dashboard gives you a health score, stale issue alerts, and activity metrics per customer.
+
+### Creating customers
+
+1. Navigate to `/customers` in the sidebar
+2. Click **New Customer**
+3. Fill in:
+   - **Name** (required) -- The customer or company name. A URL slug is auto-generated (e.g. "Acme Corp" becomes `acme-corp`).
+   - **Brand Color** -- Hex color used throughout their portal (default: `#f9db00`).
+   - **Logo URL** -- Optional logo shown in the portal header.
+   - **Slack Channel ID** -- Optional. When set, Dispatch can auto-associate issues from that Slack channel with this customer.
+
+A secure portal token is generated automatically. You can regenerate it at any time from the customer detail page.
+
+### Linking issues to customers
+
+Customers see issues where they are added as a **watcher**. To link issues to a customer:
+
+- **From the issue detail page** -- Add the customer as a watcher in the issue sidebar.
+- **Via the API** -- `POST /api/issues/:id` with the customer ID in the watcher list.
+- **Via MCP** -- Use the `update_issue` tool to add watchers.
+- **Automatically via Slack** -- When a customer has a `slackChannelId` configured, issues created from that channel are automatically linked.
+
+### Sharing portal links
+
+Click the **Portal** button on any customer card to copy their portal URL to your clipboard. The URL format is:
+
+```
+https://your-dispatch-instance.com/portal/{customer-slug}?token={portal-token}
+```
+
+Share this link with your customer. They can:
+- View all their issues organized by status in a kanban board
+- Click into any issue to see the full description, activity timeline, and metadata
+- Toggle "Show closed" to see resolved issues
+
+The portal is fully read-only -- customers cannot modify issues, only view them.
+
+### Customer health dashboard
+
+The admin-side customer detail page (`/customers/:id`) provides:
+
+- **Health score** (0-100) -- Calculated based on critical issues, stale issues, unresponded items, and recent activity. Scores above 80 are good, 50-80 need attention, below 50 are at risk.
+- **Metrics cards** -- Total issues, critical issues, average age, and last activity timestamp.
+- **Filterable issues table** -- Filter by All, Critical, Stale, or Unresponded.
+- **Activity feed** -- Recent activity across all of the customer's issues.
+
+### Customer API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/customers` | GET | List all customers with issue counts |
+| `/api/customers` | POST | Create a new customer |
+| `/api/customers/:id` | GET | Get customer details |
+| `/api/customers/:id` | PATCH | Update customer (name, slug, brand color) |
+| `/api/customers/:id` | DELETE | Delete customer (unlinks issues first) |
+| `/api/customers/:id?action=regenerate-token` | POST | Regenerate portal token |
+| `/api/customers/:id/stats` | GET | Get customer health metrics |
+| `/api/portal/:slug?token=` | GET | Public portal data (issues by status) |
+| `/api/portal/:slug/issue/:identifier?token=` | GET | Public issue detail |
+
 ## Autonomous error remediation
 
 Dispatch can automatically detect production errors and spawn agents to investigate and fix them. This creates a closed loop: error occurs -> issue created -> agent investigates -> PR opened -> fix verified.
