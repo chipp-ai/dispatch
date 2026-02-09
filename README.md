@@ -1,6 +1,41 @@
-# Dispatch
+<div align="center">
 
-Autonomous agent orchestration platform. Dispatch sends Claude Code agents to investigate, plan, implement, test, and research across your codebase -- all orchestrated through a terminal UI with live streaming.
+```
+     ___  ___ ____ ___   __  ______ _________ __
+    / _ \/ / __  / __ \ / / / __  // __/ ___// /
+   / // / /\__ \/ /_/ // /\/ / / // / / /   / _ \
+  /____/_//____/ .___//_/  /_/ /_//_/  \___//_//_/
+              /_/
+  autonomous agent orchestration
+```
+
+**Tell it what to build. Agents investigate, plan, implement, and ship.**
+
+[Quick Start](#quick-start) &#8226; [Screenshots](#what-it-looks-like) &#8226; [Docs](#setting-up-github-actions-agents) &#8226; [MCP](#mcp-integration) &#8226; [License](#license)
+
+</div>
+
+---
+
+Dispatch sends Claude Code agents to investigate, plan, implement, test, and research across your codebase -- all orchestrated through a terminal UI with live streaming. Every mission runs as a real Claude Code session in GitHub Actions, with structured activity tracking.
+
+## What it looks like
+
+**Terminal** -- Describe what you want done. The orchestrator creates issues, picks a workflow, and dispatches agents.
+
+<img src="docs/screenshots/terminal.png" width="100%" alt="Dispatch terminal - command center" />
+
+**Orchestrator response** -- The agent searches existing missions, scopes the work, and confirms before dispatching.
+
+<img src="docs/screenshots/terminal-chat.png" width="100%" alt="Dispatch terminal - orchestrator planning a mission" />
+
+**Board** -- Track all missions across your pipeline. Issues flow from waiting, to development, to PR, to verification.
+
+<img src="docs/screenshots/board.png" width="100%" alt="Dispatch board - kanban view of missions" />
+
+**GitHub Actions** -- Each agent runs as a real Claude Code session. Watch it read files, run commands, and write code.
+
+<img src="docs/screenshots/github-action.png" width="100%" alt="GitHub Actions - Claude Code agent investigating an issue" />
 
 ## What it does
 
