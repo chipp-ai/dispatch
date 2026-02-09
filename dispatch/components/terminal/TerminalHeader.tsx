@@ -74,7 +74,7 @@ export default function TerminalHeader({
     return () => clearInterval(interval);
   }, [fetchStats]);
 
-  const model = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODEL || "sonnet-4.5";
+  const model = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODEL || "opus-4.6";
   const shortSession = sessionId ? sessionId.slice(0, 8) : "new";
 
   return (

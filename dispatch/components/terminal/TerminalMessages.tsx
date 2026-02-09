@@ -56,7 +56,7 @@ export default function TerminalMessages({
             <span className="text-[#665e00]">v0.1</span>
           </div>
           <div className="text-[#665e00]">
-            {process.env.NEXT_PUBLIC_ORCHESTRATOR_MODEL || "sonnet-4.5"} · dispatch orchestrator
+            {process.env.NEXT_PUBLIC_ORCHESTRATOR_MODEL || "opus-4.6"} · dispatch orchestrator
           </div>
           <div className="text-[#4a4400] text-[11px]">
             autonomous agent command center
