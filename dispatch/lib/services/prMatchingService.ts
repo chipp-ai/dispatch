@@ -213,9 +213,9 @@ Return your analysis as JSON:
 {
   "matches": [
     {
-      "identifier": "CHIPP-123",
+      "identifier": "DISPATCH-123",
       "confidence": 95,
-      "reasoning": "PR title explicitly mentions CHIPP-123 and the changes align with the issue description",
+      "reasoning": "PR title explicitly mentions DISPATCH-123 and the changes align with the issue description",
       "ai_summary": "This PR fixes the authentication timeout issue by extending the token TTL."
     }
   ]
@@ -345,7 +345,7 @@ Return JSON:
 {
   "matches": [
     {
-      "identifier": "CHIPP-123",
+      "identifier": "DISPATCH-123",
       "confidence": 95,
       "reasoning": "Explicitly mentioned in commit message",
       "ai_summary": "Deployed to production as part of release."
