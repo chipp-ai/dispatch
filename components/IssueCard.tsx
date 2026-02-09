@@ -217,7 +217,7 @@ export default function IssueCard({
           )}
 
         {/* Cost badge */}
-        {issue.cost_usd != null && issue.cost_usd > 0 && (
+        {issue.cost_usd != null && Number(issue.cost_usd) > 0 && (
           <div className="flex items-center gap-1 mb-2">
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
@@ -226,7 +226,7 @@ export default function IssueCard({
                 color: "#22d3d3",
               }}
             >
-              ${issue.cost_usd < 0.01 ? "<0.01" : issue.cost_usd.toFixed(2)}
+              ${Number(issue.cost_usd) < 0.01 ? "<0.01" : Number(issue.cost_usd).toFixed(2)}
             </span>
           </div>
         )}
