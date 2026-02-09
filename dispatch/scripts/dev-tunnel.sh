@@ -22,9 +22,9 @@ if [ "${1:-}" = "--stop" ]; then
     echo "No tunnel running."
   fi
   # Remove callback URL from .env
-  if grep -q "CHIPP_ISSUES_CALLBACK_URL" "$ENV_FILE" 2>/dev/null; then
-    grep -v "CHIPP_ISSUES_CALLBACK_URL" "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
-    echo "Removed CHIPP_ISSUES_CALLBACK_URL from .env"
+  if grep -q "DISPATCH_CALLBACK_URL" "$ENV_FILE" 2>/dev/null; then
+    grep -v "DISPATCH_CALLBACK_URL" "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+    echo "Removed DISPATCH_CALLBACK_URL from .env"
   fi
   exit 0
 fi
@@ -65,14 +65,14 @@ if [ -z "$TUNNEL_URL" ]; then
 fi
 
 # Write callback URL to .env
-if grep -q "CHIPP_ISSUES_CALLBACK_URL" "$ENV_FILE" 2>/dev/null; then
+if grep -q "DISPATCH_CALLBACK_URL" "$ENV_FILE" 2>/dev/null; then
   # Update existing line
-  sed -i '' "s|CHIPP_ISSUES_CALLBACK_URL=.*|CHIPP_ISSUES_CALLBACK_URL=${TUNNEL_URL}|" "$ENV_FILE"
+  sed -i '' "s|DISPATCH_CALLBACK_URL=.*|DISPATCH_CALLBACK_URL=${TUNNEL_URL}|" "$ENV_FILE"
 else
   # Append
   echo "" >> "$ENV_FILE"
   echo "# Dev tunnel for GH Actions terminal streaming (auto-generated)" >> "$ENV_FILE"
-  echo "CHIPP_ISSUES_CALLBACK_URL=${TUNNEL_URL}" >> "$ENV_FILE"
+  echo "DISPATCH_CALLBACK_URL=${TUNNEL_URL}" >> "$ENV_FILE"
 fi
 
 echo ""
@@ -80,7 +80,7 @@ echo "Tunnel active:"
 echo "  Local:  http://localhost:${PORT}"
 echo "  Public: ${TUNNEL_URL}"
 echo ""
-echo "CHIPP_ISSUES_CALLBACK_URL written to .env"
+echo "DISPATCH_CALLBACK_URL written to .env"
 echo "Restart the dev server to pick it up, then spawned agents will stream terminal output here."
 echo ""
 echo "Stop with: ./scripts/dev-tunnel.sh --stop"

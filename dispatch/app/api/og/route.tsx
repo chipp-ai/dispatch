@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     // Get issue data from query params
-    const title = searchParams.get("title") || "Chipp Issues";
+    const title = searchParams.get("title") || "Dispatch";
     const description = searchParams.get("description") || "";
     const identifier = searchParams.get("id") || "";
     const status = searchParams.get("status")?.toLowerCase() || "";
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
 
     console.log("[OG] Fetching font from GCS...");
 
-    // Load fonts from GCS (same as chipp-landing)
+    // Load fonts from GCS (same as dispatch)
     const fontResponse = await fetch(
       "https://storage.googleapis.com/chipp-chat-widget-assets/Mulish-Regular.ttf"
     );
@@ -178,7 +178,7 @@ export async function GET(request: NextRequest) {
               <div
                 style={{ display: "flex", alignItems: "center", gap: "16px" }}
               >
-                {/* Chipp logo mark */}
+                {/* Logo mark */}
                 <div
                   style={{
                     width: "48px",
@@ -213,7 +213,7 @@ export async function GET(request: NextRequest) {
                       letterSpacing: "-0.5px",
                     }}
                   >
-                    Chipp Issues
+                    Dispatch
                   </span>
                   <span
                     style={{
@@ -440,7 +440,7 @@ export async function GET(request: NextRequest) {
                 )}
               </div>
             ) : (
-              /* Fallback: Generic Chipp Issues branding */
+              /* Fallback: Generic Dispatch branding */
               <div
                 style={{
                   display: "flex",
@@ -576,7 +576,7 @@ export async function GET(request: NextRequest) {
                     fontFamily: "Mulish",
                   }}
                 >
-                  issues.chipp.ai
+                  dispatch
                 </span>
               </div>
             </div>

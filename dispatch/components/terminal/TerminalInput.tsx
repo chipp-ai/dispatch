@@ -11,8 +11,8 @@ interface TerminalInputProps {
   turnMetrics?: TurnMetrics | null;
 }
 
-// Chippy-themed verbs for thinking states
-const CHIPPY_VERBS = [
+// Fun verbs for thinking states
+const THINKING_VERBS = [
   "Crunching chips...",
   "Munching data...",
   "Frying circuits...",
@@ -27,7 +27,7 @@ const CHIPPY_VERBS = [
   "Salt & peppering...",
 ];
 
-// Tool-specific chippy verbs
+// Tool-specific verbs
 const TOOL_VERBS: Record<string, string> = {
   get_fleet_status: "Surveying the fleet...",
   search_missions: "Scanning mission logs...",
@@ -92,7 +92,7 @@ export default function TerminalInput({
     if (activeToolName && TOOL_VERBS[activeToolName]) {
       return TOOL_VERBS[activeToolName];
     }
-    return CHIPPY_VERBS[Math.floor(Math.random() * CHIPPY_VERBS.length)];
+    return THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStreaming, activeToolName]);
 

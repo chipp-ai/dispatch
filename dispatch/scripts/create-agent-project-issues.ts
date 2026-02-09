@@ -34,7 +34,7 @@ Add a new field to track agent processing status on issues.
   - \`awaiting_review\` - Agent completed, needs human review
 
 ## Implementation
-1. Add column to \`chipp_issue\` table
+1. Add column to \`dispatch_issue\` table
 2. Update Prisma schema (if using) or raw SQL migration
 3. Add to issue service types
 4. Expose in API responses
@@ -156,7 +156,7 @@ Use existing issue embeddings to find and display similar issues before agent in
 \`\`\`sql
 SELECT id, identifier, title,
        1 - (embedding <=> $1) as similarity
-FROM chipp_issue
+FROM dispatch_issue
 WHERE id != $2
   AND embedding IS NOT NULL
 ORDER BY embedding <=> $1
@@ -273,8 +273,8 @@ Automatically pull Sentry error details into issue context.
 
 ## Schema Addition
 \`\`\`sql
-ALTER TABLE chipp_issue ADD COLUMN sentry_issue_id VARCHAR(255);
-ALTER TABLE chipp_issue ADD COLUMN sentry_context JSONB;
+ALTER TABLE dispatch_issue ADD COLUMN sentry_issue_id VARCHAR(255);
+ALTER TABLE dispatch_issue ADD COLUMN sentry_context JSONB;
 \`\`\`
 
 ## Acceptance Criteria
@@ -302,7 +302,7 @@ When issue mentions files/components, automatically include them in context.
 
 ## Schema
 \`\`\`sql
-ALTER TABLE chipp_issue ADD COLUMN referenced_files TEXT[];
+ALTER TABLE dispatch_issue ADD COLUMN referenced_files TEXT[];
 \`\`\`
 
 ## Acceptance Criteria
@@ -327,10 +327,10 @@ Track whether agent fixes actually resolved issues to enable learning.
 
 ## Schema
 \`\`\`sql
-ALTER TABLE chipp_issue ADD COLUMN resolution_outcome VARCHAR(50);
+ALTER TABLE dispatch_issue ADD COLUMN resolution_outcome VARCHAR(50);
 -- Values: 'success', 'reopened', 'reverted', 'unknown'
 
-ALTER TABLE chipp_issue ADD COLUMN resolution_durability_days INTEGER;
+ALTER TABLE dispatch_issue ADD COLUMN resolution_durability_days INTEGER;
 -- Days between Done and reopen (null if never reopened)
 \`\`\`
 
@@ -402,7 +402,7 @@ interface AgentRouting {
 
 ## Schema
 \`\`\`sql
-CREATE TABLE chipp_agent_config (
+CREATE TABLE dispatch_agent_config (
   id UUID PRIMARY KEY,
   name VARCHAR(255),
   type VARCHAR(50),
@@ -455,7 +455,7 @@ interface WebSocketEvents {
     labels: ["Feature", "Infrastructure"],
   },
   {
-    title: "Create chipp-issues-agent worker service",
+    title: "Create dispatch-agent worker service",
     description: `## Overview
 Build the agent worker that processes issues assigned to it.
 
@@ -508,24 +508,24 @@ async function main() {
   try {
     // Get workspace
     const workspaceResult = await pool.query(
-      `SELECT * FROM chipp_workspace LIMIT 1`
+      `SELECT * FROM dispatch_workspace LIMIT 1`
     );
     let workspace = workspaceResult.rows[0];
 
     if (!workspace) {
       const wsId = uuidv4();
       await pool.query(
-        `INSERT INTO chipp_workspace (id, name, issue_prefix, next_issue_number)
-         VALUES ($1, 'Chipp', 'CHIPP', 1)`,
+        `INSERT INTO dispatch_workspace (id, name, issue_prefix, next_issue_number)
+         VALUES ($1, process.env.DEFAULT_WORKSPACE_NAME || 'My Workspace', process.env.DEFAULT_ISSUE_PREFIX || 'DISPATCH', 1)`,
         [wsId]
       );
-      workspace = { id: wsId, issue_prefix: "CHIPP", next_issue_number: 1 };
+      workspace = { id: wsId, issue_prefix: process.env.DEFAULT_ISSUE_PREFIX || "DISPATCH", next_issue_number: 1 };
       console.log("✅ Created workspace\n");
     }
 
     // Get statuses
     const statusResult = await pool.query(
-      `SELECT id, name FROM chipp_status WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_status WHERE workspace_id = $1`,
       [workspace.id]
     );
     const statusMap = new Map<string, string>();
@@ -545,7 +545,7 @@ async function main() {
     projectIssues.forEach((i) => i.labels.forEach((l) => labelNames.add(l)));
 
     const existingLabels = await pool.query(
-      `SELECT id, name FROM chipp_label WHERE workspace_id = $1`,
+      `SELECT id, name FROM dispatch_label WHERE workspace_id = $1`,
       [workspace.id]
     );
     const labelMap = new Map<string, string>();
@@ -567,7 +567,7 @@ async function main() {
       if (!labelMap.has(labelName)) {
         const labelId = uuidv4();
         await pool.query(
-          `INSERT INTO chipp_label (id, workspace_id, name, color)
+          `INSERT INTO dispatch_label (id, workspace_id, name, color)
            VALUES ($1, $2, $3, $4)`,
           [labelId, workspace.id, labelName, colors[colorIdx % colors.length]]
         );
@@ -583,7 +583,7 @@ async function main() {
     for (const issueData of projectIssues) {
       // Get next issue number
       const updateResult = await pool.query(
-        `UPDATE chipp_workspace
+        `UPDATE dispatch_workspace
          SET next_issue_number = next_issue_number + 1
          WHERE id = $1
          RETURNING issue_prefix, next_issue_number - 1 as issue_number`,
@@ -594,7 +594,7 @@ async function main() {
 
       const issueId = uuidv4();
       await pool.query(
-        `INSERT INTO chipp_issue (
+        `INSERT INTO dispatch_issue (
           id, identifier, issue_number, title, description,
           status_id, priority, workspace_id,
           created_at, updated_at
@@ -616,7 +616,7 @@ async function main() {
         const labelId = labelMap.get(labelName);
         if (labelId) {
           await pool.query(
-            `INSERT INTO chipp_issue_label (issue_id, label_id)
+            `INSERT INTO dispatch_issue_label (issue_id, label_id)
              VALUES ($1, $2)
              ON CONFLICT DO NOTHING`,
             [issueId, labelId]

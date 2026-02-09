@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { BRAND_BRAILLE } from "@/lib/brand/logo-braille";
 
 interface BoardStats {
   total_issues: number;
@@ -13,17 +14,6 @@ interface TerminalHeaderProps {
   sessionId: string | null;
   onClear: () => void;
 }
-
-const CHIPPY_BRAILLE = `⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡶⠛⠛⠳⣦⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⢀⣀⣀⣸⣧⡤⠆⠀⢸⡇⠀⠀⠀⠀
-⠀⠀⠀⣠⡴⣛⣩⣭⣭⣭⣤⣤⣤⣤⣭⣛⠶⣄⠀⠀
-⠀⠀⣼⢫⣾⣿⣿⣿⣿⠋⢹⣿⣿⡟⠉⣿⣷⣌⢷⡀
-⢀⡾⢡⣿⣿⣿⣿⣿⣿⠀⢾⣿⣿⡇⠰⣿⣿⣿⡎⣷
-⣾⠁⠸⣿⣿⣿⣿⣿⣿⣄⣸⣿⣿⣧⣀⣿⣿⣿⡇⣿
-⣿⠀⠀⢻⣿⣿⣿⣿⣿⣿⣏⠙⠻⠛⢉⣿⣿⡿⣱⠏
-⠹⡆⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣶⣾⣿⠿⠋⣴⠋⠀
-⢸⡇⠀⠈⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠾⠁⠀⠀
-⠈⠷⣤⡤⠶⠒⠶⠶⠶⠶⠶⠶⠶⠚⠋⠁⠀⠀⠀⠀`;
 
 export default function TerminalHeader({
   sessionId,
@@ -82,20 +72,20 @@ export default function TerminalHeader({
       {/* Title bar */}
       <div className="flex items-center justify-between px-4 py-2">
         <div className="flex items-center gap-3">
-          {/* Chippy icon */}
+          {/* Logo icon */}
           <button
             onClick={() => setShowLogo(!showLogo)}
             className="relative group"
-            title="Chippy"
+            title={process.env.NEXT_PUBLIC_APP_NAME || "Dispatch"}
           >
             <div className="w-5 h-5 rounded bg-[#f9db00] flex items-center justify-center text-[9px] font-bold text-black leading-none group-hover:brightness-110 transition-all">
-              C
+              {(process.env.NEXT_PUBLIC_APP_NAME || "Dispatch")[0]}
             </div>
           </button>
 
           <div className="flex items-center gap-2">
             <span className="text-[12px] font-mono font-semibold text-[#f9db00]">
-              chippy
+              {(process.env.NEXT_PUBLIC_APP_NAME || "Dispatch").toLowerCase()}
             </span>
             <span className="text-[11px] font-mono text-[#665e00]">
               dispatch
@@ -121,7 +111,7 @@ export default function TerminalHeader({
       {showLogo && (
         <div className="px-4 py-2 border-t border-[#2a2200]">
           <pre className="text-[11px] text-[#f9db00] leading-[1.1] opacity-60">
-            {CHIPPY_BRAILLE}
+            {BRAND_BRAILLE}
           </pre>
         </div>
       )}

@@ -35,7 +35,7 @@ export async function createComment(
 
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_comment (id, issue_id, author_id, body, embedding, embedding_provider, embedding_model, created_at, updated_at)
+    `INSERT INTO dispatch_comment (id, issue_id, author_id, body, embedding, embedding_provider, embedding_model, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5::vector, $6, $7, NOW(), NOW())`,
     [
       id,
@@ -50,8 +50,8 @@ export async function createComment(
 
   const comment = await db.queryOne<Comment & { author_name: string | null }>(
     `SELECT c.*, a.name as author_name
-     FROM chipp_comment c
-     LEFT JOIN chipp_agent a ON c.author_id = a.id
+     FROM dispatch_comment c
+     LEFT JOIN dispatch_agent a ON c.author_id = a.id
      WHERE c.id = $1`,
     [id]
   );
@@ -64,8 +64,8 @@ export async function listComments(
 ): Promise<CommentWithAuthor[]> {
   return db.query<CommentWithAuthor>(
     `SELECT c.*, a.name as author_name
-     FROM chipp_comment c
-     LEFT JOIN chipp_agent a ON c.author_id = a.id
+     FROM dispatch_comment c
+     LEFT JOIN dispatch_agent a ON c.author_id = a.id
      WHERE c.issue_id = $1
      ORDER BY c.created_at ASC`,
     [issueId]
@@ -77,8 +77,8 @@ export async function getComment(
 ): Promise<CommentWithAuthor | null> {
   return db.queryOne<CommentWithAuthor>(
     `SELECT c.*, a.name as author_name
-     FROM chipp_comment c
-     LEFT JOIN chipp_agent a ON c.author_id = a.id
+     FROM dispatch_comment c
+     LEFT JOIN dispatch_agent a ON c.author_id = a.id
      WHERE c.id = $1`,
     [commentId]
   );
@@ -101,7 +101,7 @@ export async function updateComment(
   }
 
   await db.query(
-    `UPDATE chipp_comment SET
+    `UPDATE dispatch_comment SET
       body = $1,
       embedding = COALESCE($2::vector, embedding),
       updated_at = NOW()
@@ -114,7 +114,7 @@ export async function updateComment(
 
 export async function deleteComment(commentId: string): Promise<boolean> {
   const result = await db.query(
-    `DELETE FROM chipp_comment WHERE id = $1 RETURNING id`,
+    `DELETE FROM dispatch_comment WHERE id = $1 RETURNING id`,
     [commentId]
   );
   return result.length > 0;

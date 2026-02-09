@@ -62,9 +62,9 @@ export async function GET(
     `SELECT i.*,
             s.name as status_name, s.color as status_color,
             u.slack_display_name as reporter_name
-     FROM chipp_issue i
-     JOIN chipp_status s ON i.status_id = s.id
-     LEFT JOIN chipp_customer_user u ON i.reporter_id = u.id
+     FROM dispatch_issue i
+     JOIN dispatch_status s ON i.status_id = s.id
+     LEFT JOIN dispatch_customer_user u ON i.reporter_id = u.id
      WHERE i.identifier = $1`,
     [identifier]
   );
@@ -85,8 +85,8 @@ export async function GET(
   // Get comments
   const comments = await db.query<CommentRow>(
     `SELECT c.id, c.body, a.name as author_name, c.created_at
-     FROM chipp_comment c
-     LEFT JOIN chipp_agent a ON c.author_id = a.id
+     FROM dispatch_comment c
+     LEFT JOIN dispatch_agent a ON c.author_id = a.id
      WHERE c.issue_id = $1
      ORDER BY c.created_at ASC`,
     [issue.id]

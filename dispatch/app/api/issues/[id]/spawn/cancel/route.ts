@@ -10,7 +10,7 @@ interface RouteParams {
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const [_repoOwner, _repoName] = (process.env.GITHUB_REPO || "").split("/");
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || _repoOwner || "";
-const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || _repoName || "chipp-deno";
+const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || _repoName || "";
 
 /**
  * POST /api/issues/{id}/spawn/cancel

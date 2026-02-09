@@ -21,13 +21,13 @@ export interface CreateStatusInput {
 
 export async function listStatuses(workspaceId: string): Promise<Status[]> {
   return db.query<Status>(
-    `SELECT * FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC`,
+    `SELECT * FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC`,
     [workspaceId]
   );
 }
 
 export async function getStatus(statusId: string): Promise<Status | null> {
-  return db.queryOne<Status>(`SELECT * FROM chipp_status WHERE id = $1`, [
+  return db.queryOne<Status>(`SELECT * FROM dispatch_status WHERE id = $1`, [
     statusId,
   ]);
 }
@@ -37,7 +37,7 @@ export async function getStatusByName(
   name: string
 ): Promise<Status | null> {
   return db.queryOne<Status>(
-    `SELECT * FROM chipp_status WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
+    `SELECT * FROM dispatch_status WHERE workspace_id = $1 AND LOWER(name) = LOWER($2)`,
     [workspaceId, name]
   );
 }
@@ -50,7 +50,7 @@ export async function createStatus(
   let position = input.position;
   if (position === undefined) {
     const maxResult = await db.queryOne<{ max_pos: number }>(
-      `SELECT COALESCE(MAX(position), -1) as max_pos FROM chipp_status WHERE workspace_id = $1`,
+      `SELECT COALESCE(MAX(position), -1) as max_pos FROM dispatch_status WHERE workspace_id = $1`,
       [workspaceId]
     );
     position = (maxResult?.max_pos ?? -1) + 1;
@@ -58,7 +58,7 @@ export async function createStatus(
 
   const id = uuidv4();
   await db.query(
-    `INSERT INTO chipp_status (id, workspace_id, name, color, position, is_triage, is_closed)
+    `INSERT INTO dispatch_status (id, workspace_id, name, color, position, is_triage, is_closed)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       id,
@@ -72,7 +72,7 @@ export async function createStatus(
   );
 
   return (await db.queryOne<Status>(
-    `SELECT * FROM chipp_status WHERE id = $1`,
+    `SELECT * FROM dispatch_status WHERE id = $1`,
     [id]
   ))!;
 }
@@ -85,7 +85,7 @@ export async function updateStatus(
   if (!existing) return null;
 
   await db.query(
-    `UPDATE chipp_status SET
+    `UPDATE dispatch_status SET
       name = COALESCE($1, name),
       color = COALESCE($2, color),
       position = COALESCE($3, position),
@@ -103,7 +103,7 @@ export async function updateStatus(
   );
 
   return (await db.queryOne<Status>(
-    `SELECT * FROM chipp_status WHERE id = $1`,
+    `SELECT * FROM dispatch_status WHERE id = $1`,
     [statusId]
   ))!;
 }
@@ -116,14 +116,14 @@ export async function reorderStatuses(
     // Update positions based on array order
     for (let i = 0; i < statusIds.length; i++) {
       await client.query(
-        `UPDATE chipp_status SET position = $1 WHERE id = $2 AND workspace_id = $3`,
+        `UPDATE dispatch_status SET position = $1 WHERE id = $2 AND workspace_id = $3`,
         [i, statusIds[i], workspaceId]
       );
     }
 
     // Return updated statuses
     const result = await client.query(
-      `SELECT * FROM chipp_status WHERE workspace_id = $1 ORDER BY position ASC`,
+      `SELECT * FROM dispatch_status WHERE workspace_id = $1 ORDER BY position ASC`,
       [workspaceId]
     );
     return result.rows as Status[];
@@ -132,7 +132,7 @@ export async function reorderStatuses(
 
 export async function deleteStatus(statusId: string): Promise<boolean> {
   const result = await db.query(
-    `DELETE FROM chipp_status WHERE id = $1 RETURNING id`,
+    `DELETE FROM dispatch_status WHERE id = $1 RETURNING id`,
     [statusId]
   );
   return result.length > 0;

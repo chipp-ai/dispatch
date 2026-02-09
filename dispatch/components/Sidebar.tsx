@@ -35,9 +35,9 @@ export default function Sidebar({ onOpenGuide, isOpen, onClose, viewType, onView
       <div className="p-3">
         <div className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#1a1a1a] cursor-pointer">
           <div className="w-5 h-5 rounded bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
-            C
+            {(process.env.NEXT_PUBLIC_APP_NAME || "Dispatch")[0]}
           </div>
-          <span className="text-[13px] font-medium text-[#f5f5f5]">Chipp</span>
+          <span className="text-[13px] font-medium text-[#f5f5f5]">{process.env.NEXT_PUBLIC_APP_NAME || "Dispatch"}</span>
           <svg
             className="w-3 h-3 text-[#666] ml-auto"
             fill="none"

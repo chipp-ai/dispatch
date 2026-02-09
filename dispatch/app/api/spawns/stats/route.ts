@@ -15,7 +15,7 @@ export async function GET() {
   try {
     // Active spawn count
     const activeResult = await db.queryOne<{ count: string }>(
-      `SELECT COUNT(*) as count FROM chipp_issue WHERE spawn_status = 'running'`
+      `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running'`
     );
     const activeCount = parseInt(activeResult?.count || "0", 10);
 
@@ -26,7 +26,7 @@ export async function GET() {
       max_spawns: number;
     }>(
       `SELECT spawn_type, spawn_count, max_spawns
-       FROM chipp_spawn_budget
+       FROM dispatch_spawn_budget
        WHERE date = CURRENT_DATE`
     );
 
@@ -36,7 +36,7 @@ export async function GET() {
     // Today's total cost (sum cost_usd for issues spawned today)
     const costResult = await db.queryOne<{ total: string }>(
       `SELECT COALESCE(SUM(cost_usd), 0) as total
-       FROM chipp_issue
+       FROM dispatch_issue
        WHERE spawn_started_at >= CURRENT_DATE`
     );
     const dailyCost = parseFloat(costResult?.total || "0");
@@ -47,7 +47,7 @@ export async function GET() {
       count: string;
     }>(
       `SELECT run_outcome, COUNT(*) as count
-       FROM chipp_issue
+       FROM dispatch_issue
        WHERE spawn_started_at >= CURRENT_DATE
          AND run_outcome IS NOT NULL
        GROUP BY run_outcome`

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: chipp-issues
+  name: dispatch
   labels:
-    app: chipp-issues
+    app: dispatch
 spec:
   type: ClusterIP
   ports:
@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: chipp-issues
+    app: dispatch

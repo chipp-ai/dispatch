@@ -9,13 +9,56 @@ export const guideContent = `
 
 Dispatch is an agent orchestration platform that sends autonomous Claude Code agents to investigate, plan, implement, test, and research across your codebase. Every mission runs as a real Claude Code session in GitHub Actions, with live terminal streaming and structured activity tracking.
 
-This guide covers everything: dispatching missions from the terminal, reviewing agent plans, monitoring your fleet, and advanced workflows.
+This guide covers everything: getting set up, dispatching missions from the terminal, reviewing agent plans, monitoring your fleet, and advanced workflows.
+
+---
+
+## Getting Started
+
+### Configure your instance
+
+After cloning and running \`npm install\`, personalize Dispatch for your project:
+
+1. **Set your project name** -- In \`.env\`, set \`NEXT_PUBLIC_APP_NAME\` to your project name (e.g. \`MyProject\`). This appears in the terminal header, page titles, and OG images.
+
+2. **Set your issue prefix** -- Set \`DEFAULT_ISSUE_PREFIX\` to your preferred prefix (e.g. \`ENG\`, \`BUG\`, \`OPS\`). Issues will be numbered like \`ENG-1\`, \`ENG-2\`, etc.
+
+3. **Generate your brand art** -- Run \`npm run generate-logo -- path/to/your-logo.png\` to create braille Unicode art displayed in the terminal. This is optional -- Dispatch ships with default art.
+
+### Set up GitHub Actions agents
+
+The agent workflows in \`.github/workflows/\` need to be copied to your target repository:
+
+\`\`\`bash
+cp -r .github/workflows/{auto-investigate,prd-investigate,prd-implement,qa-test,deep-research}.yml ../your-repo/.github/workflows/
+\`\`\`
+
+Then add these secrets to your target repo: \`ANTHROPIC_API_KEY\`, \`DISPATCH_API_URL\`, and \`DISPATCH_API_KEY\`.
+
+### Connect error monitoring (optional)
+
+For autonomous error remediation, connect a log aggregation stack:
+
+1. Ship structured JSON logs to Loki (or similar) with \`source\`, \`feature\`, and \`msg\` fields
+2. Create Grafana alert rules that fire on new error categories or spikes
+3. Configure the webhook contact point to send to \`/api/loki/webhook\` with a Bearer token
+4. Set spawn budget env vars (\`DAILY_SPAWN_BUDGET_ERROR\`, \`MAX_CONCURRENT_SPAWNS_ERROR\`, etc.)
+
+See the **Autonomous error remediation** section below for full setup details.
+
+### Your first agent run
+
+1. Open the terminal at http://localhost:3002
+2. Type: **"Investigate how the login flow works"**
+3. The orchestrator creates an issue and dispatches an investigation agent
+4. Watch the agent's progress in real-time via the terminal and issue detail page
+5. When the agent posts a plan, review and approve it to trigger implementation
 
 ---
 
 ## The Terminal
 
-The terminal is your primary interface for dispatching agents. It works like a command line: type what you want done, and Chippy (the orchestrator) figures out the right workflow.
+The terminal is your primary interface for dispatching agents. It works like a command line: type what you want done, and the orchestrator (the orchestrator) figures out the right workflow.
 
 ### Dispatching from the Terminal
 
@@ -23,19 +66,19 @@ Type a natural-language description of what you want:
 
 - **"Investigate the auth middleware bug"** -- spawns an investigation agent
 - **"Research the best approach for WebSocket scaling"** -- spawns a deep research agent
-- **"Implement the user profile page based on CHIPP-42's plan"** -- spawns an implementation agent
+- **"Implement the user profile page based on DISPATCH-42's plan"** -- spawns an implementation agent
 
-Chippy parses your intent, creates or finds the relevant issue, selects the workflow type, and dispatches the agent. You'll see real-time status updates as the agent progresses.
+the orchestrator parses your intent, creates or finds the relevant issue, selects the workflow type, and dispatches the agent. You'll see real-time status updates as the agent progresses.
 
 ### Terminal Commands
 
 | Command | What It Does |
 |---------|--------------|
 | \`/status\` | Show fleet status (active agents, budget, costs) |
-| \`/mission <CHIPP-XX>\` | Get full details for a mission (status, plan, cost, PR) |
+| \`/mission <DISPATCH-XX>\` | Get full details for a mission (status, plan, cost, PR) |
 | \`/search <query>\` | Semantic search across all missions |
 
-### How Chippy Routes Your Request
+### How the orchestrator Routes Your Request
 
 When you type in the terminal, the orchestrator:
 
@@ -105,7 +148,7 @@ Type your request naturally. The orchestrator handles issue creation and agent d
 
 ### From the Issue Detail Page
 
-1. Navigate to any issue (\`/issue/CHIPP-XX\`)
+1. Navigate to any issue (\`/issue/DISPATCH-XX\`)
 2. In the **AI Agent** sidebar section, click:
    - **Investigate** -- Spawn an investigation workflow (explores code, writes a plan)
    - **Start Implementation** -- Spawn implementation (only after plan is approved)

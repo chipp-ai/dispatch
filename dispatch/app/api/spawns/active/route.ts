@@ -26,7 +26,7 @@ export async function GET() {
     }>(
       `SELECT id, identifier, title, spawn_type, spawn_status,
               spawn_started_at, spawn_run_id, agent_status, cost_usd
-       FROM chipp_issue
+       FROM dispatch_issue
        WHERE spawn_status = 'running'
        ORDER BY spawn_started_at ASC`
     );

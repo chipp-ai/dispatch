@@ -22,6 +22,21 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+// Insert line breaks before [TOOL], [RESULT], [COMPLETED] markers and
+// between tool calls and prose so ReactMarkdown treats each as a
+// separate paragraph instead of one contiguous block.
+function splitToolMarkers(text: string): string {
+  return text
+    // Break before every [TOOL], [RESULT], [COMPLETED] tag
+    .replace(/\s*(\[TOOL\])/g, "\n\n$1")
+    .replace(/\s*(\[RESULT\])/g, "\n\n$1")
+    .replace(/\s*(\[COMPLETED\])/g, "\n\n$1")
+    // Break after a tool call closing paren followed by prose text
+    // e.g. "Read(file_path=...) Now let me..." → newline before "Now"
+    .replace(/\)\s+(?=[A-Z])/g, ")\n\n")
+    .trim();
+}
+
 // Custom markdown components for terminal aesthetic
 const terminalComponents: Partial<Components> = {
   // Headings get a green terminal prefix
@@ -233,10 +248,10 @@ export default function TerminalViewer({
 
   const clearTerminal = () => setWsLines([]);
 
-  // Combine all lines into markdown, stripping ANSI codes
+  // Combine all lines into markdown, stripping ANSI codes and splitting tool markers
   const terminalMarkdown = useMemo(() => {
     if (allLines.length === 0) return "";
-    return allLines.map(stripAnsi).join("\n");
+    return splitToolMarkers(allLines.map(stripAnsi).join("\n"));
   }, [allLines]);
 
   // Don't render if agent is idle and no lines
