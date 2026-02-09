@@ -89,11 +89,11 @@ jobs:
         env:
           IMAGE_TAG: "production-${{ github.sha }}"
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\":tada: Dispatch deployed to production: \`$IMAGE_TAG\`\"}" SLACK_WEBHOOK_URL_REDACTED
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\":tada: Dispatch deployed to production: \`$IMAGE_TAG\`\"}" ${{ secrets.SLACK_WEBHOOK_URL }}
 
       - name: Notify Slack on failure
         if: ${{ failure() }}
         env:
           GITHUB_RUN_URL: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\":warning: Dispatch production deployment failed: $GITHUB_RUN_URL\"}" SLACK_WEBHOOK_URL_REDACTED
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\":warning: Dispatch production deployment failed: $GITHUB_RUN_URL\"}" ${{ secrets.SLACK_WEBHOOK_URL }}
