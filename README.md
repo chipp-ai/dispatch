@@ -182,6 +182,93 @@ All workflows accept an optional `ref` input that controls which branch agents c
 
 If your default branch is `main`, no extra configuration is needed. If it's something else (e.g. `develop`), set `GITHUB_REF=develop` in your `.env`.
 
+## Preparing your codebase for agents
+
+Dispatch agents are Claude Code sessions that check out your codebase and work autonomously. The single most impactful thing you can do is add a `CLAUDE.md` file to your repository root. This is the context file that Claude Code reads at the start of every session -- it's how agents understand your project.
+
+### CLAUDE.md (required)
+
+Create a `CLAUDE.md` in your repository root. This file should give an agent everything it needs to navigate, understand, and safely modify your codebase.
+
+**What to include:**
+
+```markdown
+# Project Name
+
+Brief description of what the project does and its core architecture.
+
+## Tech Stack
+
+- Language/runtime (e.g. TypeScript, Node.js 20, Deno 2.x)
+- Framework (e.g. Next.js 15, Express, Hono)
+- Database (e.g. PostgreSQL with Prisma, MongoDB with Mongoose)
+- Key libraries (e.g. Zod for validation, Tailwind for styling)
+
+## Project Structure
+
+```
+src/
+  api/         -- API route handlers
+  services/    -- Business logic
+  db/          -- Database queries and migrations
+  utils/       -- Shared helpers
+tests/         -- Test files mirror src/ structure
+```
+
+## Development Commands
+
+```bash
+npm run dev      # Start dev server
+npm run test     # Run tests
+npm run lint     # Lint check
+npm run build    # Production build
+```
+
+## Key Patterns
+
+- How requests flow through the system (middleware -> handler -> service -> db)
+- How errors are handled (custom error classes, error middleware, logging patterns)
+- How authentication works (JWT, sessions, API keys)
+- How database queries are structured (ORM patterns, raw SQL conventions)
+- How tests are written (testing framework, fixtures, mocks)
+
+## Critical Rules
+
+- Things agents must NEVER do (e.g. "never modify migration files that have already run")
+- Security constraints (e.g. "always use parameterized queries, never string interpolation")
+- Conventions (e.g. "all new API routes need tests", "use snake_case for DB columns")
+
+## Common Pitfalls
+
+- Known gotchas that trip up newcomers (and agents)
+- Environment-specific quirks
+- Things that look wrong but are intentional
+```
+
+**Why this matters:** Without a `CLAUDE.md`, agents can still read your code, but they'll spend time figuring out basics that you could tell them upfront. A good `CLAUDE.md` means agents spend more time solving the actual problem and less time orienting themselves.
+
+### Subdirectory CLAUDE.md files
+
+For larger codebases, you can add `CLAUDE.md` files to subdirectories. Claude Code automatically reads these when working in that directory. Useful for:
+
+- `db/CLAUDE.md` -- Migration conventions, schema rules, query patterns
+- `api/CLAUDE.md` -- Route patterns, auth middleware, request validation
+- `tests/CLAUDE.md` -- Testing conventions, fixture setup, mock patterns
+
+### Tips for effective agent context
+
+1. **Be specific about commands.** Instead of "run the tests", say `npm run test -- --watch=false`. Agents execute exactly what you write.
+
+2. **Document your git workflow.** Tell agents which branch to target for PRs, whether you use conventional commits, and any CI checks that must pass.
+
+3. **List your non-obvious environment requirements.** If your tests need a running database, Redis, or specific env vars, say so. Agents will try to set these up.
+
+4. **Explain what "done" looks like.** If every feature needs tests, types, and a migration, say that explicitly. Agents follow the standards you set.
+
+5. **Include error handling patterns.** Show agents how you want errors logged and handled. This prevents agents from introducing inconsistent error handling.
+
+6. **Keep it updated.** A stale `CLAUDE.md` is worse than none. When you change conventions, update the file. It's the source of truth for every agent session.
+
 ## Setting up webhooks
 
 ### GitHub webhook (PR reconciliation)
