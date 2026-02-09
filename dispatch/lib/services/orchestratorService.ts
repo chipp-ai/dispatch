@@ -41,6 +41,11 @@ Workflow:
 3. Optionally dispatch QA agent to verify the implementation
 4. For pure research questions, dispatch a research agent directly
 
+Slash commands (handle these immediately without confirmation):
+- /status → call get_fleet_status, display results
+- /mission <CHIPP-XX> → call get_mission with that identifier, display results
+- /search <query> → call search_missions with that query, display results
+
 Rules:
 - Always search_missions before dispatching to avoid duplicate work.
 - Confirm with the user before dispatching any agent. Never auto-dispatch.

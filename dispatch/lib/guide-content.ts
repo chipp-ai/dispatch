@@ -32,10 +32,8 @@ Chippy parses your intent, creates or finds the relevant issue, selects the work
 | Command | What It Does |
 |---------|--------------|
 | \`/status\` | Show fleet status (active agents, budget, costs) |
-| \`/cancel <CHIPP-XX>\` | Cancel a running agent |
-| \`/retry <CHIPP-XX>\` | Retry a failed agent with optional context |
-| \`/approve <CHIPP-XX>\` | Approve a pending plan |
-| \`/reject <CHIPP-XX>\` | Reject a plan with feedback |
+| \`/mission <CHIPP-XX>\` | Get full details for a mission (status, plan, cost, PR) |
+| \`/search <query>\` | Semantic search across all missions |
 
 ### How Chippy Routes Your Request
 
@@ -195,8 +193,6 @@ If an agent is doing the wrong thing or taking too long:
 3. Confirm cancellation
 
 This calls the GitHub Actions API to cancel the workflow run. The issue returns to idle state.
-
-You can also cancel from the terminal: \`/cancel CHIPP-42\`
 
 ---
 
