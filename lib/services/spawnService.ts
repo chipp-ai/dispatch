@@ -256,6 +256,11 @@ export async function dispatchWorkflow(
     inputs.additional_context = issue.additional_context.slice(0, 2000);
   }
 
+  // Pass ref so the checkout step uses the same branch
+  if (GITHUB_REF !== "main") {
+    inputs.ref = GITHUB_REF;
+  }
+
   // Pass tunnel URL for local dev so GH Actions streams back to localhost
   const callbackUrl = process.env.DISPATCH_CALLBACK_URL;
   if (callbackUrl) {
