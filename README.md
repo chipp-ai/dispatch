@@ -9,7 +9,8 @@
     <a href="#what-it-looks-like">Screenshots</a> &#8226;
     <a href="#setting-up-github-actions-agents">Docs</a> &#8226;
     <a href="#mcp-integration">MCP</a> &#8226;
-    <a href="#license">License</a>
+    <a href="CONTRIBUTING.md">Contributing</a> &#8226;
+    <a href="LICENSE">License</a>
   </p>
 </div>
 
@@ -776,6 +777,12 @@ rm -f .next/dev/lock
 npm run dev
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and PR process.
+
+If you're using Claude Code to contribute, Dispatch ships with a [CLAUDE.md](CLAUDE.md) that gives agents full project context.
+
 ## License
 
-MIT
+[MIT](LICENSE)
