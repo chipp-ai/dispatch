@@ -145,6 +145,25 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
 
+      - name: Create Run Record
+        id: create-run
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          RUN_PAYLOAD=$(jq -n \
+            --arg workflow_type "qa" \
+            --arg github_run_id "$GITHUB_RUN_ID" \
+            --arg github_run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{workflow_type: $workflow_type, github_run_id: $github_run_id, github_run_url: $github_run_url}')
+
+          RESPONSE=$(curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$RUN_PAYLOAD" 2>/dev/null) || true
+
+          AGENT_RUN_ID=$(echo "$RESPONSE" | jq -r '.id // empty' 2>/dev/null)
+          echo "agent_run_id=${AGENT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Created run record: ${AGENT_RUN_ID}"
+
       - name: Setup database
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5436/dispatch
@@ -464,6 +483,7 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
           OUTCOME: ${{ steps.run-result.outputs.outcome }}
+          AGENT_RUN_ID: ${{ steps.create-run.outputs.agent_run_id }}
         run: |
           REPORT_FILE=".scratch/qa-report.md"
           if [ ! -f "$REPORT_FILE" ]; then
@@ -492,7 +512,8 @@ jobs:
             --arg cost_usd "$COST_USD" \
             --arg num_turns "$NUM_TURNS" \
             --arg model "$MODEL" \
-            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "qa", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
+            --arg agent_run_id "$AGENT_RUN_ID" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "qa", cost_usd: $cost_usd, num_turns: $num_turns, model: $model, agent_run_id: $agent_run_id}}')
 
           curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
             -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
@@ -519,6 +540,33 @@ jobs:
             -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+          # Update agent run record with full results
+          if [ -n "$AGENT_RUN_ID" ]; then
+            PROMPT_FILE=".scratch/qa-prompt.md"
+            [ -f "$PROMPT_FILE" ] || echo "" > "$PROMPT_FILE"
+            [ -f .scratch/claude-output.log ] || echo "" > .scratch/claude-output.log
+
+            REPORT_FILE=".scratch/qa-report.md"
+            [ -f "$REPORT_FILE" ] || echo "" > "$REPORT_FILE"
+
+            RUN_UPDATE=$(jq -n \
+              --arg status "$SPAWN_STATUS" \
+              --arg outcome "${OUTCOME:-failed}" \
+              --arg outcome_summary "${OUTCOME_SUMMARY:-}" \
+              --arg cost_usd "${COST_USD:-0}" \
+              --arg num_turns "${NUM_TURNS:-0}" \
+              --arg model "${MODEL:-unknown}" \
+              --rawfile prompt_text "$PROMPT_FILE" \
+              --rawfile transcript .scratch/claude-output.log \
+              --rawfile report_content "$REPORT_FILE" \
+              '{status: $status, outcome: $outcome, outcome_summary: $outcome_summary, cost_usd: ($cost_usd | tonumber), num_turns: ($num_turns | tonumber), model: $model, prompt_text: $prompt_text, transcript: $transcript, report_content: $report_content}')
+
+            curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/${AGENT_RUN_ID}" \
+              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
+          fi
 
       - name: Report failure
         if: failure() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''

@@ -8,6 +8,7 @@
  */
 
 import { db } from "../db";
+import { createRun } from "./agentRunService";
 
 // --- Configuration ---
 
@@ -309,14 +310,27 @@ export async function dispatchInvestigation(
 // --- Recording ---
 
 /**
+ * Map spawn types to workflow_type values for agent runs.
+ */
+const workflowTypeMap: Record<string, string> = {
+  error_fix: "error_fix",
+  investigate: "prd_investigate",
+  implement: "prd_implement",
+  qa: "qa",
+  research: "deep_research",
+};
+
+/**
  * Record that a spawn was initiated for an issue.
- * Updates the issue's spawn columns and increments the type-specific daily budget.
+ * Updates the issue's spawn columns, increments the type-specific daily budget,
+ * and creates an agent run record for provenance tracking.
+ * Returns the agent run ID.
  */
 export async function recordSpawn(
   issueId: string,
   runId: string,
   spawnType: string = "error_fix"
-): Promise<void> {
+): Promise<string> {
   const agentStatusMap: Record<string, string> = {
     implement: "implementing",
     investigate: "investigating",
@@ -344,6 +358,14 @@ export async function recordSpawn(
       ? DAILY_SPAWN_BUDGET_ERROR
       : DAILY_SPAWN_BUDGET_PRD;
   await incrementDailyBudget(budgetType, maxBudget);
+
+  const workflowType = workflowTypeMap[spawnType] || spawnType;
+  const agentRun = await createRun({
+    issueId,
+    workflowType,
+    githubRunId: runId,
+  });
+  return agentRun.id;
 }
 
 /**

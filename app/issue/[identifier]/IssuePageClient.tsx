@@ -6,6 +6,8 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import TerminalViewer from "@/components/TerminalViewer";
 import PRCard from "@/components/PRCard";
+import RunCard, { type AgentRunSummary } from "@/components/RunCard";
+import RunDetailPanel from "@/components/RunDetailPanel";
 import RetrySpawnDialog from "@/components/RetrySpawnDialog";
 
 interface Status {
@@ -564,6 +566,11 @@ export default function IssuePageClient() {
   // Live terminal output from CI
   const [terminalLines, setTerminalLines] = useState<string[]>([]);
 
+  // Agent runs (provenance)
+  const [agentRuns, setAgentRuns] = useState<AgentRunSummary[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [showRunsSection, setShowRunsSection] = useState(true);
+
   // Plan review
   const [planRejectFeedback, setPlanRejectFeedback] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
@@ -630,6 +637,19 @@ export default function IssuePageClient() {
     }
   }, [issue]);
 
+  const fetchRuns = useCallback(async () => {
+    if (!issue) return;
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/runs`);
+      if (res.ok) {
+        const data = await res.json();
+        setAgentRuns(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch agent runs:", err);
+    }
+  }, [issue]);
+
   useEffect(() => {
     fetchIssue().finally(() => setLoading(false));
   }, [fetchIssue]);
@@ -638,8 +658,9 @@ export default function IssuePageClient() {
     if (issue) {
       fetchAgentActivity();
       fetchLinkedPRs();
+      fetchRuns();
     }
-  }, [issue, fetchAgentActivity, fetchLinkedPRs]);
+  }, [issue, fetchAgentActivity, fetchLinkedPRs, fetchRuns]);
 
   // SSE connection for real-time activity streaming
   useEffect(() => {
@@ -1510,6 +1531,58 @@ export default function IssuePageClient() {
               <div className="space-y-2">
                 {linkedPRs.map((pr) => (
                   <PRCard key={pr.id} pr={pr} onUnlink={handleUnlinkPR} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Agent Runs (Provenance) */}
+        {agentRuns.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
+                  <path fillRule="evenodd" d="M1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 00.37.65l2.5 1.5a.75.75 0 10.76-1.3L8.5 7.94V4.75z" />
+                </svg>
+                <h3 className="text-[13px] font-medium text-[#e0e0e0]">
+                  Agent Runs
+                </h3>
+                <span className="text-[11px] text-[#505050]">({agentRuns.length})</span>
+              </div>
+              <button
+                onClick={() => setShowRunsSection(!showRunsSection)}
+                className="p-1 text-[#505050] hover:text-[#808080] transition-colors"
+              >
+                <svg
+                  className={`w-4 h-4 transition-transform ${showRunsSection ? "" : "-rotate-90"}`}
+                  viewBox="0 0 16 16"
+                  fill="none"
+                >
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+
+            {showRunsSection && (
+              <div className="space-y-2">
+                {agentRuns.map((run) => (
+                  <div key={run.id}>
+                    <RunCard
+                      run={run}
+                      isSelected={selectedRunId === run.id}
+                      onClick={() =>
+                        setSelectedRunId(selectedRunId === run.id ? null : run.id)
+                      }
+                    />
+                    {selectedRunId === run.id && issue && (
+                      <RunDetailPanel
+                        issueId={issue.id}
+                        runId={run.id}
+                        onClose={() => setSelectedRunId(null)}
+                      />
+                    )}
+                  </div>
                 ))}
               </div>
             )}

@@ -802,13 +802,14 @@ export async function createAgentActivity(
   issueId: string,
   type: AgentActivityType,
   content: string,
-  metadata?: AgentActivityMetadata
+  metadata?: AgentActivityMetadata,
+  runId?: string
 ): Promise<AgentActivity> {
   const result = await db.query<AgentActivity>(
-    `INSERT INTO dispatch_agent_activity (id, issue_id, type, content, metadata, created_at)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW())
+    `INSERT INTO dispatch_agent_activity (id, issue_id, type, content, metadata, run_id, created_at)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())
      RETURNING *`,
-    [issueId, type, content, metadata ? JSON.stringify(metadata) : null]
+    [issueId, type, content, metadata ? JSON.stringify(metadata) : null, runId || null]
   );
   return result[0];
 }
