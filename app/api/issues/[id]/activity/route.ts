@@ -58,7 +58,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const activity = await createAgentActivity(id, type, content, metadata);
+    const runId =
+      metadata?.agent_run_id && typeof metadata.agent_run_id === "string"
+        ? metadata.agent_run_id
+        : undefined;
+    const activity = await createAgentActivity(
+      id,
+      type,
+      content,
+      metadata,
+      runId
+    );
 
     const activityData = {
       id: activity.id,

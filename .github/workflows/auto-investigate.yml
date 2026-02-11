@@ -123,6 +123,25 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
 
+      - name: Create Run Record
+        id: create-run
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          RUN_PAYLOAD=$(jq -n \
+            --arg workflow_type "error_fix" \
+            --arg github_run_id "$GITHUB_RUN_ID" \
+            --arg github_run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{workflow_type: $workflow_type, github_run_id: $github_run_id, github_run_url: $github_run_url}')
+
+          RESPONSE=$(curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$RUN_PAYLOAD" 2>/dev/null) || true
+
+          AGENT_RUN_ID=$(echo "$RESPONSE" | jq -r '.id // empty' 2>/dev/null)
+          echo "agent_run_id=${AGENT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Created run record: ${AGENT_RUN_ID}"
+
       - name: Run Investigation
         id: investigate
         env:
@@ -396,6 +415,7 @@ jobs:
           FIX_ATTEMPTED: ${{ steps.check-fix.outputs.fix_attempted }}
           JOB_STATUS: ${{ job.status }}
           OUTCOME: ${{ steps.run-result.outputs.outcome }}
+          AGENT_RUN_ID: ${{ steps.create-run.outputs.agent_run_id }}
         run: |
           # Determine spawn status based on job outcome
           if [ "$JOB_STATUS" = "success" ]; then
@@ -435,6 +455,7 @@ jobs:
             --arg cost_usd "$COST_USD" \
             --arg num_turns "$NUM_TURNS" \
             --arg model "$MODEL" \
+            --arg agent_run_id "$AGENT_RUN_ID" \
             '{
               type: $type,
               content: $content,
@@ -448,7 +469,8 @@ jobs:
                 fingerprint: $fingerprint,
                 cost_usd: $cost_usd,
                 num_turns: $num_turns,
-                model: $model
+                model: $model,
+                agent_run_id: $agent_run_id
               }
             }')
 
@@ -478,6 +500,38 @@ jobs:
             -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+          # Update agent run record with full results
+          if [ -n "$AGENT_RUN_ID" ]; then
+            # Ensure files exist for jq --rawfile
+            [ -f .scratch/investigation-prompt.md ] || echo "" > .scratch/investigation-prompt.md
+            [ -f .scratch/claude-output.log ] || echo "" > .scratch/claude-output.log
+            [ -f .scratch/investigation-report.md ] || echo "" > .scratch/investigation-report.md
+
+            # Extract PR number if PR was created
+            PR_NUMBER=""
+            if [ -n "$PR_URL" ]; then
+              PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
+            fi
+
+            RUN_UPDATE=$(jq -n \
+              --arg status "$SPAWN_STATUS" \
+              --arg outcome "${OUTCOME:-failed}" \
+              --arg outcome_summary "$OUTCOME_SUMMARY" \
+              --arg cost_usd "$COST_USD" \
+              --arg num_turns "$NUM_TURNS" \
+              --arg model "$MODEL" \
+              --arg pr_number "$PR_NUMBER" \
+              --rawfile prompt_text .scratch/investigation-prompt.md \
+              --rawfile transcript .scratch/claude-output.log \
+              --rawfile report_content .scratch/investigation-report.md \
+              '{status: $status, outcome: $outcome, outcome_summary: $outcome_summary, cost_usd: ($cost_usd | tonumber), num_turns: ($num_turns | tonumber), model: $model, prompt_text: $prompt_text, transcript: $transcript, report_content: $report_content} + (if $pr_number != "" then {pr_number: ($pr_number | tonumber)} else {} end)')
+
+            curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/${AGENT_RUN_ID}" \
+              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
+          fi
 
       - name: Report failure to Dispatch
         if: failure() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
