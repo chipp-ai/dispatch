@@ -43,7 +43,7 @@ const MIN_EVENT_COUNT_TO_SPAWN = parseInt(
   10
 );
 const SPAWN_DELAY_MINUTES = parseInt(
-  process.env.SPAWN_DELAY_MINUTES || "1",
+  process.env.SPAWN_DELAY_MINUTES || "0",
   10
 );
 
