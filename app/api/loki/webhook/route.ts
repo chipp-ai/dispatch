@@ -251,7 +251,10 @@ async function processAlert(alert: GrafanaAlert): Promise<{
   }
 
   // Check spawn gate for the new issue
-  const spawnResult = await maybeSpawn(issue, context.fingerprint);
+  const spawnResult = await maybeSpawn(
+    { ...issue, source: context.source, feature: context.feature },
+    context.fingerprint
+  );
 
   return {
     fingerprint: context.fingerprint,
@@ -300,7 +303,7 @@ async function createIssueFromLokiContext(
  * Attempt to spawn an autonomous investigation for a newly created issue.
  */
 async function maybeSpawn(
-  issue: { id: string; identifier: string; title?: string; description?: string | null },
+  issue: { id: string; identifier: string; title?: string; description?: string | null; source?: string; feature?: string },
   fp: string
 ): Promise<string> {
   const gate = await checkSpawnGate(fp);
@@ -312,12 +315,25 @@ async function maybeSpawn(
     return `blocked: ${gate.reason}`;
   }
 
+  // Extract source/feature from title prefix [source/feature] if not provided directly
+  let source = issue.source || "";
+  let feature = issue.feature || "";
+  if ((!source || !feature) && issue.title) {
+    const match = issue.title.match(/^\[([^/\]]+)\/([^\]]+)\]/);
+    if (match) {
+      source = source || match[1];
+      feature = feature || match[2];
+    }
+  }
+
   try {
     const runId = await dispatchInvestigation({
       id: issue.id,
       identifier: issue.identifier,
       title: issue.title || "",
       description: issue.description || null,
+      source,
+      feature,
     });
 
     await recordSpawn(issue.id, runId);
