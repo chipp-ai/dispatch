@@ -574,7 +574,7 @@ export default function IssuePageClient() {
 
   // Agent activity tracking
   const [agentActivities, setAgentActivities] = useState<AgentActivity[]>([]);
-  const [showActivityFeed, setShowActivityFeed] = useState(true);
+  const [showActivityFeed, setShowActivityFeed] = useState(false);
   const activityFeedRef = useRef<HTMLDivElement>(null);
 
   // Live terminal output from CI
@@ -629,11 +629,20 @@ export default function IssuePageClient() {
           activityFeedRef.current.scrollTop =
             activityFeedRef.current.scrollHeight;
         }
+        // Load persisted full log into terminal when no live lines exist
+        if (terminalLines.length === 0) {
+          const fullLog = [...data]
+            .reverse()
+            .find((a: AgentActivity) => a.type === "agent_full_log");
+          if (fullLog?.content) {
+            setTerminalLines(fullLog.content.split("\n"));
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to fetch agent activity:", err);
     }
-  }, [issue]);
+  }, [issue, terminalLines.length]);
 
   const fetchLinkedPRs = useCallback(async () => {
     if (!issue) return;
