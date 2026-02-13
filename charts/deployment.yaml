@@ -1,25 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dispatch
+  name: chipp-issues
   labels:
-    app: dispatch
+    app: chipp-issues
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: dispatch
+      app: chipp-issues
   template:
     metadata:
       labels:
-        app: dispatch
+        app: chipp-issues
     spec:
-      imagePullSecrets:
-        - name: gcp-artifact-registry
       containers:
-        - name: dispatch
-          image: YOUR_REGISTRY/dispatch:latest
-          imagePullPolicy: Always
+        - name: chipp-issues
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
           livenessProbe:
             httpGet:
               path: /api/health
@@ -43,4 +41,4 @@ spec:
             - containerPort: 3002
           envFrom:
             - secretRef:
-                name: dispatch
+                name: chipp-issues
