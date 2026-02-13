@@ -4,6 +4,8 @@ metadata:
   name: chipp-issues
   labels:
     app: chipp-issues
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
 spec:
   type: ClusterIP
   ports:
