@@ -108,6 +108,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       plan_approved_at: body.plan_approved_at,
       plan_approved_by: body.plan_approved_by,
       spawn_type: body.spawn_type,
+      spawn_status: body.spawn_status,
+      spawn_run_id: body.spawn_run_id,
       spawn_attempt_count: body.spawn_attempt_count,
       blocked_reason: body.blocked_reason,
       // Cost tracking fields

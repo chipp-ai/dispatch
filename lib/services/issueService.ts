@@ -371,7 +371,7 @@ export async function updateIssue(
         spawn_type = COALESCE($20, spawn_type),
         spawn_attempt_count = COALESCE($21, spawn_attempt_count),
         blocked_reason = COALESCE($22, blocked_reason),
-        cost_usd = COALESCE(cost_usd, 0) + COALESCE($23, 0),
+        cost_usd = COALESCE(cost_usd, 0::numeric) + COALESCE($23::numeric, 0),
         model = COALESCE($24, model),
         num_turns = COALESCE(num_turns, 0) + COALESCE($25, 0),
         run_outcome = COALESCE($26, run_outcome),
