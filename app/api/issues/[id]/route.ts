@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/utils/auth";
+import { requireAuth, getSession } from "@/lib/utils/auth";
 import {
   getIssue,
   updateIssue,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/services/fixTrackingService";
 import { db } from "@/lib/db";
 import { notifyStatusChange } from "@/lib/services/notificationService";
+import type { HistoryActorType } from "@/lib/services/issueHistoryService";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -80,6 +81,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // Determine actor: session cookie = user, Bearer token = agent/system
+    const session = await getSession();
+    const actorType: HistoryActorType = session ? "user" : "agent";
+    const actorName = session ? "User" : "GitHub Actions";
+
     const issue = await updateIssue(id, {
       title: body.title,
       description: body.description,
@@ -109,6 +115,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       // Run outcome tracking
       run_outcome: body.run_outcome,
       outcome_summary: body.outcome_summary,
+      // Audit trail
+      actorType,
+      actorName,
     });
 
     if (!issue) {

@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
       reporterId: body.reporterId,
       slackChannelId: body.slackChannelId,
       slackThreadTs: body.slackThreadTs,
+      actorType: "user",
+      actorName: "User",
     });
 
     // Broadcast the new issue to connected clients

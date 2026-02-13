@@ -2,6 +2,11 @@ import { db, PoolClient } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { generateEmbeddingForIssue, vectorToString } from "../utils/embeddings";
 import { dispatchToAgent, buildWebhookPayload } from "./webhookService";
+import {
+  createHistoryEntry,
+  recordStatusChange,
+  type HistoryActorType,
+} from "./issueHistoryService";
 
 export type Priority = "P1" | "P2" | "P3" | "P4";
 export type AgentStatus =
@@ -97,6 +102,9 @@ export interface CreateIssueInput {
   reporterId?: string | null;
   slackChannelId?: string | null;
   slackThreadTs?: string | null;
+  // Audit trail
+  actorType?: HistoryActorType;
+  actorName?: string;
 }
 
 export interface UpdateIssueInput {
@@ -130,6 +138,9 @@ export interface UpdateIssueInput {
   // Run outcome tracking
   run_outcome?: string | null;
   outcome_summary?: string | null;
+  // Audit trail
+  actorType?: HistoryActorType;
+  actorName?: string;
 }
 
 export async function createIssue(
@@ -232,7 +243,26 @@ export async function createIssue(
       }
     }
 
-    return issueResult.rows[0] as Issue;
+    const issue = issueResult.rows[0] as Issue;
+
+    // Record "created" in issue history
+    try {
+      await createHistoryEntry({
+        issueId: issue.id,
+        action: "created",
+        newValue: {
+          title: issue.title,
+          priority: issue.priority,
+          identifier: issue.identifier,
+        },
+        actorType: input.actorType || "system",
+        actorName: input.actorName || null,
+      });
+    } catch (e) {
+      console.error("[History] Failed to record issue creation:", e);
+    }
+
+    return issue;
   });
 }
 
@@ -398,6 +428,86 @@ export async function updateIssue(
     }
 
     const updatedIssue = updateResult.rows[0] as Issue;
+
+    // --- Audit trail: record changes to history ---
+    const actor: HistoryActorType = input.actorType || "system";
+    const actorName = input.actorName || null;
+
+    try {
+      // Status change
+      if (input.statusId && input.statusId !== existing.status_id) {
+        const [oldStatus, newStatus] = await Promise.all([
+          client.query<{ name: string }>(`SELECT name FROM dispatch_status WHERE id = $1`, [existing.status_id]),
+          client.query<{ name: string }>(`SELECT name FROM dispatch_status WHERE id = $1`, [input.statusId]),
+        ]);
+        await recordStatusChange(
+          existing.id,
+          oldStatus.rows[0]?.name || "Unknown",
+          newStatus.rows[0]?.name || "Unknown",
+          actor,
+          actorName || undefined,
+        );
+      }
+
+      // Priority change
+      if (input.priority && input.priority !== existing.priority) {
+        await createHistoryEntry({
+          issueId: existing.id,
+          action: "priority_changed",
+          oldValue: { priority: existing.priority },
+          newValue: { priority: input.priority },
+          actorType: actor,
+          actorName,
+        });
+      }
+
+      // Agent status change (started/completed)
+      if (input.agent_status && input.agent_status !== existing.agent_status) {
+        const isStarting = (input.agent_status === "investigating" || input.agent_status === "implementing") && existing.agent_status === "idle";
+        const isCompleting = (input.agent_status === "idle" || input.agent_status === "blocked" || input.agent_status === "awaiting_review")
+          && (existing.agent_status === "investigating" || existing.agent_status === "implementing");
+
+        if (isStarting) {
+          await createHistoryEntry({
+            issueId: existing.id,
+            action: "agent_started",
+            newValue: { agent_status: input.agent_status, spawn_type: input.spawn_type || existing.spawn_type },
+            actorType: "agent",
+            actorName: actorName || "Autonomous Agent",
+          });
+        } else if (isCompleting) {
+          await createHistoryEntry({
+            issueId: existing.id,
+            action: "agent_completed",
+            oldValue: { agent_status: existing.agent_status },
+            newValue: {
+              agent_status: input.agent_status,
+              run_outcome: input.run_outcome || null,
+              outcome_summary: input.outcome_summary || null,
+            },
+            actorType: "agent",
+            actorName: actorName || "Autonomous Agent",
+          });
+        }
+      }
+
+      // Spawn status change (running/completed/failed)
+      if (input.spawn_status && input.spawn_status !== existing.spawn_status) {
+        await createHistoryEntry({
+          issueId: existing.id,
+          action: input.spawn_status === "running" ? "agent_started" : "agent_completed",
+          oldValue: existing.spawn_status ? { spawn_status: existing.spawn_status } : null,
+          newValue: {
+            spawn_status: input.spawn_status,
+            spawn_run_id: input.spawn_run_id || existing.spawn_run_id,
+          },
+          actorType: actor,
+          actorName,
+        });
+      }
+    } catch (e) {
+      console.error("[History] Failed to record issue update:", e);
+    }
 
     // Dispatch webhook if assignee changed
     if (assigneeId !== existing.assignee_id && assigneeId) {

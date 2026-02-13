@@ -296,6 +296,8 @@ async function createIssueFromLokiContext(
     description,
     priority,
     labelIds: [lokiLabel.id],
+    actorType: "system",
+    actorName: "Loki Webhook",
   });
 }
 

@@ -9,6 +9,7 @@
 
 import { db } from "../db";
 import { createRun } from "./agentRunService";
+import { createHistoryEntry } from "./issueHistoryService";
 
 // --- Configuration ---
 
@@ -409,6 +410,26 @@ export async function recordSpawn(
     workflowType,
     githubRunId: runId,
   });
+
+  // Record spawn in issue history
+  try {
+    await createHistoryEntry({
+      issueId,
+      action: "agent_started",
+      newValue: {
+        spawn_status: "running",
+        spawn_type: spawnType,
+        agent_status: agentStatus,
+        workflow_type: workflowType,
+        run_id: agentRun.id,
+      },
+      actorType: "system",
+      actorName: "Spawn Service",
+    });
+  } catch (e) {
+    console.error("[History] Failed to record spawn:", e);
+  }
+
   return agentRun.id;
 }
 

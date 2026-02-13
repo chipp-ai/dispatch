@@ -69,6 +69,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       agent_status: "idle",
       run_outcome: "failed",
       outcome_summary: "Cancelled by user",
+      actorType: "user",
+      actorName: "User",
     });
 
     // Log activity
