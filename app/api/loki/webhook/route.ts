@@ -301,12 +301,20 @@ async function createIssueFromLokiContext(
 
 /**
  * Attempt to spawn an autonomous investigation for a newly created issue.
+ * Passes source to the spawn gate for source-aware threshold behavior.
  */
 async function maybeSpawn(
   issue: { id: string; identifier: string; title?: string; description?: string | null; source?: string; feature?: string },
   fp: string
 ): Promise<string> {
-  const gate = await checkSpawnGate(fp);
+  // Extract source for spawn gate threshold lookup
+  let issueSource = issue.source || "";
+  if (!issueSource && issue.title) {
+    const match = issue.title.match(/^\[([^/\]]+)\/([^\]]+)\]/);
+    if (match) issueSource = match[1];
+  }
+
+  const gate = await checkSpawnGate(fp, issueSource || undefined);
 
   if (!gate.allowed) {
     console.log(
@@ -379,7 +387,20 @@ async function maybeSpawnForExistingIssue(
     return `already_${issue.spawn_status}`;
   }
 
-  return maybeSpawn(issue, fp);
+  // Look up the Loki source from the external issue metadata
+  const externalIssue = await db.queryOne<{ metadata: Record<string, unknown> | string | null }>(
+    `SELECT metadata FROM dispatch_external_issue WHERE source = 'loki' AND external_id = $1`,
+    [fp]
+  );
+  let source: string | undefined;
+  if (externalIssue?.metadata) {
+    const meta = typeof externalIssue.metadata === "string"
+      ? JSON.parse(externalIssue.metadata)
+      : externalIssue.metadata;
+    source = meta?.source as string | undefined;
+  }
+
+  return maybeSpawn({ ...issue, source }, fp);
 }
 
 // --- Health Check ---

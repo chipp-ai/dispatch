@@ -47,6 +47,42 @@ const SPAWN_DELAY_MINUTES = parseInt(
   10
 );
 
+// --- Source-Aware Spawn Thresholds ---
+// Infrastructure/deploy errors spawn immediately on first event.
+// Runtime errors (user-facing bugs) accumulate before spawning.
+
+const IMMEDIATE_SPAWN_SOURCES = new Set(
+  (process.env.IMMEDIATE_SPAWN_SOURCES || "ci-deploy,migration,infrastructure").split(",")
+);
+
+const RUNTIME_EVENT_THRESHOLD = parseInt(
+  process.env.RUNTIME_EVENT_THRESHOLD || "5",
+  10
+);
+const RUNTIME_SPAWN_DELAY_MINUTES = parseInt(
+  process.env.RUNTIME_SPAWN_DELAY_MINUTES || "5",
+  10
+);
+
+/**
+ * Get spawn thresholds based on the error source.
+ * Infrastructure sources (ci-deploy, migration) get immediate dispatch.
+ * Runtime sources (consumer-chat, builder-chat, etc.) wait for a pattern.
+ */
+export function getSpawnThresholds(source?: string): {
+  eventThreshold: number;
+  delayMinutes: number;
+} {
+  if (source && IMMEDIATE_SPAWN_SOURCES.has(source)) {
+    return { eventThreshold: 1, delayMinutes: 0 };
+  }
+  // Runtime errors: use higher thresholds to avoid noise from one-off errors
+  return {
+    eventThreshold: RUNTIME_EVENT_THRESHOLD,
+    delayMinutes: RUNTIME_SPAWN_DELAY_MINUTES,
+  };
+}
+
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 // Parse owner/name from GITHUB_REPO (e.g. "myorg/myrepo") as fallback
 const [_repoOwner, _repoName] = (process.env.GITHUB_REPO || "").split("/");
@@ -174,20 +210,30 @@ export async function isInCooldown(fp: string): Promise<boolean> {
 
 /**
  * Check whether the event count threshold has been met for spawning.
+ * Accepts an optional threshold override for source-aware spawn behavior.
  */
-export async function hasEnoughEvents(fp: string): Promise<boolean> {
+export async function hasEnoughEvents(
+  fp: string,
+  threshold?: number
+): Promise<boolean> {
+  const minEvents = threshold ?? MIN_EVENT_COUNT_TO_SPAWN;
   const result = await db.queryOne<{ event_count: number }>(
     `SELECT event_count FROM dispatch_external_issue
      WHERE source = 'loki' AND external_id = $1`,
     [fp]
   );
-  return (result?.event_count || 0) >= MIN_EVENT_COUNT_TO_SPAWN;
+  return (result?.event_count || 0) >= minEvents;
 }
 
 /**
  * Check whether enough time has passed since first seen (spawn delay).
+ * Accepts an optional delay override for source-aware spawn behavior.
  */
-export async function hasPassedSpawnDelay(fp: string): Promise<boolean> {
+export async function hasPassedSpawnDelay(
+  fp: string,
+  delayMinutes?: number
+): Promise<boolean> {
+  const delay = delayMinutes ?? SPAWN_DELAY_MINUTES;
   const result = await db.queryOne<{ created_at: Date }>(
     `SELECT created_at FROM dispatch_external_issue
      WHERE source = 'loki' AND external_id = $1`,
@@ -198,7 +244,7 @@ export async function hasPassedSpawnDelay(fp: string): Promise<boolean> {
 
   const createdAt = new Date(result.created_at);
   const now = new Date();
-  const delayMs = SPAWN_DELAY_MINUTES * 60 * 1000;
+  const delayMs = delay * 60 * 1000;
   return now.getTime() - createdAt.getTime() >= delayMs;
 }
 
@@ -407,8 +453,14 @@ export async function setCooldown(fp: string): Promise<void> {
 
 /**
  * Full spawn gate check: combines all safety checks and thresholds.
+ * Source-aware: infrastructure sources (ci-deploy, migration) bypass
+ * event count and delay thresholds for immediate dispatch.
+ * Runtime sources wait for a pattern before spawning.
  */
-export async function checkSpawnGate(fp: string): Promise<{
+export async function checkSpawnGate(
+  fp: string,
+  source?: string
+): Promise<{
   allowed: boolean;
   reason?: string;
 }> {
@@ -420,17 +472,19 @@ export async function checkSpawnGate(fp: string): Promise<{
     return { allowed: false, reason: "cooldown" };
   }
 
-  if (!(await hasEnoughEvents(fp))) {
+  const thresholds = getSpawnThresholds(source);
+
+  if (!(await hasEnoughEvents(fp, thresholds.eventThreshold))) {
     return {
       allowed: false,
-      reason: `below_event_threshold (need ${MIN_EVENT_COUNT_TO_SPAWN})`,
+      reason: `below_event_threshold (need ${thresholds.eventThreshold}, source=${source || "unknown"})`,
     };
   }
 
-  if (!(await hasPassedSpawnDelay(fp))) {
+  if (!(await hasPassedSpawnDelay(fp, thresholds.delayMinutes))) {
     return {
       allowed: false,
-      reason: `spawn_delay (waiting ${SPAWN_DELAY_MINUTES}m after first seen)`,
+      reason: `spawn_delay (waiting ${thresholds.delayMinutes}m after first seen, source=${source || "unknown"})`,
     };
   }
 
@@ -438,6 +492,9 @@ export async function checkSpawnGate(fp: string): Promise<{
     return { allowed: false, reason: "budget_or_concurrency" };
   }
 
+  console.log(
+    `[Spawn] Gate passed for source=${source || "unknown"}: threshold=${thresholds.eventThreshold}, delay=${thresholds.delayMinutes}m`
+  );
   return { allowed: true };
 }
 
