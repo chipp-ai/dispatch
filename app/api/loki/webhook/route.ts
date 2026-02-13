@@ -384,9 +384,9 @@ async function maybeSpawnForExistingIssue(
 
   if (!issue) return "issue_not_found";
 
-  // Don't re-spawn if already running or completed
-  if (issue.spawn_status === "running" || issue.spawn_status === "completed") {
-    return `already_${issue.spawn_status}`;
+  // Don't re-spawn if already running
+  if (issue.spawn_status === "running") {
+    return "already_running";
   }
 
   // Look up the Loki source from the external issue metadata
