@@ -15,6 +15,7 @@ interface TerminalViewerProps {
   issueIdentifier: string;
   isAgentActive: boolean;
   sseLines?: string[];
+  className?: string;
 }
 
 // Strip ANSI escape codes
@@ -147,6 +148,7 @@ export default function TerminalViewer({
   issueIdentifier,
   isAgentActive,
   sseLines = [],
+  className,
 }: TerminalViewerProps) {
   const [wsLines, setWsLines] = useState<string[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -254,11 +256,6 @@ export default function TerminalViewer({
     return splitToolMarkers(allLines.map(stripAnsi).join("\n"));
   }, [allLines]);
 
-  // Don't render if agent is idle and no lines
-  if (!isAgentActive && allLines.length === 0) {
-    return null;
-  }
-
   const statusColor =
     effectiveStatus === "connected"
       ? "#4ade80"
@@ -278,11 +275,11 @@ export default function TerminalViewer({
           : "Disconnected";
 
   return (
-    <div className="mb-8">
+    <div className={className || "mb-8"}>
       {/* Terminal window */}
-      <div className="rounded-lg border border-[#1f1f1f] overflow-hidden bg-[#0a0a0a]">
+      <div className="rounded-lg border border-[#1f1f1f] overflow-hidden bg-[#0a0a0a] flex flex-col h-full">
         {/* Title bar - macOS terminal style */}
-        <div className="flex items-center justify-between px-3 py-2 bg-[#141414] border-b border-[#1f1f1f]">
+        <div className="flex items-center justify-between px-3 py-2 bg-[#141414] border-b border-[#1f1f1f] shrink-0">
           <div className="flex items-center gap-3">
             {/* Traffic light dots */}
             <div className="flex items-center gap-1.5">
@@ -336,7 +333,7 @@ export default function TerminalViewer({
         {isExpanded && (
           <div
             ref={terminalRef}
-            className="p-4 overflow-auto max-h-[500px] min-h-[60px]"
+            className="p-4 overflow-auto flex-1 min-h-[60px]"
             style={{
               fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Droid Sans Mono', 'Courier New', monospace",
             }}

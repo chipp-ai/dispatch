@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import TerminalViewer from "@/components/TerminalViewer";
+import IssueTimeline from "@/components/IssueTimeline";
 import PRCard from "@/components/PRCard";
 import RunCard, { type AgentRunSummary } from "@/components/RunCard";
 import RunDetailPanel from "@/components/RunDetailPanel";
@@ -76,6 +77,16 @@ interface AgentActivity {
   };
 }
 
+interface ExternalLink {
+  id: string;
+  issue_id: string;
+  source: string;
+  external_id: string;
+  external_url: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
 interface Issue {
   id: string;
   identifier: string;
@@ -86,6 +97,7 @@ interface Issue {
   status: Status;
   assignee: { id: string; name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
+  external_links?: ExternalLink[];
   created_at: string;
   updated_at: string;
   // Agent fields
@@ -549,6 +561,8 @@ export default function IssuePageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [titleValue, setTitleValue] = useState("");
@@ -937,11 +951,24 @@ export default function IssuePageClient() {
     return repo ? `https://github.com/${repo}/actions/workflows/${workflow}` : null;
   })();
 
+  // Parse Loki metadata from external links
+  const lokiLink = issue.external_links?.find((l) => l.source === "loki");
+  const lokiMeta = lokiLink?.metadata as Record<string, string> | null;
+
+  // Parse source/feature from title pattern [source/feature]
+  const titleMatch = issue.title.match(/^\[([^\]]+)\]\s*/);
+  const parsedSource = lokiMeta?.source || titleMatch?.[1]?.split("/")[0] || null;
+  const parsedFeature = lokiMeta?.feature || titleMatch?.[1]?.split("/")[1] || null;
+  const cleanTitle = titleMatch ? issue.title.slice(titleMatch[0].length) : issue.title;
+
+  const hasTerminalOutput = isAgentActive || terminalLines.length > 0;
+
   return (
-    <div className="min-h-screen bg-[#0d0d0d]">
-      {/* Header */}
-      <header className="h-11 border-b border-[#1f1f1f] flex items-center px-3 md:px-4 bg-[#0d0d0d] sticky top-0 z-10">
-        <div className="flex items-center gap-2 text-[13px]">
+    <div className="h-screen flex flex-col bg-[#0d0d0d]">
+      {/* Compact Header */}
+      <header className="h-11 border-b border-[#1f1f1f] flex items-center px-3 md:px-4 bg-[#0d0d0d] shrink-0 z-10">
+        {/* Left: breadcrumb */}
+        <div className="flex items-center gap-2 text-[13px] shrink-0">
           <Link
             href="/board"
             className="flex items-center gap-1.5 text-[#808080] hover:text-[#e0e0e0] transition-colors"
@@ -952,722 +979,857 @@ export default function IssuePageClient() {
               <rect x="2" y="9" width="5" height="5" rx="1" fill="currentColor" opacity="0.6" />
               <rect x="9" y="9" width="5" height="5" rx="1" fill="currentColor" opacity="0.6" />
             </svg>
-            <span>Dispatch</span>
+            <span className="hidden md:inline">Board</span>
           </Link>
-          <svg className="w-4 h-4 text-[#404040]" viewBox="0 0 16 16" fill="none">
+          <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 16 16" fill="none">
             <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span className="text-[#e0e0e0] font-medium">{issue.identifier}</span>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-[#505050]">
-            {new Date(issue.created_at).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+        {/* Center: truncated title + source tag */}
+        <div className="flex items-center gap-2 ml-4 min-w-0 flex-1 overflow-hidden">
+          <span className="text-[13px] text-[#808080] truncate hidden md:inline">
+            {cleanTitle}
           </span>
+          {parsedSource && (
+            <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-mono rounded bg-[#1a1a2e] text-[#a78bfa] border border-[#a78bfa]/20">
+              {parsedSource}{parsedFeature ? ` / ${parsedFeature}` : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Right: status + actions + sidebar toggle + delete */}
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          {/* Agent status badge */}
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md"
+            style={{ backgroundColor: agentConfig.bgColor }}
+          >
+            <span style={{ color: agentConfig.color }}>
+              <AgentStatusIcon status={issue.agent_status} animate={isAgentActive} />
+            </span>
+            <span className="text-[11px] font-medium hidden md:inline" style={{ color: agentConfig.color }}>
+              {agentConfig.label}
+            </span>
+          </div>
+
+          {/* Action buttons */}
+          {issue.agent_status === "idle" && (
+            <>
+              {(issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)) && (
+                <button
+                  onClick={() => setShowRetryDialog(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[11px] rounded-md transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="hidden md:inline">Retry</span>
+                </button>
+              )}
+              <button
+                onClick={() => handleSpawn("investigate")}
+                disabled={spawnLoading}
+                className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[11px] font-medium rounded-md transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
+              >
+                {spawnLoading ? (
+                  <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <AgentStatusIcon status="investigating" />
+                )}
+                {issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)
+                  ? "Reinvestigate"
+                  : "Investigate"}
+              </button>
+            </>
+          )}
+
+          {/* Cancel button when running */}
+          {issue.spawn_status === "running" && (
+            <>
+              {workflowLogsUrl && (
+                <a
+                  href={workflowLogsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 px-2.5 py-1 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[11px] rounded-md transition-colors"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                  </svg>
+                  <span className="hidden md:inline">Logs</span>
+                </a>
+              )}
+              <button
+                onClick={handleCancel}
+                disabled={cancelLoading}
+                className="flex items-center gap-1 px-2.5 py-1 bg-[#1a1a1a] border border-red-900/30 hover:bg-red-950/20 hover:border-red-800/40 text-red-400/80 hover:text-red-400 text-[11px] rounded-md transition-colors disabled:opacity-50"
+              >
+                {cancelLoading ? (
+                  <div className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="4" y="4" width="8" height="8" rx="1" />
+                  </svg>
+                )}
+                {cancelLoading ? "..." : "Cancel"}
+              </button>
+            </>
+          )}
+
+          {/* Sidebar toggle */}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className={`p-1.5 rounded transition-colors ${sidebarOpen ? "text-[#e0e0e0] bg-[#1a1a1a]" : "text-[#606060] hover:text-[#e0e0e0]"}`}
+            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.25" />
+              <path d="M10 2v12" stroke="currentColor" strokeWidth="1.25" />
+            </svg>
+          </button>
+
+          {/* Delete */}
           <button
             onClick={handleDeleteIssue}
             className="p-1.5 text-[#606060] hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
             title="Delete mission"
           >
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
               <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
         </div>
       </header>
 
-      {/* Single-column content */}
-      <div className="max-w-3xl mx-auto px-4 py-6 md:px-8 md:py-8">
-        {/* Title */}
-        <div className="mb-4">
-          {editingTitle ? (
-            <input
-              type="text"
-              value={titleValue}
-              onChange={(e) => setTitleValue(e.target.value)}
-              onBlur={handleSaveTitle}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSaveTitle();
-                if (e.key === "Escape") {
-                  setTitleValue(issue.title);
-                  setEditingTitle(false);
-                }
-              }}
-              className="w-full text-[18px] md:text-[22px] font-semibold bg-transparent text-[#f0f0f0] outline-none"
-              autoFocus
+      {/* Spawn error toast */}
+      {spawnError && (
+        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20">
+          <p className="text-[12px] text-red-400">{spawnError}</p>
+        </div>
+      )}
+
+      {/* Two-panel layout */}
+      <div className="flex-1 flex min-h-0">
+        {/* Main area: Terminal */}
+        <main className="flex-1 flex flex-col min-w-0 p-3">
+          {hasTerminalOutput ? (
+            <TerminalViewer
+              issueIdentifier={issue.identifier}
+              isAgentActive={isAgentActive}
+              sseLines={terminalLines}
+              className="flex-1 min-h-0"
             />
           ) : (
-            <h1
-              className="text-[18px] md:text-[22px] font-semibold text-[#f0f0f0] cursor-text hover:text-white transition-colors"
-              onClick={() => setEditingTitle(true)}
-            >
-              {issue.title}
-            </h1>
-          )}
-        </div>
-
-        {/* Description */}
-        <div className="mb-8">
-          {editingDescription ? (
-            <div className="relative">
-              <textarea
-                value={descriptionValue}
-                onChange={(e) => setDescriptionValue(e.target.value)}
-                placeholder="Add a description..."
-                rows={12}
-                className="w-full px-0 py-0 bg-transparent text-[14px] text-[#c0c0c0] outline-none resize-none leading-relaxed"
-                autoFocus
-              />
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={handleSaveDescription}
-                  className="px-3 py-1.5 text-[12px] font-medium text-white bg-[#5e6ad2] hover:bg-[#6b74db] rounded transition-colors"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => {
-                    setDescriptionValue(issue.description || "");
-                    setEditingDescription(false);
-                  }}
-                  className="px-3 py-1.5 text-[12px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div
-              className="cursor-text min-h-[60px]"
-              onClick={() => setEditingDescription(true)}
-            >
-              {issue.description ? (
-                <div
-                  className="prose prose-invert prose-sm max-w-none
-                  prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-6 prose-headings:mb-3
-                  prose-h1:text-[18px] prose-h2:text-[16px] prose-h3:text-[14px]
-                  prose-p:text-[#a0a0a0] prose-p:text-[14px] prose-p:leading-relaxed prose-p:my-3
-                  prose-strong:text-[#d0d0d0] prose-strong:font-semibold
-                  prose-em:text-[#b0b0b0]
-                  prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[13px]
-                  prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg
-                  prose-ul:text-[#a0a0a0] prose-ul:my-3 prose-li:my-1
-                  prose-ol:text-[#a0a0a0] prose-ol:my-3
-                  prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
-                  prose-blockquote:border-l-[#333] prose-blockquote:text-[#808080] prose-blockquote:italic
-                  prose-hr:border-[#252525]
-                "
-                >
-                  <ReactMarkdown>{issue.description}</ReactMarkdown>
-                </div>
-              ) : (
-                <span className="text-[14px] text-[#505050] hover:text-[#707070] transition-colors">
-                  Add a description...
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Agent Controls Bar */}
-        <div className="mb-8 p-4 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Status badge */}
-            <div
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-md"
-              style={{ backgroundColor: agentConfig.bgColor }}
-            >
-              <span style={{ color: agentConfig.color }}>
-                <AgentStatusIcon status={issue.agent_status} animate={isAgentActive} />
-              </span>
-              <span className="text-[13px] font-medium" style={{ color: agentConfig.color }}>
-                {agentConfig.label}
-              </span>
-              {isAgentActive && issue.agent_started_at && (
-                <span className="text-[11px] text-[#505050]">
-                  {formatRelativeTime(issue.agent_started_at)}
-                </span>
-              )}
-            </div>
-
-            {/* Last run outcome badge */}
-            {issue.run_outcome && (() => {
-              const oc = outcomeConfig[issue.run_outcome] || outcomeConfig.failed;
-              return (
-                <div
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md"
-                  style={{
-                    backgroundColor: `${oc.color}15`,
-                    border: `1px solid ${oc.color}25`,
-                  }}
-                >
-                  <span style={{ color: oc.color }} className="flex-shrink-0">
-                    <OutcomeIcon outcome={issue.run_outcome} />
-                  </span>
-                  <span className="text-[12px] font-medium" style={{ color: oc.color }}>
-                    {oc.shortLabel}
-                  </span>
-                </div>
-              );
-            })()}
-
-            {/* Cost info */}
-            {issue.cost_usd != null && Number(issue.cost_usd) > 0 && (
-              <div className="flex items-center gap-2 text-[12px] text-[#505050]">
-                <span className="font-mono text-[#22d3d3]">
-                  ${Number(issue.cost_usd) < 0.01 ? "<0.01" : Number(issue.cost_usd).toFixed(2)}
-                </span>
-                {issue.num_turns != null && issue.num_turns > 0 && (
-                  <span>{issue.num_turns} turns</span>
-                )}
-                {issue.model && (
-                  <span className="font-mono text-[10px] text-[#404040]">
-                    {issue.model.replace("claude-", "").replace(/-/g, " ")}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Action buttons */}
-            {issue.agent_status === "idle" && (
-              <div className="flex items-center gap-2">
-                {(issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)) && (
-                  <button
-                    onClick={() => setShowRetryDialog(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[12px] rounded-lg transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Retry
-                  </button>
-                )}
-                <button
-                  onClick={() => handleSpawn("investigate")}
-                  disabled={spawnLoading}
-                  className="flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
-                >
-                  {spawnLoading ? (
-                    <div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <AgentStatusIcon status="investigating" />
-                  )}
-                  {issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)
-                    ? "Reinvestigate"
-                    : "Investigate"}
-                </button>
-              </div>
-            )}
-
-            {/* Cancel button when running */}
-            {issue.spawn_status === "running" && (
-              <div className="flex items-center gap-2">
-                {workflowLogsUrl && (
-                  <a
-                    href={workflowLogsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[12px] rounded-lg transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-                    </svg>
-                    Logs
-                  </a>
-                )}
-                <button
-                  onClick={handleCancel}
-                  disabled={cancelLoading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] border border-red-900/30 hover:bg-red-950/20 hover:border-red-800/40 text-red-400/80 hover:text-red-400 text-[12px] rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {cancelLoading ? (
-                    <div className="w-3.5 h-3.5 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
-                  ) : (
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                      <rect x="4" y="4" width="8" height="8" rx="1" />
-                    </svg>
-                  )}
-                  {cancelLoading ? "Cancelling..." : "Cancel"}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Spawn error */}
-          {spawnError && (
-            <p className="text-[12px] text-red-400 mt-2">{spawnError}</p>
-          )}
-
-          {/* Confidence bar */}
-          {issue.agent_confidence !== null && (
-            <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-              <div className="flex items-center gap-3">
-                <span className="text-[11px] text-[#505050]">Confidence</span>
-                <div className="flex-1 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${Number(issue.agent_confidence)}%`,
-                      backgroundColor:
-                        Number(issue.agent_confidence) >= 80
-                          ? "#4ade80"
-                          : Number(issue.agent_confidence) >= 50
-                            ? "#facc15"
-                            : "#f87171",
-                    }}
-                  />
-                </div>
-                <span className="text-[11px] text-[#808080] tabular-nums">
-                  {Number(issue.agent_confidence)}%
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Outcome summary */}
-          {issue.outcome_summary && (
-            <p className="text-[12px] text-[#707070] mt-2 leading-relaxed">
-              {issue.outcome_summary}
-            </p>
-          )}
-        </div>
-
-        {/* Blocked Indicator */}
-        {issue.agent_status === "blocked" && issue.blocked_reason && (
-          <div className="mb-8 p-4 bg-red-500/5 border border-red-500/20 rounded-lg">
-            <div className="flex items-center gap-2 mb-2">
-              <svg className="w-4 h-4 text-red-400" viewBox="0 0 16 16" fill="none">
-                <path d="M8 1.5l6.5 11.25H1.5L8 1.5z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
-                <path d="M8 6v3" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                <circle cx="8" cy="11" r="0.75" fill="currentColor" />
-              </svg>
-              <h3 className="text-[14px] font-semibold text-red-400">Agent Blocked</h3>
-            </div>
-            <p className="text-[13px] text-red-300/80 leading-relaxed mb-3">
-              {issue.blocked_reason}
-            </p>
-            <button
-              onClick={() => handleSpawn("implement")}
-              disabled={spawnLoading}
-              className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
-            >
-              {spawnLoading ? (
-                <div className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
-              ) : (
-                <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
-                  <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                  <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-              Unblock & Re-run
-            </button>
-          </div>
-        )}
-
-        {/* Plan Review Section */}
-        {issue.plan_content &&
-          (issue.plan_status === "awaiting_review" ||
-            issue.plan_status === "approved" ||
-            issue.plan_status === "needs_revision") && (
-            <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-[#5e6ad2]" viewBox="0 0 16 16" fill="none">
-                    <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.25" />
-                    <path d="M5 6h6M5 8h6M5 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                  </svg>
-                  <h3 className="text-[14px] font-semibold text-[#e0e0e0]">
-                    Implementation Plan
-                  </h3>
-                  {issue.plan_status === "awaiting_review" && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#facc15]/15 text-[#facc15] uppercase tracking-wide">
-                      Awaiting Review
-                    </span>
-                  )}
-                  {issue.plan_status === "approved" && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#4ade80]/15 text-[#4ade80] uppercase tracking-wide">
-                      Approved
-                    </span>
-                  )}
-                  {issue.plan_status === "needs_revision" && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[#fb923c]/15 text-[#fb923c] uppercase tracking-wide">
-                      Needs Revision
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Plan content rendered as markdown */}
-              <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-5 mb-4 max-h-[600px] overflow-y-auto">
-                <div
-                  className="prose prose-invert prose-sm max-w-none
-                  prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
-                  prose-h2:text-[15px] prose-h3:text-[13px]
-                  prose-p:text-[#a0a0a0] prose-p:text-[13px] prose-p:leading-relaxed prose-p:my-2
-                  prose-strong:text-[#d0d0d0]
-                  prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
-                  prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg
-                  prose-ul:text-[#a0a0a0] prose-ul:my-2 prose-li:my-0.5 prose-li:text-[13px]
-                  prose-ol:text-[#a0a0a0] prose-ol:my-2
-                  prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
-                "
-                >
-                  <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
-                </div>
-              </div>
-
-              {/* Previous feedback if needs revision */}
-              {issue.plan_status === "needs_revision" && issue.plan_feedback && (
-                <div className="mb-4 p-3 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded-lg">
-                  <div className="text-[11px] font-medium text-[#fb923c] mb-1">
-                    Revision Feedback
-                  </div>
-                  <p className="text-[13px] text-[#fb923c]/80 leading-relaxed">
-                    {issue.plan_feedback}
-                  </p>
-                </div>
-              )}
-
-              {/* Approval / rejection controls */}
-              {issue.plan_status === "awaiting_review" && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handlePlanApprove}
-                    disabled={planActionLoading}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[13px] font-medium rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {planActionLoading ? (
-                      <div className="w-3.5 h-3.5 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
-                    ) : (
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
-                        <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                    Approve Plan
-                  </button>
-                  <label className="flex items-center gap-1.5 px-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoSpawnOnApprove}
-                      onChange={(e) => setAutoSpawnOnApprove(e.target.checked)}
-                      className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0"
+            /* Empty state with CTA */
+            <div className="flex-1 flex flex-col items-center justify-center rounded-lg border border-[#1f1f1f] bg-[#0a0a0a]">
+              <div className="text-center">
+                <div className="mb-4 text-[#303030]">
+                  <svg className="w-12 h-12 mx-auto" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="M4 6l2 2-2 2M7 10h4"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
-                    <span className="text-[11px] text-[#666]">Auto-implement</span>
-                  </label>
+                  </svg>
+                </div>
+                <p className="text-[13px] text-[#505050] mb-4">
+                  No terminal output yet
+                </p>
+                {issue.agent_status === "idle" && (
                   <button
-                    onClick={() => setShowRejectForm(!showRejectForm)}
-                    disabled={planActionLoading}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[13px] font-medium rounded-lg transition-colors disabled:opacity-50"
+                    onClick={() => handleSpawn("investigate")}
+                    disabled={spawnLoading}
+                    className="flex items-center gap-2 px-5 py-2 mx-auto bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
                   >
-                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
-                      <path d="M12 4l-8 8M4 4l8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
-                    Request Changes
+                    {spawnLoading ? (
+                      <div className="w-4 h-4 border border-white/40 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <AgentStatusIcon status="investigating" />
+                    )}
+                    {issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)
+                      ? "Reinvestigate"
+                      : "Investigate"}
                   </button>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* Right sidebar */}
+        {sidebarOpen && (
+          <aside className="w-[380px] border-l border-[#1f1f1f] overflow-y-auto shrink-0 hidden md:block">
+            <div className="p-3 space-y-3">
+
+              {/* Overview Card */}
+              {(parsedSource || lokiMeta || issue.labels.length > 0) && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
+                    Overview
+                  </div>
+                  <div className="space-y-2">
+                    {parsedSource && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Source</span>
+                        <span className="text-[12px] text-[#a0a0a0] font-mono">{parsedSource}</span>
+                      </div>
+                    )}
+                    {parsedFeature && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Feature</span>
+                        <span className="text-[12px] text-[#a0a0a0] font-mono">{parsedFeature}</span>
+                      </div>
+                    )}
+                    {lokiMeta?.level && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Level</span>
+                        <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${
+                          lokiMeta.level === "error" ? "text-[#f87171] bg-[#f87171]/10" :
+                          lokiMeta.level === "fatal" ? "text-[#f87171] bg-[#f87171]/10" :
+                          lokiMeta.level === "warn" ? "text-[#facc15] bg-[#facc15]/10" :
+                          "text-[#60a5fa] bg-[#60a5fa]/10"
+                        }`}>
+                          {lokiMeta.level}
+                        </span>
+                      </div>
+                    )}
+                    {lokiMeta?.event_count && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Events</span>
+                        <span className="text-[12px] text-[#a0a0a0] font-mono">{lokiMeta.event_count}</span>
+                      </div>
+                    )}
+                    {issue.priority && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Priority</span>
+                        <span className="text-[12px] text-[#a0a0a0]">{issue.priority}</span>
+                      </div>
+                    )}
+                    {issue.labels.length > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-[#505050]">Labels</span>
+                        <div className="flex gap-1 flex-wrap justify-end">
+                          {issue.labels.map((l) => (
+                            <span
+                              key={l.label.id}
+                              className="text-[10px] px-1.5 py-0.5 rounded-full"
+                              style={{
+                                backgroundColor: `${l.label.color}20`,
+                                color: l.label.color,
+                              }}
+                            >
+                              {l.label.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {lokiLink?.external_url && (
+                      <a
+                        href={lokiLink.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-[11px] text-[#5e6ad2] hover:text-[#7c8aff] transition-colors mt-1"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+                          <path d="M6 3H3v10h10v-3M9 2h5v5M14 2L7 9" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        View in Grafana
+                      </a>
+                    )}
+                    <div className="pt-1 border-t border-[#1f1f1f] mt-1">
+                      <span className="text-[10px] text-[#404040]">
+                        Created {new Date(issue.created_at).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                        {lokiLink ? " by Loki Webhook" : ""}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* Reject feedback form */}
-              {showRejectForm && issue.plan_status === "awaiting_review" && (
-                <div className="mt-3 p-3 bg-[#141414] border border-[#252525] rounded-lg">
-                  <textarea
-                    value={planRejectFeedback}
-                    onChange={(e) => setPlanRejectFeedback(e.target.value)}
-                    placeholder="Describe what changes are needed..."
-                    rows={3}
-                    className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#252525] rounded-md text-[13px] text-[#e0e0e0] placeholder-[#505050] outline-none focus:border-[#404040] resize-none transition-colors mb-2"
+              {/* Title (editable) */}
+              <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
+                  Title
+                </div>
+                {editingTitle ? (
+                  <input
+                    type="text"
+                    value={titleValue}
+                    onChange={(e) => setTitleValue(e.target.value)}
+                    onBlur={handleSaveTitle}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveTitle();
+                      if (e.key === "Escape") {
+                        setTitleValue(issue.title);
+                        setEditingTitle(false);
+                      }
+                    }}
+                    className="w-full text-[13px] font-medium bg-transparent text-[#f0f0f0] outline-none"
                     autoFocus
                   />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handlePlanReject}
-                      disabled={planActionLoading || !planRejectFeedback.trim()}
-                      className="px-3 py-1.5 bg-[#fb923c]/10 hover:bg-[#fb923c]/20 border border-[#fb923c]/30 text-[#fb923c] text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
-                    >
-                      Submit Feedback
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowRejectForm(false);
-                        setPlanRejectFeedback("");
-                      }}
-                      className="px-3 py-1.5 text-[12px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                ) : (
+                  <p
+                    className="text-[13px] font-medium text-[#e0e0e0] cursor-text hover:text-white transition-colors"
+                    onClick={() => setEditingTitle(true)}
+                  >
+                    {issue.title}
+                  </p>
+                )}
+              </div>
+
+              {/* Description (editable, collapsible) */}
+              <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
+                  Description
                 </div>
-              )}
+                {editingDescription ? (
+                  <div>
+                    <textarea
+                      value={descriptionValue}
+                      onChange={(e) => setDescriptionValue(e.target.value)}
+                      placeholder="Add a description..."
+                      rows={8}
+                      className="w-full bg-transparent text-[12px] text-[#c0c0c0] outline-none resize-none leading-relaxed"
+                      autoFocus
+                    />
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={handleSaveDescription}
+                        className="px-2.5 py-1 text-[11px] font-medium text-white bg-[#5e6ad2] hover:bg-[#6b74db] rounded transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDescriptionValue(issue.description || "");
+                          setEditingDescription(false);
+                        }}
+                        className="px-2.5 py-1 text-[11px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="cursor-text min-h-[32px]"
+                    onClick={() => setEditingDescription(true)}
+                  >
+                    {issue.description ? (
+                      <div className="prose prose-invert prose-sm max-w-none max-h-[200px] overflow-y-auto
+                        prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+                        prose-h1:text-[14px] prose-h2:text-[13px] prose-h3:text-[12px]
+                        prose-p:text-[#a0a0a0] prose-p:text-[12px] prose-p:leading-relaxed prose-p:my-1
+                        prose-strong:text-[#d0d0d0]
+                        prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                        prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg
+                        prose-ul:text-[#a0a0a0] prose-ul:my-1 prose-li:my-0
+                        prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+                      ">
+                        <ReactMarkdown>{issue.description}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <span className="text-[12px] text-[#505050] hover:text-[#707070] transition-colors">
+                        Add a description...
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
 
-              {/* Re-investigate button for needs_revision */}
-              {issue.plan_status === "needs_revision" && (
-                <button
-                  onClick={() => handleSpawn("investigate")}
-                  disabled={spawnLoading}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
-                >
-                  {spawnLoading ? (
-                    <div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
-                      <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                      <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+              {/* Blocked Indicator */}
+              {issue.agent_status === "blocked" && issue.blocked_reason && (
+                <div className="p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <svg className="w-3.5 h-3.5 text-red-400" viewBox="0 0 16 16" fill="none">
+                      <path d="M8 1.5l6.5 11.25H1.5L8 1.5z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+                      <path d="M8 6v3" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                      <circle cx="8" cy="11" r="0.75" fill="currentColor" />
                     </svg>
-                  )}
-                  Re-investigate with Feedback
-                </button>
-              )}
-
-              {/* Spawn implementation for approved plans */}
-              {issue.plan_status === "approved" &&
-                issue.agent_status !== "implementing" && (
+                    <h3 className="text-[12px] font-semibold text-red-400">Blocked</h3>
+                  </div>
+                  <p className="text-[11px] text-red-300/80 leading-relaxed mb-2">
+                    {issue.blocked_reason}
+                  </p>
                   <button
                     onClick={() => handleSpawn("implement")}
                     disabled={spawnLoading}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#22d3d3] to-[#5e6ad2] hover:from-[#2dd4bf] hover:to-[#6b74db] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#22d3d3]/20 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
                   >
                     {spawnLoading ? (
-                      <div className="w-3.5 h-3.5 border border-white/40 border-t-white rounded-full animate-spin" />
+                      <div className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
                     ) : (
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
-                        <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+                        <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                        <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     )}
-                    Start Implementation
+                    Unblock & Re-run
                   </button>
-                )}
-            </div>
-          )}
-
-        {/* Agent Output */}
-        {issue.agent_output && (
-          <div className="mb-8 p-4 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
-            <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-3">
-              Agent Output
-            </div>
-
-            {issue.agent_output.phase && (
-              <div className="text-[12px] text-[#a78bfa] mb-2">
-                Phase: {issue.agent_output.phase}
-              </div>
-            )}
-
-            {issue.agent_output.summary && (
-              <div className="text-[13px] text-[#a0a0a0] leading-relaxed mb-3">
-                {issue.agent_output.summary}
-              </div>
-            )}
-
-            {issue.agent_output.findings && issue.agent_output.findings.length > 0 && (
-              <div className="mb-3">
-                <div className="text-[11px] text-[#505050] mb-1">Findings</div>
-                <ul className="space-y-1">
-                  {issue.agent_output.findings.map((finding, i) => (
-                    <li key={i} className="text-[12px] text-[#808080] flex items-start gap-1.5">
-                      <span className="text-[#404040] mt-1">•</span>
-                      {finding}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {issue.agent_output.recommendation && (
-              <div className="p-2 bg-[#1a1a1a] border border-[#252525] rounded text-[12px] text-[#a0a0a0]">
-                <span className="text-[#606060]">Recommendation:</span>{" "}
-                {issue.agent_output.recommendation}
-              </div>
-            )}
-
-            {issue.agent_output.pr_url && (
-              <a
-                href={issue.agent_output.pr_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-3 flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-[#303030] hover:bg-[#252525] rounded-lg text-[13px] text-[#5e6ad2] hover:text-[#7b83dc] transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 01-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 010 8c0-4.42 3.58-8 8-8z" />
-                </svg>
-                View Pull Request
-              </a>
-            )}
-
-            {issue.agent_output.error && (
-              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-[12px] text-red-400">
-                <span className="font-medium">Error:</span> {issue.agent_output.error}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Linked Pull Requests */}
-        {(linkedPRs.length > 0 || loadingPRs) && (
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <svg className="w-4 h-4 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
-                <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" />
-              </svg>
-              <h3 className="text-[13px] font-medium text-[#e0e0e0]">
-                Pull Requests
-              </h3>
-              {linkedPRs.length > 0 && (
-                <span className="text-[11px] text-[#505050]">({linkedPRs.length})</span>
+                </div>
               )}
-            </div>
-            {loadingPRs ? (
-              <div className="flex items-center gap-2 text-[11px] text-[#505050]">
-                <div className="w-3 h-3 border border-[#404040] border-t-[#5e6ad2] rounded-full animate-spin" />
-                Loading PRs...
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {linkedPRs.map((pr) => (
-                  <PRCard key={pr.id} pr={pr} onUnlink={handleUnlinkPR} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
-        {/* Agent Runs (Provenance) */}
-        {agentRuns.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
-                  <path fillRule="evenodd" d="M1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 00.37.65l2.5 1.5a.75.75 0 10.76-1.3L8.5 7.94V4.75z" />
-                </svg>
-                <h3 className="text-[13px] font-medium text-[#e0e0e0]">
-                  Agent Runs
-                </h3>
-                <span className="text-[11px] text-[#505050]">({agentRuns.length})</span>
-              </div>
-              <button
-                onClick={() => setShowRunsSection(!showRunsSection)}
-                className="p-1 text-[#505050] hover:text-[#808080] transition-colors"
-              >
-                <svg
-                  className={`w-4 h-4 transition-transform ${showRunsSection ? "" : "-rotate-90"}`}
-                  viewBox="0 0 16 16"
-                  fill="none"
-                >
-                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            </div>
+              {/* Plan Review Section */}
+              {issue.plan_content &&
+                (issue.plan_status === "awaiting_review" ||
+                  issue.plan_status === "approved" ||
+                  issue.plan_status === "needs_revision") && (
+                  <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <svg className="w-3.5 h-3.5 text-[#5e6ad2]" viewBox="0 0 16 16" fill="none">
+                        <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.25" />
+                        <path d="M5 6h6M5 8h6M5 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                      </svg>
+                      <h3 className="text-[12px] font-semibold text-[#e0e0e0]">
+                        Plan
+                      </h3>
+                      {issue.plan_status === "awaiting_review" && (
+                        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#facc15]/15 text-[#facc15] uppercase tracking-wide">
+                          Review
+                        </span>
+                      )}
+                      {issue.plan_status === "approved" && (
+                        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#4ade80]/15 text-[#4ade80] uppercase tracking-wide">
+                          Approved
+                        </span>
+                      )}
+                      {issue.plan_status === "needs_revision" && (
+                        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#fb923c]/15 text-[#fb923c] uppercase tracking-wide">
+                          Revise
+                        </span>
+                      )}
+                    </div>
 
-            {showRunsSection && (
-              <div className="space-y-2">
-                {agentRuns.map((run) => (
-                  <div key={run.id}>
-                    <RunCard
-                      run={run}
-                      isSelected={selectedRunId === run.id}
-                      onClick={() =>
-                        setSelectedRunId(selectedRunId === run.id ? null : run.id)
-                      }
-                    />
-                    {selectedRunId === run.id && issue && (
-                      <RunDetailPanel
-                        issueId={issue.id}
-                        runId={run.id}
-                        onClose={() => setSelectedRunId(null)}
-                      />
+                    {/* Plan content */}
+                    <div className="bg-[#080808] border border-[#1a1a1a] rounded p-3 mb-2 max-h-[300px] overflow-y-auto">
+                      <div className="prose prose-invert prose-sm max-w-none
+                        prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+                        prose-h2:text-[13px] prose-h3:text-[12px]
+                        prose-p:text-[#a0a0a0] prose-p:text-[12px] prose-p:leading-relaxed prose-p:my-1
+                        prose-strong:text-[#d0d0d0]
+                        prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                        prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg
+                        prose-ul:text-[#a0a0a0] prose-ul:my-1 prose-li:my-0 prose-li:text-[12px]
+                        prose-ol:text-[#a0a0a0] prose-ol:my-1
+                        prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+                      ">
+                        <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
+                      </div>
+                    </div>
+
+                    {/* Previous feedback if needs revision */}
+                    {issue.plan_status === "needs_revision" && issue.plan_feedback && (
+                      <div className="mb-2 p-2 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded">
+                        <div className="text-[10px] font-medium text-[#fb923c] mb-0.5">Feedback</div>
+                        <p className="text-[11px] text-[#fb923c]/80 leading-relaxed">
+                          {issue.plan_feedback}
+                        </p>
+                      </div>
                     )}
+
+                    {/* Approval / rejection controls */}
+                    {issue.plan_status === "awaiting_review" && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handlePlanApprove}
+                            disabled={planActionLoading}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
+                          >
+                            {planActionLoading ? (
+                              <div className="w-3 h-3 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
+                            ) : (
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+                                <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                            Approve
+                          </button>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={autoSpawnOnApprove}
+                              onChange={(e) => setAutoSpawnOnApprove(e.target.checked)}
+                              className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0 w-3 h-3"
+                            />
+                            <span className="text-[10px] text-[#666]">Auto-implement</span>
+                          </label>
+                          <button
+                            onClick={() => setShowRejectForm(!showRejectForm)}
+                            disabled={planActionLoading}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
+                          >
+                            Changes
+                          </button>
+                        </div>
+
+                        {/* Reject feedback form */}
+                        {showRejectForm && (
+                          <div className="p-2 bg-[#141414] border border-[#252525] rounded">
+                            <textarea
+                              value={planRejectFeedback}
+                              onChange={(e) => setPlanRejectFeedback(e.target.value)}
+                              placeholder="Describe what changes are needed..."
+                              rows={3}
+                              className="w-full px-2 py-1.5 bg-[#0a0a0a] border border-[#252525] rounded text-[12px] text-[#e0e0e0] placeholder-[#505050] outline-none focus:border-[#404040] resize-none transition-colors mb-1.5"
+                              autoFocus
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={handlePlanReject}
+                                disabled={planActionLoading || !planRejectFeedback.trim()}
+                                className="px-2.5 py-1 bg-[#fb923c]/10 hover:bg-[#fb923c]/20 border border-[#fb923c]/30 text-[#fb923c] text-[11px] font-medium rounded transition-colors disabled:opacity-50"
+                              >
+                                Submit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowRejectForm(false);
+                                  setPlanRejectFeedback("");
+                                }}
+                                className="px-2.5 py-1 text-[11px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Re-investigate button for needs_revision */}
+                    {issue.plan_status === "needs_revision" && (
+                      <button
+                        onClick={() => handleSpawn("investigate")}
+                        disabled={spawnLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[11px] font-medium rounded-md transition-all disabled:opacity-50"
+                      >
+                        {spawnLoading ? (
+                          <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+                            <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                            <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                        Re-investigate
+                      </button>
+                    )}
+
+                    {/* Spawn implementation for approved plans */}
+                    {issue.plan_status === "approved" &&
+                      issue.agent_status !== "implementing" && (
+                        <button
+                          onClick={() => handleSpawn("implement")}
+                          disabled={spawnLoading}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#22d3d3] to-[#5e6ad2] hover:from-[#2dd4bf] hover:to-[#6b74db] text-white text-[11px] font-medium rounded-md transition-all disabled:opacity-50"
+                        >
+                          {spawnLoading ? (
+                            <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+                              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            </svg>
+                          )}
+                          Implement
+                        </button>
+                      )}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                )}
 
-        {/* Terminal Output */}
-        <TerminalViewer
-          issueIdentifier={issue.identifier}
-          isAgentActive={isAgentActive}
-          sseLines={terminalLines}
-        />
+              {/* Agent Output */}
+              {issue.agent_output && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
+                    Agent Output
+                  </div>
 
-        {/* Agent Activity Feed */}
-        {(agentActivities.length > 0 || isAgentActive) && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <svg className="w-4 h-4 text-[#22d3d3]" viewBox="0 0 16 16" fill="none">
-                    <rect x="3" y="4" width="10" height="8" rx="2" stroke="currentColor" strokeWidth="1.25" />
-                    <circle cx="6" cy="8" r="1" fill="currentColor" />
-                    <circle cx="10" cy="8" r="1" fill="currentColor" />
-                    <path d="M8 4V2M8 2L6 1M8 2L10 1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                  </svg>
-                  {isAgentActive && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22d3d3] opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#22d3d3]" />
-                    </span>
+                  {issue.agent_output.phase && (
+                    <div className="text-[11px] text-[#a78bfa] mb-1.5">
+                      Phase: {issue.agent_output.phase}
+                    </div>
+                  )}
+
+                  {issue.agent_output.summary && (
+                    <div className="text-[12px] text-[#a0a0a0] leading-relaxed mb-2">
+                      {issue.agent_output.summary}
+                    </div>
+                  )}
+
+                  {issue.agent_output.findings && issue.agent_output.findings.length > 0 && (
+                    <div className="mb-2">
+                      <div className="text-[10px] text-[#505050] mb-0.5">Findings</div>
+                      <ul className="space-y-0.5">
+                        {issue.agent_output.findings.map((finding, i) => (
+                          <li key={i} className="text-[11px] text-[#808080] flex items-start gap-1">
+                            <span className="text-[#404040] mt-0.5">•</span>
+                            {finding}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {issue.agent_output.recommendation && (
+                    <div className="p-2 bg-[#1a1a1a] border border-[#252525] rounded text-[11px] text-[#a0a0a0]">
+                      <span className="text-[#606060]">Rec:</span>{" "}
+                      {issue.agent_output.recommendation}
+                    </div>
+                  )}
+
+                  {issue.agent_output.pr_url && (
+                    <a
+                      href={issue.agent_output.pr_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 flex items-center gap-1.5 text-[11px] text-[#5e6ad2] hover:text-[#7b83dc] transition-colors"
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 01-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 010 8c0-4.42 3.58-8 8-8z" />
+                      </svg>
+                      View Pull Request
+                    </a>
+                  )}
+
+                  {issue.agent_output.error && (
+                    <div className="mt-1.5 p-2 bg-red-500/10 border border-red-500/20 rounded text-[11px] text-red-400">
+                      {issue.agent_output.error}
+                    </div>
                   )}
                 </div>
-                <h3 className="text-[13px] font-medium text-[#e0e0e0]">
-                  Agent Activity
-                </h3>
-                {isAgentActive && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#22d3d320] text-[#22d3d3] uppercase font-medium tracking-wide animate-pulse">
-                    Live
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => setShowActivityFeed(!showActivityFeed)}
-                className="p-1 text-[#505050] hover:text-[#808080] transition-colors"
-              >
-                <svg
-                  className={`w-4 h-4 transition-transform ${showActivityFeed ? "" : "-rotate-90"}`}
-                  viewBox="0 0 16 16"
-                  fill="none"
-                >
-                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            </div>
+              )}
 
-            {showActivityFeed && (
-              <div
-                ref={activityFeedRef}
-                className="relative max-h-[400px] overflow-y-auto rounded-lg bg-[#0a0a0a] border border-[#1f1f1f] p-3"
-              >
-                {agentActivities.length > 0 && (
-                  <div className="absolute left-[26px] top-0 bottom-0 w-px bg-gradient-to-b from-[#22d3d3] via-[#a78bfa] to-[#1f1f1f]" />
-                )}
-
-                <div className="relative space-y-1">
-                  {agentActivities.map((activity, index) => (
-                    <AgentActivityItem
-                      key={activity.id}
-                      activity={activity}
-                      isLatest={index === agentActivities.length - 1}
-                      isAgentActive={isAgentActive}
-                    />
-                  ))}
-
-                  {isAgentActive && <AgentThinkingIndicator />}
+              {/* Confidence bar + outcome */}
+              {(issue.agent_confidence !== null || issue.run_outcome) && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  {issue.run_outcome && (() => {
+                    const oc = outcomeConfig[issue.run_outcome] || outcomeConfig.failed;
+                    return (
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span style={{ color: oc.color }} className="flex-shrink-0">
+                          <OutcomeIcon outcome={issue.run_outcome} className="w-3.5 h-3.5" />
+                        </span>
+                        <span className="text-[12px] font-medium" style={{ color: oc.color }}>
+                          {oc.label}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  {issue.agent_confidence !== null && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#505050]">Confidence</span>
+                      <div className="flex-1 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${Number(issue.agent_confidence)}%`,
+                            backgroundColor:
+                              Number(issue.agent_confidence) >= 80
+                                ? "#4ade80"
+                                : Number(issue.agent_confidence) >= 50
+                                  ? "#facc15"
+                                  : "#f87171",
+                          }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-[#808080] tabular-nums">
+                        {Number(issue.agent_confidence)}%
+                      </span>
+                    </div>
+                  )}
+                  {issue.outcome_summary && (
+                    <p className="text-[11px] text-[#707070] mt-1.5 leading-relaxed">
+                      {issue.outcome_summary}
+                    </p>
+                  )}
+                  {issue.cost_usd != null && Number(issue.cost_usd) > 0 && (
+                    <div className="flex items-center gap-2 mt-1.5 text-[10px] text-[#505050]">
+                      <span className="font-mono text-[#22d3d3]">
+                        ${Number(issue.cost_usd) < 0.01 ? "<0.01" : Number(issue.cost_usd).toFixed(2)}
+                      </span>
+                      {issue.num_turns != null && issue.num_turns > 0 && (
+                        <span>{issue.num_turns} turns</span>
+                      )}
+                      {issue.model && (
+                        <span className="font-mono text-[#404040]">
+                          {issue.model.replace("claude-", "").replace(/-/g, " ")}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
+              )}
 
-                {agentActivities.length === 0 && issue.agent_status === "idle" && (
-                  <div className="text-center py-8 text-[#505050] text-[12px]">
-                    No agent activity yet. Click &quot;Investigate&quot; to start.
+              {/* Linked Pull Requests */}
+              {(linkedPRs.length > 0 || loadingPRs) && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-3.5 h-3.5 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
+                      <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" />
+                    </svg>
+                    <h3 className="text-[12px] font-medium text-[#e0e0e0]">
+                      Pull Requests
+                    </h3>
+                    {linkedPRs.length > 0 && (
+                      <span className="text-[10px] text-[#505050]">({linkedPRs.length})</span>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                  {loadingPRs ? (
+                    <div className="flex items-center gap-2 text-[10px] text-[#505050]">
+                      <div className="w-3 h-3 border border-[#404040] border-t-[#5e6ad2] rounded-full animate-spin" />
+                      Loading...
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {linkedPRs.map((pr) => (
+                        <PRCard key={pr.id} pr={pr} onUnlink={handleUnlinkPR} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Agent Runs */}
+              {agentRuns.length > 0 && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
+                        <path fillRule="evenodd" d="M1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 00.37.65l2.5 1.5a.75.75 0 10.76-1.3L8.5 7.94V4.75z" />
+                      </svg>
+                      <h3 className="text-[12px] font-medium text-[#e0e0e0]">
+                        Agent Runs
+                      </h3>
+                      <span className="text-[10px] text-[#505050]">({agentRuns.length})</span>
+                    </div>
+                    <button
+                      onClick={() => setShowRunsSection(!showRunsSection)}
+                      className="p-0.5 text-[#505050] hover:text-[#808080] transition-colors"
+                    >
+                      <svg
+                        className={`w-3.5 h-3.5 transition-transform ${showRunsSection ? "" : "-rotate-90"}`}
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {showRunsSection && (
+                    <div className="space-y-1.5">
+                      {agentRuns.map((run) => (
+                        <div key={run.id}>
+                          <RunCard
+                            run={run}
+                            isSelected={selectedRunId === run.id}
+                            onClick={() =>
+                              setSelectedRunId(selectedRunId === run.id ? null : run.id)
+                            }
+                          />
+                          {selectedRunId === run.id && issue && (
+                            <RunDetailPanel
+                              issueId={issue.id}
+                              runId={run.id}
+                              onClose={() => setSelectedRunId(null)}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Agent Activity Feed */}
+              {(agentActivities.length > 0 || isAgentActive) && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <svg className="w-3.5 h-3.5 text-[#22d3d3]" viewBox="0 0 16 16" fill="none">
+                          <rect x="3" y="4" width="10" height="8" rx="2" stroke="currentColor" strokeWidth="1.25" />
+                          <circle cx="6" cy="8" r="1" fill="currentColor" />
+                          <circle cx="10" cy="8" r="1" fill="currentColor" />
+                          <path d="M8 4V2M8 2L6 1M8 2L10 1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                        </svg>
+                        {isAgentActive && (
+                          <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22d3d3] opacity-75" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#22d3d3]" />
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-[12px] font-medium text-[#e0e0e0]">
+                        Activity
+                      </h3>
+                      {isAgentActive && (
+                        <span className="text-[9px] px-1 py-0.5 rounded-full bg-[#22d3d320] text-[#22d3d3] uppercase font-medium tracking-wide animate-pulse">
+                          Live
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowActivityFeed(!showActivityFeed)}
+                      className="p-0.5 text-[#505050] hover:text-[#808080] transition-colors"
+                    >
+                      <svg
+                        className={`w-3.5 h-3.5 transition-transform ${showActivityFeed ? "" : "-rotate-90"}`}
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {showActivityFeed && (
+                    <div
+                      ref={activityFeedRef}
+                      className="relative max-h-[300px] overflow-y-auto"
+                    >
+                      {agentActivities.length > 0 && (
+                        <div className="absolute left-[14px] top-0 bottom-0 w-px bg-gradient-to-b from-[#22d3d3] via-[#a78bfa] to-[#1f1f1f]" />
+                      )}
+
+                      <div className="relative space-y-1">
+                        {agentActivities.map((activity, index) => (
+                          <AgentActivityItem
+                            key={activity.id}
+                            activity={activity}
+                            isLatest={index === agentActivities.length - 1}
+                            isAgentActive={isAgentActive}
+                          />
+                        ))}
+
+                        {isAgentActive && <AgentThinkingIndicator />}
+                      </div>
+
+                      {agentActivities.length === 0 && issue.agent_status === "idle" && (
+                        <div className="text-center py-4 text-[#505050] text-[11px]">
+                          No activity yet.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Issue History Timeline */}
+              <IssueTimeline issueId={issue.id} />
+            </div>
+          </aside>
         )}
       </div>
 

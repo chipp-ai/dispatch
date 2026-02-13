@@ -6,6 +6,7 @@ import {
   deleteIssue,
   getIssueForBoard,
 } from "@/lib/services/issueService";
+import { getExternalLinksForIssue } from "@/lib/services/externalIssueService";
 import { broadcastBoardEvent } from "@/lib/services/boardBroadcast";
 import {
   canMoveToCloseStatus,
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Issue not found" }, { status: 404 });
     }
 
-    return NextResponse.json(issue);
+    const externalLinks = await getExternalLinksForIssue(issue.id);
+    return NextResponse.json({ ...issue, external_links: externalLinks });
   } catch (error) {
     console.error("Error getting issue:", error);
     return NextResponse.json({ error: "Failed to get issue" }, { status: 500 });
