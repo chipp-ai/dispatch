@@ -501,6 +501,40 @@ jobs:
               -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
           fi
 
+      - name: Upload full agent log
+        if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          LOG_FILE=".scratch/claude-output.log"
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "No output log found, skipping"
+            exit 0
+          fi
+
+          FULL_SIZE=$(wc -c < "$LOG_FILE")
+
+          # Truncate to ~500KB to stay within reasonable API limits
+          head -c 512000 "$LOG_FILE" > .scratch/full-log-truncated.txt
+          if [ "$FULL_SIZE" -gt 512000 ]; then
+            echo "" >> .scratch/full-log-truncated.txt
+            echo "... [truncated - full log was $(( FULL_SIZE / 1024 ))KB]" >> .scratch/full-log-truncated.txt
+          fi
+
+          # Use --rawfile to avoid bash quoting issues with arbitrary log content
+          jq -n \
+            --arg type "agent_full_log" \
+            --rawfile content .scratch/full-log-truncated.txt \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "prd_investigate"}}' \
+            > .scratch/full-log-payload.json
+
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @.scratch/full-log-payload.json || echo "Warning: Failed to upload full log (non-fatal)"
+
+          echo "Full log uploaded ($(( FULL_SIZE / 1024 ))KB)"
+
       - name: Report failure
         if: failure() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
