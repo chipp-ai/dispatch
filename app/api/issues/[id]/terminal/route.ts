@@ -12,8 +12,8 @@ interface RouteParams {
  * POST /api/issues/[id]/terminal
  *
  * Receives terminal output chunks from CI workflows and broadcasts them
- * to all SSE subscribers on the issue page. No DB persistence - this is
- * ephemeral live streaming. The full log is uploaded separately at the end.
+ * to all SSE subscribers on the issue page. Also persists chunks to the
+ * agent run's transcript column for historical review.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const isAuthed = await requireAuth();
@@ -62,6 +62,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       data: content,
     });
 
+    // Persist chunk to the latest agent run's transcript (fire-and-forget).
+    // This ensures the terminal output survives page refreshes and workflow failures.
+    // The final workflow step will overwrite with the complete filtered log,
+    // but incremental persistence covers the mid-run crash case.
+    appendTranscriptChunk(issue.id, content).catch((err) => {
+      console.error("Failed to persist terminal chunk:", err);
+    });
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Error broadcasting terminal output:", error);
@@ -70,4 +78,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Append a terminal output chunk to the latest running agent run's transcript.
+ * Uses COALESCE + concat to append without read-modify-write races.
+ */
+async function appendTranscriptChunk(
+  issueId: string,
+  content: string
+): Promise<void> {
+  await db.query(
+    `UPDATE dispatch_agent_runs
+     SET transcript = COALESCE(transcript, '') || $1
+     WHERE id = (
+       SELECT id FROM dispatch_agent_runs
+       WHERE issue_id = $2 AND status = 'running'
+       ORDER BY created_at DESC
+       LIMIT 1
+     )`,
+    [content + "\n", issueId]
+  );
 }

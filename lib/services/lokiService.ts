@@ -24,6 +24,10 @@ export interface LokiErrorContext {
   lastSeen: string;
   generatorURL: string | null;
   values: Record<string, string>;
+  /** The actual Error.message from the exception (e.g. "Cannot read property 'x' of undefined") */
+  errorMessage: string | null;
+  /** The stack trace from the exception */
+  stackTrace: string | null;
 }
 
 export interface GrafanaAlert {
@@ -190,6 +194,19 @@ export function extractContextFromGrafanaAlert(
   // Parse event count from values or annotations
   const eventCount = parseEventCount(alert);
 
+  // Extract error message and stack trace from annotations
+  // These come from Loki's | json flattening of the nested error object:
+  //   {"error": {"name": "...", "message": "...", "stack": "..."}}
+  //   → error_message, error_stack labels
+  const errorMessage =
+    annotations.error_message ||
+    labels.error_message ||
+    null;
+  const stackTrace =
+    annotations.stack_trace ||
+    labels.error_stack ||
+    null;
+
   return {
     source,
     feature,
@@ -204,6 +221,8 @@ export function extractContextFromGrafanaAlert(
     lastSeen: alert.startsAt, // Will be updated on dedup
     generatorURL: alert.generatorURL || null,
     values: alert.values || {},
+    errorMessage,
+    stackTrace,
   };
 }
 
@@ -273,6 +292,9 @@ export function buildIssueDescription(context: LokiErrorContext): string {
   lines.push(`**Feature:** \`${context.feature}\``);
   lines.push(`**Message:** ${context.msg}`);
   lines.push(`**Level:** ${context.level}`);
+  if (context.errorMessage) {
+    lines.push(`**Error:** ${context.errorMessage}`);
+  }
   lines.push("");
 
   // Normalized message (for dedup transparency)
@@ -280,6 +302,15 @@ export function buildIssueDescription(context: LokiErrorContext): string {
     lines.push("## Fingerprint");
     lines.push(`**Normalized:** ${context.normalizedMsg}`);
     lines.push(`**Hash:** \`${context.fingerprint.slice(0, 12)}...\``);
+    lines.push("");
+  }
+
+  // Stack trace
+  if (context.stackTrace) {
+    lines.push("## Stack Trace");
+    lines.push("```");
+    lines.push(context.stackTrace);
+    lines.push("```");
     lines.push("");
   }
 

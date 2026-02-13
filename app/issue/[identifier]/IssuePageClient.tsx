@@ -629,13 +629,28 @@ export default function IssuePageClient() {
           activityFeedRef.current.scrollTop =
             activityFeedRef.current.scrollHeight;
         }
-        // Load persisted full log into terminal when no live lines exist
+        // Load persisted log into terminal when no live lines exist.
+        // Try activity log first (agent_full_log), then fall back to
+        // the latest agent run's incrementally-persisted transcript.
         if (terminalLines.length === 0) {
           const fullLog = [...data]
             .reverse()
             .find((a: AgentActivity) => a.type === "agent_full_log");
           if (fullLog?.content) {
             setTerminalLines(fullLog.content.split("\n"));
+          } else {
+            // No full log yet -- check the latest agent run for streamed transcript
+            try {
+              const runRes = await fetch(`/api/issues/${issue.id}/runs/current`);
+              if (runRes.ok) {
+                const runData = await runRes.json();
+                if (runData.transcript) {
+                  setTerminalLines(runData.transcript.split("\n"));
+                }
+              }
+            } catch {
+              // Non-fatal - just means no persisted transcript yet
+            }
           }
         }
       }
