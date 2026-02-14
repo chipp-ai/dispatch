@@ -1746,8 +1746,11 @@ export default function IssuePageClient() {
                       )}
                     </div>
 
-                    {/* Plan content */}
-                    <div className={`bg-[#080808] border border-[#1a1a1a] rounded p-3 mb-2 overflow-y-auto ${isPlanExpanded ? "max-h-[80vh]" : "max-h-[300px]"}`}>
+                    {/* Plan content preview */}
+                    <div
+                      className="bg-[#080808] border border-[#1a1a1a] rounded p-3 mb-2 max-h-[200px] overflow-hidden relative cursor-pointer group"
+                      onClick={() => setIsPlanExpanded(true)}
+                    >
                       <div className="prose prose-invert prose-sm max-w-none
                         prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
                         prose-h1:text-[15px] prose-h2:text-[13px] prose-h3:text-[12px] prose-h4:text-[11px]
@@ -1761,111 +1764,77 @@ export default function IssuePageClient() {
                       ">
                         <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
                       </div>
-                    </div>
-                    <button
-                      onClick={() => setIsPlanExpanded(!isPlanExpanded)}
-                      className="text-[11px] text-[#505050] hover:text-[#808080] mb-2 transition-colors"
-                    >
-                      {isPlanExpanded ? "Collapse" : "Expand full plan"}
-                    </button>
-
-                    {/* Previous feedback if needs revision */}
-                    {issue.plan_status === "needs_revision" && issue.plan_feedback && (
-                      <div className="mb-2 p-2 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded">
-                        <div className="text-[10px] font-medium text-[#fb923c] mb-0.5">Feedback</div>
-                        <p className="text-[11px] text-[#fb923c]/80 leading-relaxed">
-                          {issue.plan_feedback}
-                        </p>
+                      {/* Fade gradient overlay */}
+                      <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#080808] to-transparent pointer-events-none" />
+                      <div className="absolute bottom-2 left-0 right-0 text-center pointer-events-none">
+                        <span className="text-[11px] text-[#5e6ad2] group-hover:text-[#7c8af2] transition-colors">
+                          View full plan
+                        </span>
                       </div>
-                    )}
+                    </div>
 
-                    {/* Approval / rejection controls */}
+                    {/* Compact inline actions */}
                     {issue.plan_status === "awaiting_review" && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={handlePlanApprove}
-                            disabled={planActionLoading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
-                          >
-                            {planActionLoading ? (
-                              <div className="w-3 h-3 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
-                            ) : (
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
-                                <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                            Approve
-                          </button>
-                          <label className="flex items-center gap-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={autoSpawnOnApprove}
-                              onChange={(e) => setAutoSpawnOnApprove(e.target.checked)}
-                              className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0 w-3 h-3"
-                            />
-                            <span className="text-[10px] text-[#666]">Auto-implement</span>
-                          </label>
-                          <button
-                            onClick={() => setShowRejectForm(!showRejectForm)}
-                            disabled={planActionLoading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
-                          >
-                            Changes
-                          </button>
-                        </div>
-
-                        {/* Reject feedback form */}
-                        {showRejectForm && (
-                          <div className="p-2 bg-[#141414] border border-[#252525] rounded">
-                            <textarea
-                              value={planRejectFeedback}
-                              onChange={(e) => setPlanRejectFeedback(e.target.value)}
-                              placeholder="Describe what changes are needed..."
-                              rows={3}
-                              className="w-full px-2 py-1.5 bg-[#0a0a0a] border border-[#252525] rounded text-[12px] text-[#e0e0e0] placeholder-[#505050] outline-none focus:border-[#404040] resize-none transition-colors mb-1.5"
-                              autoFocus
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                onClick={handlePlanReject}
-                                disabled={planActionLoading || !planRejectFeedback.trim()}
-                                className="px-2.5 py-1 bg-[#fb923c]/10 hover:bg-[#fb923c]/20 border border-[#fb923c]/30 text-[#fb923c] text-[11px] font-medium rounded transition-colors disabled:opacity-50"
-                              >
-                                Submit
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setShowRejectForm(false);
-                                  setPlanRejectFeedback("");
-                                }}
-                                className="px-2.5 py-1 text-[11px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handlePlanApprove}
+                          disabled={planActionLoading}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
+                        >
+                          {planActionLoading ? (
+                            <div className="w-3 h-3 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+                              <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                          Approve
+                        </button>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoSpawnOnApprove}
+                            onChange={(e) => setAutoSpawnOnApprove(e.target.checked)}
+                            className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0 w-3 h-3"
+                          />
+                          <span className="text-[10px] text-[#666]">Auto-implement</span>
+                        </label>
+                        <button
+                          onClick={() => setIsPlanExpanded(true)}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[11px] font-medium rounded-md transition-colors ml-auto"
+                        >
+                          Changes
+                        </button>
                       </div>
                     )}
 
                     {/* Re-investigate button for needs_revision */}
                     {issue.plan_status === "needs_revision" && (
-                      <button
-                        onClick={() => handleSpawn("investigate")}
-                        disabled={spawnLoading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[11px] font-medium rounded-md transition-all disabled:opacity-50"
-                      >
-                        {spawnLoading ? (
-                          <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
-                        ) : (
-                          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
-                            <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-                            <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
+                      <>
+                        {issue.plan_feedback && (
+                          <div className="mb-2 p-2 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded">
+                            <div className="text-[10px] font-medium text-[#fb923c] mb-0.5">Feedback</div>
+                            <p className="text-[11px] text-[#fb923c]/80 leading-relaxed">
+                              {issue.plan_feedback}
+                            </p>
+                          </div>
                         )}
-                        Re-investigate
-                      </button>
+                        <button
+                          onClick={() => handleSpawn("investigate")}
+                          disabled={spawnLoading}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[11px] font-medium rounded-md transition-all disabled:opacity-50"
+                        >
+                          {spawnLoading ? (
+                            <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+                              <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                              <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                          Re-investigate
+                        </button>
+                      </>
                     )}
 
                     {/* Spawn implementation for approved plans */}
@@ -2173,6 +2142,165 @@ export default function IssuePageClient() {
           </aside>
         )}
       </div>
+
+      {/* Plan Full-Screen Modal */}
+      {isPlanExpanded && issue.plan_content && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setIsPlanExpanded(false); }}
+        >
+          <div className="relative w-full max-w-3xl mx-4 max-h-[90vh] flex flex-col bg-[#0a0a0a] border border-[#1f1f1f] rounded-xl shadow-2xl">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[#1f1f1f] shrink-0">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-[#5e6ad2]" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.25" />
+                  <path d="M5 6h6M5 8h6M5 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                </svg>
+                <h2 className="text-[14px] font-semibold text-[#e0e0e0]">Plan</h2>
+                {issue.plan_status === "awaiting_review" && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#facc15]/15 text-[#facc15] uppercase tracking-wide">
+                    Review
+                  </span>
+                )}
+                {issue.plan_status === "approved" && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#4ade80]/15 text-[#4ade80] uppercase tracking-wide">
+                    Approved
+                  </span>
+                )}
+                {issue.plan_status === "needs_revision" && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[#fb923c]/15 text-[#fb923c] uppercase tracking-wide">
+                    Revise
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setIsPlanExpanded(false)}
+                className="p-1 text-[#505050] hover:text-[#e0e0e0] transition-colors rounded"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Scrollable plan content */}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {issue.plan_status === "needs_revision" && issue.plan_feedback && (
+                <div className="mb-4 p-3 bg-[#fb923c]/5 border border-[#fb923c]/20 rounded-lg">
+                  <div className="text-[11px] font-medium text-[#fb923c] mb-1">Feedback</div>
+                  <p className="text-[12px] text-[#fb923c]/80 leading-relaxed">
+                    {issue.plan_feedback}
+                  </p>
+                </div>
+              )}
+              <div className="prose prose-invert prose-sm max-w-none
+                prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
+                prose-h1:text-[16px] prose-h2:text-[14px] prose-h3:text-[13px] prose-h4:text-[12px]
+                prose-p:text-[#a0a0a0] prose-p:text-[13px] prose-p:leading-relaxed prose-p:my-1.5
+                prose-strong:text-[#d0d0d0]
+                prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
+                prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg prose-pre:my-2
+                prose-ul:text-[#a0a0a0] prose-ul:my-1.5 prose-li:my-0.5 prose-li:text-[13px]
+                prose-ol:text-[#a0a0a0] prose-ol:my-1.5
+                prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+                prose-table:text-[12px]
+                prose-th:text-[#c0c0c0] prose-th:font-medium prose-th:px-2 prose-th:py-1 prose-th:border-[#252525]
+                prose-td:text-[#a0a0a0] prose-td:px-2 prose-td:py-1 prose-td:border-[#252525]
+              ">
+                <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
+              </div>
+            </div>
+
+            {/* Modal footer with actions */}
+            <div className="px-5 py-3 border-t border-[#1f1f1f] shrink-0">
+              {issue.plan_status === "awaiting_review" && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { handlePlanApprove(); setIsPlanExpanded(false); }}
+                      disabled={planActionLoading}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 border border-[#4ade80]/30 text-[#4ade80] text-[12px] font-medium rounded-md transition-colors disabled:opacity-50"
+                    >
+                      {planActionLoading ? (
+                        <div className="w-3 h-3 border border-[#4ade80]/40 border-t-[#4ade80] rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+                          <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      Approve
+                    </button>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoSpawnOnApprove}
+                        onChange={(e) => setAutoSpawnOnApprove(e.target.checked)}
+                        className="rounded border-[#333] bg-[#151515] text-[#5e6ad2] focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                      />
+                      <span className="text-[11px] text-[#666]">Auto-implement</span>
+                    </label>
+                    <button
+                      onClick={() => setShowRejectForm(!showRejectForm)}
+                      disabled={planActionLoading}
+                      className="flex items-center gap-1 px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] border border-[#303030] text-[#808080] hover:text-[#e0e0e0] text-[12px] font-medium rounded-md transition-colors disabled:opacity-50 ml-auto"
+                    >
+                      Request Changes
+                    </button>
+                  </div>
+                  {showRejectForm && (
+                    <div className="p-3 bg-[#141414] border border-[#252525] rounded-lg">
+                      <textarea
+                        value={planRejectFeedback}
+                        onChange={(e) => setPlanRejectFeedback(e.target.value)}
+                        placeholder="Describe what changes are needed..."
+                        rows={3}
+                        className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#252525] rounded text-[13px] text-[#e0e0e0] placeholder-[#505050] outline-none focus:border-[#404040] resize-none transition-colors mb-2"
+                        autoFocus
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { handlePlanReject(); setIsPlanExpanded(false); }}
+                          disabled={planActionLoading || !planRejectFeedback.trim()}
+                          className="px-3 py-1.5 bg-[#fb923c]/10 hover:bg-[#fb923c]/20 border border-[#fb923c]/30 text-[#fb923c] text-[12px] font-medium rounded transition-colors disabled:opacity-50"
+                        >
+                          Submit Feedback
+                        </button>
+                        <button
+                          onClick={() => { setShowRejectForm(false); setPlanRejectFeedback(""); }}
+                          className="px-3 py-1.5 text-[12px] text-[#808080] hover:text-[#c0c0c0] transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {issue.plan_status === "needs_revision" && (
+                <button
+                  onClick={() => { handleSpawn("investigate"); setIsPlanExpanded(false); }}
+                  disabled={spawnLoading}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[12px] font-medium rounded-md transition-all disabled:opacity-50"
+                >
+                  {spawnLoading ? (
+                    <div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+                      <path d="M2 8a6 6 0 0110.89-3.48M14 8a6 6 0 01-10.89 3.48" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                      <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                  Re-investigate
+                </button>
+              )}
+              {issue.plan_status === "approved" && (
+                <div className="text-[12px] text-[#4ade80]/70">Plan approved</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Retry Spawn Dialog */}
       <RetrySpawnDialog
