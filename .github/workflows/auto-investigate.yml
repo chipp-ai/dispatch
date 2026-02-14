@@ -381,6 +381,11 @@ jobs:
 
       - name: Check for fix
         id: check-fix
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+          ISSUE_SOURCE: ${{ inputs.source }}
+          ISSUE_TITLE: ${{ inputs.title }}
+          ISSUE_ID: ${{ inputs.issue_identifier }}
         run: |
           # Check if Claude created a new branch with commits ahead of staging
           CURRENT_BRANCH=$(git branch --show-current)
@@ -391,15 +396,39 @@ jobs:
             echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
             echo "No fix attempted - investigation report only"
           else
-            # Uncommitted changes exist but no commit was made
-            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
-            echo "Warning: uncommitted changes found but no commit was made"
+            # Agent made changes but forgot to create a branch and commit.
+            # Salvage the work: create the branch, stage, and commit.
+            echo "Agent left uncommitted changes -- auto-committing"
             git diff --stat
+
+            if [ "$CURRENT_BRANCH" = "staging" ]; then
+              git checkout -b "$BRANCH_NAME"
+            fi
+
+            git add -A
+            # Exclude scratch files from the commit
+            git reset -- .scratch/ 2>/dev/null || true
+            if ! git diff --cached --quiet; then
+              SUMMARY=""
+              if [ -f .scratch/outcome-summary.txt ]; then
+                SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+              fi
+              git commit -m "fix($ISSUE_SOURCE): $ISSUE_TITLE [$ISSUE_ID]
+
+$SUMMARY
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>"
+              echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+              echo "Auto-committed agent changes on branch: $(git branch --show-current)"
+            else
+              echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+              echo "No meaningful changes to commit after excluding scratch files"
+            fi
           fi
 
       - name: Push branch and create PR
         id: create-pr
-        if: steps.run-result.outputs.pr_needed == 'true'
+        if: steps.run-result.outputs.pr_needed == 'true' || (steps.check-fix.outputs.fix_attempted == 'true' && steps.run-result.outputs.changes_made == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

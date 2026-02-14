@@ -85,6 +85,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // When a spawn completes/fails, reset agent_status so the badge doesn't
+    // show a stale "Investigating"/"Implementing" pill in the wrong column.
+    if (
+      body.spawn_status &&
+      (body.spawn_status === "completed" || body.spawn_status === "failed") &&
+      !body.agent_status
+    ) {
+      body.agent_status = "idle";
+    }
+
     // Auto-transition: move issue to correct board column when agent status changes.
     // Only applies when the caller didn't explicitly set statusId.
     if (!body.statusId && previousIssue) {
