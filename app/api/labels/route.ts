@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/utils/auth";
 import { getOrCreateDefaultWorkspace } from "@/lib/services/workspaceService";
-import { listLabels, createLabel } from "@/lib/services/labelService";
+import {
+  listLabels,
+  getLabelByName,
+  createLabel,
+} from "@/lib/services/labelService";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const isAuthed = await requireAuth();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -11,8 +15,14 @@ export async function GET() {
 
   try {
     const workspace = await getOrCreateDefaultWorkspace();
-    const labels = await listLabels(workspace.id);
+    const name = request.nextUrl.searchParams.get("name");
 
+    if (name) {
+      const label = await getLabelByName(workspace.id, name);
+      return NextResponse.json(label ? [label] : []);
+    }
+
+    const labels = await listLabels(workspace.id);
     return NextResponse.json(labels);
   } catch (error) {
     console.error("Error listing labels:", error);

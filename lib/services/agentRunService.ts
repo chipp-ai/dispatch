@@ -7,6 +7,16 @@
 
 import { db } from "../db";
 
+export interface FollowUp {
+  title: string;
+  description?: string;
+  priority?: string;
+  source?: string;
+  feature?: string;
+  created_issue_id?: string;
+  created_issue_identifier?: string;
+}
+
 export interface AgentRun {
   id: string;
   issue_id: string;
@@ -25,6 +35,7 @@ export interface AgentRun {
   tokens_used: number | null;
   pr_number: number | null;
   files_changed: string[] | null;
+  follow_ups: FollowUp[] | null;
   started_at: Date;
   completed_at: Date | null;
   created_at: Date;
@@ -70,6 +81,7 @@ export interface UpdateRunInput {
   prNumber?: number;
   filesChanged?: string[];
   completedAt?: string;
+  followUps?: FollowUp[];
 }
 
 export async function createRun(input: CreateRunInput): Promise<AgentRun> {
@@ -147,6 +159,10 @@ export async function updateRun(
   if (updates.filesChanged !== undefined) {
     setClauses.push(`files_changed = $${paramIndex++}`);
     params.push(JSON.stringify(updates.filesChanged));
+  }
+  if (updates.followUps !== undefined) {
+    setClauses.push(`follow_ups = $${paramIndex++}`);
+    params.push(JSON.stringify(updates.followUps));
   }
   if (updates.completedAt !== undefined) {
     setClauses.push(`completed_at = $${paramIndex++}`);
