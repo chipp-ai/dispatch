@@ -346,8 +346,18 @@ jobs:
              d. cd web && npm run check && npm run build  (Svelte type check + build -- npm ci already done)
              If ANY check fails, fix the issue and re-run ALL checks until they pass.
              Fix pre-existing failures too -- the PR must be green.
-          5. Commit your changes with a descriptive message referencing {identifier}
+          5. Stage and commit: git add -A && git commit -m "feat: description [{identifier}]"
           6. Do NOT push branches - just prepare commits locally
+
+          GIT WORKFLOW (CRITICAL - READ THIS):
+          If you change ANY file, you MUST create a branch and commit before exiting.
+          The workflow CANNOT create a PR from uncommitted changes. If you edit files
+          but do not commit, your work is lost. The sequence is ALWAYS:
+            git checkout -b feat/{branch_id}
+            # ... make changes, run checks ...
+            git add -A
+            git commit -m "feat: description [{identifier}]"
+          Then set pr_needed=true in run-result.json. No commit = no PR = wasted work.
 
           EVIDENCE & PR SUMMARY (MANDATORY):
           After ALL implementation and checks pass, you MUST write .scratch/implementation-summary.md.

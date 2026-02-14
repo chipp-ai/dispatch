@@ -194,13 +194,23 @@ jobs:
           3. Identify the root cause with specific file paths and line numbers
           4. Write your investigation report to .scratch/investigation-report.md
           5. If you can identify a fix with HIGH confidence:
-             a. Create a new branch from staging using: git checkout -b ${BRANCH_NAME}
+             a. Create a new branch from staging: git checkout -b ${BRANCH_NAME}
              b. Implement the fix
              c. Run 'deno check main.ts' to verify type safety
-             d. Commit the fix with message referencing: fix(${INPUT_SOURCE}): [${INPUT_ISSUE_IDENTIFIER}]
+             d. Stage and commit: git add -A && git commit -m "fix(${INPUT_SOURCE}): description [${INPUT_ISSUE_IDENTIFIER}]"
           6. If you cannot identify a confident fix, that is fine - just write the investigation report
           7. Do NOT attempt fixes you are not confident about
           8. Do NOT push any branches - just prepare the commit locally
+
+          GIT WORKFLOW (CRITICAL - READ THIS):
+          If you change ANY file, you MUST create a branch and commit before exiting.
+          The workflow CANNOT create a PR from uncommitted changes. If you edit files
+          but do not commit, your work is lost. The sequence is ALWAYS:
+            git checkout -b ${BRANCH_NAME}
+            # ... make changes ...
+            git add -A
+            git commit -m "fix(${INPUT_SOURCE}): description [${INPUT_ISSUE_IDENTIFIER}]"
+          Then set pr_needed=true in run-result.json. No commit = no PR = wasted work.
 
           ENVIRONMENT VARIABLES:
           If you need an environment variable, FIRST read .env and .env.example to check what is
