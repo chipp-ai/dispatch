@@ -826,6 +826,7 @@ export default function IssuePageClient() {
   // Plan review
   const [planRejectFeedback, setPlanRejectFeedback] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
+  const [isPlanExpanded, setIsPlanExpanded] = useState(false);
   const [planActionLoading, setPlanActionLoading] = useState(false);
   const [spawnLoading, setSpawnLoading] = useState(false);
   const [spawnError, setSpawnError] = useState<string | null>(null);
@@ -1746,10 +1747,10 @@ export default function IssuePageClient() {
                     </div>
 
                     {/* Plan content */}
-                    <div className="bg-[#080808] border border-[#1a1a1a] rounded p-3 mb-2 max-h-[300px] overflow-y-auto">
+                    <div className={`bg-[#080808] border border-[#1a1a1a] rounded p-3 mb-2 overflow-y-auto ${isPlanExpanded ? "max-h-[80vh]" : "max-h-[300px]"}`}>
                       <div className="prose prose-invert prose-sm max-w-none
                         prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
-                        prose-h2:text-[13px] prose-h3:text-[12px]
+                        prose-h1:text-[15px] prose-h2:text-[13px] prose-h3:text-[12px] prose-h4:text-[11px]
                         prose-p:text-[#a0a0a0] prose-p:text-[12px] prose-p:leading-relaxed prose-p:my-1
                         prose-strong:text-[#d0d0d0]
                         prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
@@ -1761,6 +1762,12 @@ export default function IssuePageClient() {
                         <ReactMarkdown>{issue.plan_content}</ReactMarkdown>
                       </div>
                     </div>
+                    <button
+                      onClick={() => setIsPlanExpanded(!isPlanExpanded)}
+                      className="text-[11px] text-[#505050] hover:text-[#808080] mb-2 transition-colors"
+                    >
+                      {isPlanExpanded ? "Collapse" : "Expand full plan"}
+                    </button>
 
                     {/* Previous feedback if needs revision */}
                     {issue.plan_status === "needs_revision" && issue.plan_feedback && (
