@@ -33,24 +33,25 @@ export async function GET() {
     const errorBudget = budgets.find((b) => b.spawn_type === "error_fix");
     const prdBudget = budgets.find((b) => b.spawn_type === "prd");
 
-    // Today's total cost (sum cost_usd for issues spawned today)
+    // Today's total cost (sum from agent runs, not issues -- issue cost_usd
+    // accumulates across all runs, so filtering by date would over-count)
     const costResult = await db.queryOne<{ total: string }>(
       `SELECT COALESCE(SUM(cost_usd), 0) as total
-       FROM dispatch_issue
-       WHERE spawn_started_at >= CURRENT_DATE`
+       FROM dispatch_agent_runs
+       WHERE started_at >= CURRENT_DATE`
     );
     const dailyCost = parseFloat(costResult?.total || "0");
 
-    // Today's completed/failed counts
+    // Today's completed/failed counts (from agent runs for accurate per-run counting)
     const outcomesResult = await db.query<{
       run_outcome: string;
       count: string;
     }>(
-      `SELECT run_outcome, COUNT(*) as count
-       FROM dispatch_issue
-       WHERE spawn_started_at >= CURRENT_DATE
-         AND run_outcome IS NOT NULL
-       GROUP BY run_outcome`
+      `SELECT outcome as run_outcome, COUNT(*) as count
+       FROM dispatch_agent_runs
+       WHERE started_at >= CURRENT_DATE
+         AND outcome IS NOT NULL
+       GROUP BY outcome`
     );
 
     const outcomes: Record<string, number> = {};

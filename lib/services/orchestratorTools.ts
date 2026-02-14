@@ -460,12 +460,13 @@ async function executeGetFleetStatus(): Promise<string> {
     [workspace.id]
   );
 
-  // Daily cost
+  // Daily cost (from agent runs for accurate per-run accounting)
   const costResult = await db.queryOne<{ total: string }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) as total
-     FROM dispatch_issue
-     WHERE workspace_id = $1
-       AND spawn_started_at >= CURRENT_DATE`,
+    `SELECT COALESCE(SUM(ar.cost_usd), 0) as total
+     FROM dispatch_agent_runs ar
+     JOIN dispatch_issue i ON ar.issue_id = i.id
+     WHERE i.workspace_id = $1
+       AND ar.started_at >= CURRENT_DATE`,
     [workspace.id]
   );
   const dailyCost = parseFloat(costResult?.total || "0");
