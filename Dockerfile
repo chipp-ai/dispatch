@@ -39,6 +39,7 @@ COPY --from=base /app/app ./app
 COPY --from=base /app/components ./components
 COPY --from=base /app/lib ./lib
 COPY --from=base /app/dist ./dist
+COPY --from=base /app/scripts ./scripts
 
 # Set environment
 ENV NODE_ENV=production

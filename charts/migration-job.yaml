@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chipp-issues-migrate
+  labels:
+    app: chipp-issues
+    component: migration
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: chipp-issues
+        component: migration
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: IMAGE_PLACEHOLDER
+          command: ["npm", "run", "db:migrate"]
+          envFrom:
+            - secretRef:
+                name: chipp-issues
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

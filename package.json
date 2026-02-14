@@ -10,7 +10,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "generate-logo": "node scripts/generate-logo.mjs"
+    "generate-logo": "node scripts/generate-logo.mjs",
+    "db:migrate": "node scripts/run-migrations.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
