@@ -85,6 +85,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           : undefined,
       prNumber:
         body.pr_number !== undefined ? Number(body.pr_number) : undefined,
+      filesChanged: body.files_changed,
       completedAt: body.completed_at,
     });
 

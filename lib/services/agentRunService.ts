@@ -24,6 +24,7 @@ export interface AgentRun {
   model: string | null;
   tokens_used: number | null;
   pr_number: number | null;
+  files_changed: string[] | null;
   started_at: Date;
   completed_at: Date | null;
   created_at: Date;
@@ -67,6 +68,7 @@ export interface UpdateRunInput {
   model?: string;
   tokensUsed?: number;
   prNumber?: number;
+  filesChanged?: string[];
   completedAt?: string;
 }
 
@@ -142,6 +144,10 @@ export async function updateRun(
     setClauses.push(`pr_number = $${paramIndex++}`);
     params.push(updates.prNumber);
   }
+  if (updates.filesChanged !== undefined) {
+    setClauses.push(`files_changed = $${paramIndex++}`);
+    params.push(JSON.stringify(updates.filesChanged));
+  }
   if (updates.completedAt !== undefined) {
     setClauses.push(`completed_at = $${paramIndex++}`);
     params.push(updates.completedAt);
@@ -195,4 +201,91 @@ export async function getLatestRun(
      LIMIT 1`,
     [issueId]
   );
+}
+
+export interface InvestigationContextRun {
+  run_number: number;
+  date: string;
+  outcome: string | null;
+  outcome_summary: string | null;
+  files_changed: string[];
+  pr_number: number | null;
+  pr_status: string | null;
+  pr_merged: boolean;
+  cost_usd: number;
+  num_turns: number;
+}
+
+export interface InvestigationContext {
+  previous_runs: InvestigationContextRun[];
+  total_runs: number;
+  total_cost_usd: number;
+}
+
+/**
+ * Get compact investigation context for an issue, purpose-built for
+ * injecting into an agent prompt. Joins with dispatch_issue_pr for
+ * PR merge status.
+ */
+export async function getInvestigationContext(
+  issueId: string
+): Promise<InvestigationContext> {
+  const rows = await db.query<{
+    id: string;
+    outcome: string | null;
+    outcome_summary: string | null;
+    files_changed: string | string[] | null;
+    pr_number: number | null;
+    cost_usd: string | number;
+    num_turns: number;
+    started_at: string;
+    pr_status: string | null;
+    merged_at: string | null;
+  }>(
+    `SELECT
+       r.id, r.outcome, r.outcome_summary, r.files_changed,
+       r.pr_number, r.cost_usd, r.num_turns, r.started_at,
+       pr.pr_status, pr.merged_at
+     FROM dispatch_agent_runs r
+     LEFT JOIN dispatch_issue_pr pr
+       ON pr.issue_id = r.issue_id AND pr.pr_number = r.pr_number
+     WHERE r.issue_id = $1
+       AND r.status IN ('completed', 'failed')
+     ORDER BY r.created_at ASC`,
+    [issueId]
+  );
+
+  let totalCost = 0;
+  const previousRuns: InvestigationContextRun[] = rows.map((row, i) => {
+    const cost = typeof row.cost_usd === "string" ? Number(row.cost_usd) : row.cost_usd;
+    totalCost += cost || 0;
+
+    // files_changed may be a string (JSONB returned as string) or array
+    let filesChanged: string[] = [];
+    if (row.files_changed) {
+      filesChanged =
+        typeof row.files_changed === "string"
+          ? JSON.parse(row.files_changed)
+          : row.files_changed;
+    }
+
+    return {
+      run_number: i + 1,
+      date: row.started_at,
+      outcome: row.outcome,
+      outcome_summary: row.outcome_summary,
+      files_changed: filesChanged,
+      pr_number: row.pr_number,
+      pr_status: row.pr_status || null,
+      pr_merged: row.pr_status === "merged" || row.merged_at !== null,
+      cost_usd: cost || 0,
+      num_turns: row.num_turns || 0,
+    };
+  });
+
+  return {
+    previous_runs: previousRuns,
+    total_runs: previousRuns.length,
+    total_cost_usd: totalCost,
+  };
 }
