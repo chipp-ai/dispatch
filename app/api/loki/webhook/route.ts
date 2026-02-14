@@ -22,6 +22,10 @@ import {
   dispatchInvestigation,
   recordSpawn,
 } from "@/lib/services/spawnService";
+import {
+  fetchErrorImpact,
+  formatImpactMarkdown,
+} from "@/lib/services/lokiClient";
 import { notifyInternalNewError } from "@/lib/services/internalSlackService";
 import { handleLokiEventForMonitoredFix } from "@/lib/services/fixTrackingService";
 import { db } from "@/lib/db";
@@ -303,7 +307,18 @@ async function createIssueFromLokiContext(
       : context.msg;
   const title = `[${context.source}/${context.feature}] ${titleMsg}`;
 
-  const description = buildIssueDescription(context);
+  let description = buildIssueDescription(context);
+
+  // Enrich with user impact data from Loki (non-blocking, skips in local dev)
+  try {
+    const impact = await fetchErrorImpact(context.source, context.feature, "1h");
+    if (impact) {
+      description += "\n\n" + formatImpactMarkdown(impact);
+    }
+  } catch (err) {
+    console.error("[Loki Webhook] Failed to fetch error impact:", err);
+  }
+
   const priority = mapEventCountToPriority(context.eventCount, context.level);
 
   return createIssue(workspace.id, {

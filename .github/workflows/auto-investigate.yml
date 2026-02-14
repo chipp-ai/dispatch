@@ -27,6 +27,14 @@ on:
         description: "Error feature area"
         required: true
         type: string
+      error_message:
+        description: "The actual error message from the exception"
+        required: false
+        type: string
+      stack_trace:
+        description: "Stack trace from the exception"
+        required: false
+        type: string
       error_fingerprint:
         description: "Error fingerprint for dedup reference"
         required: false
@@ -74,6 +82,8 @@ jobs:
       INPUT_SOURCE: ${{ inputs.source }}
       INPUT_FEATURE: ${{ inputs.feature }}
       INPUT_ERROR_FINGERPRINT: ${{ inputs.error_fingerprint }}
+      INPUT_ERROR_MESSAGE: ${{ inputs.error_message }}
+      INPUT_STACK_TRACE: ${{ inputs.stack_trace }}
       INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -161,10 +171,23 @@ jobs:
           Source: ${INPUT_SOURCE}
           Feature: ${INPUT_FEATURE}
           Error Fingerprint: ${INPUT_ERROR_FINGERPRINT}
+          $([ -n "${INPUT_ERROR_MESSAGE}" ] && echo "
+          Error Message: ${INPUT_ERROR_MESSAGE}
+          ")
+          $([ -n "${INPUT_STACK_TRACE}" ] && echo "
+          Stack Trace:
+          ${INPUT_STACK_TRACE}
+          ")
           $([ -n "${INPUT_ADDITIONAL_CONTEXT}" ] && echo "
           ADDITIONAL CONTEXT FROM HUMAN:
           ${INPUT_ADDITIONAL_CONTEXT}
           ")
+          LOKI QUERY REFERENCE (include relevant queries in your investigation report so humans can drill deeper):
+          - Recent errors: {app="chipp-deno", level="error"} | json | source="${INPUT_SOURCE}" | feature="${INPUT_FEATURE}"
+          - Affected users: {app="chipp-deno", level="error"} | json | source="${INPUT_SOURCE}" | feature="${INPUT_FEATURE}" | userId!=""
+          - User activity around error: {app="chipp-deno"} | json | source="analytics" | userId="<affected-user-id>"
+          - Error frequency: sum(count_over_time({app="chipp-deno", level="error"} | json | source="${INPUT_SOURCE}" | feature="${INPUT_FEATURE}" [5m]))
+
           Instructions:
           1. Read CLAUDE.md first to understand the codebase
           2. Run a thorough autonomous investigation following the /autonomous-investigation methodology
