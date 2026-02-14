@@ -362,7 +362,9 @@ jobs:
           EVIDENCE & PR SUMMARY (MANDATORY):
           After ALL implementation and checks pass, you MUST write .scratch/implementation-summary.md.
           This file becomes the PR description that humans review. Include these sections:
-          - What Changed (2-4 sentence summary)
+          - Original Intent (2-3 sentences: what was requested and why -- quote or paraphrase the
+            issue/PRD so the reviewer understands the goal without opening the Dispatch issue)
+          - What Changed (2-4 sentence summary of the implementation approach)
           - Changes (table of files and what changed)
           - How It Works (technical approach, 3-5 sentences)
           - Verification: PR Checks (deno check, deno lint, deno test, svelte build - pass/fail)
@@ -855,7 +857,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             echo "---"
             echo ""
             echo "> Autonomously implemented by Claude Code"
-            echo "> **Investigation**: [${INPUT_ISSUE_IDENTIFIER} on Dispatch](${DISPATCH_ISSUE_URL}) | **Run**: [Workflow Logs](${GITHUB_RUN_URL})"
+            echo "> **Issue**: [${INPUT_ISSUE_IDENTIFIER} on Dispatch](${DISPATCH_ISSUE_URL}) | **Run**: [Workflow Logs](${GITHUB_RUN_URL})"
           } > .scratch/pr-body.md
 
           PR_BODY=$(cat .scratch/pr-body.md)
