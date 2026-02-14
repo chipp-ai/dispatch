@@ -834,6 +834,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
           BRANCH_NAME=$(git branch --show-current)
           git push origin "HEAD:${BRANCH_NAME}"
 
+          DISPATCH_ISSUE_URL="${DISPATCH_API_URL}/issue/${INPUT_ISSUE_IDENTIFIER}"
           {
             if [ -f .scratch/implementation-summary.md ]; then
               cat .scratch/implementation-summary.md
@@ -854,7 +855,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             echo "---"
             echo ""
             echo "> Autonomously implemented by Claude Code"
-            echo "> **Issue**: ${INPUT_ISSUE_IDENTIFIER} | **Run**: [Workflow Logs](${GITHUB_RUN_URL})"
+            echo "> **Investigation**: [${INPUT_ISSUE_IDENTIFIER} on Dispatch](${DISPATCH_ISSUE_URL}) | **Run**: [Workflow Logs](${GITHUB_RUN_URL})"
           } > .scratch/pr-body.md
 
           PR_BODY=$(cat .scratch/pr-body.md)
