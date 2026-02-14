@@ -9,7 +9,10 @@
 
 import { db } from "../db";
 import { createRun } from "./agentRunService";
-import { createHistoryEntry } from "./issueHistoryService";
+import { createHistoryEntry, recordStatusChange } from "./issueHistoryService";
+import { getStatusByName } from "./statusService";
+import { getIssueForBoard } from "./issueService";
+import { broadcastBoardEvent } from "./boardBroadcast";
 
 // --- Configuration ---
 
@@ -390,18 +393,107 @@ export async function recordSpawn(
     research: "researching",
   };
   const agentStatus = agentStatusMap[spawnType] || "investigating";
-  await db.query(
-    `UPDATE dispatch_issue
-     SET spawn_status = 'running',
-         spawn_run_id = $2,
-         spawn_started_at = NOW(),
-         spawn_type = $3,
-         spawn_attempt_count = COALESCE(spawn_attempt_count, 0) + 1,
-         agent_status = $4,
-         blocked_reason = NULL
-     WHERE id = $1`,
-    [issueId, runId, spawnType, agentStatus]
+
+  // Auto-transition: move issue to the correct board column based on spawn type
+  const issue = await db.queryOne<{
+    status_id: string;
+    workspace_id: string;
+    identifier: string;
+  }>(
+    `SELECT i.status_id, i.workspace_id, i.identifier
+     FROM dispatch_issue i WHERE i.id = $1`,
+    [issueId]
   );
+
+  let newStatusId: string | null = null;
+  let oldStatusName: string | null = null;
+  let newStatusName: string | null = null;
+
+  if (issue) {
+    // Get current status name
+    const currentStatus = await db.queryOne<{ name: string }>(
+      `SELECT name FROM dispatch_status WHERE id = $1`,
+      [issue.status_id]
+    );
+    const currentName = currentStatus?.name?.toLowerCase() || "";
+
+    // Determine target column based on spawn type and current status
+    if (
+      (spawnType === "error_fix" || spawnType === "investigate") &&
+      (currentName === "triage" || currentName === "backlog")
+    ) {
+      const target = await getStatusByName(issue.workspace_id, "Investigating");
+      if (target) {
+        newStatusId = target.id;
+        oldStatusName = currentStatus?.name || "Unknown";
+        newStatusName = target.name;
+      }
+    } else if (
+      spawnType === "implement" &&
+      (currentName === "triage" || currentName === "backlog" || currentName === "needs review")
+    ) {
+      const target = await getStatusByName(issue.workspace_id, "In Progress");
+      if (target) {
+        newStatusId = target.id;
+        oldStatusName = currentStatus?.name || "Unknown";
+        newStatusName = target.name;
+      }
+    }
+  }
+
+  // Build UPDATE query with optional status_id
+  if (newStatusId) {
+    await db.query(
+      `UPDATE dispatch_issue
+       SET spawn_status = 'running',
+           spawn_run_id = $2,
+           spawn_started_at = NOW(),
+           spawn_type = $3,
+           spawn_attempt_count = COALESCE(spawn_attempt_count, 0) + 1,
+           agent_status = $4,
+           blocked_reason = NULL,
+           status_id = $5
+       WHERE id = $1`,
+      [issueId, runId, spawnType, agentStatus, newStatusId]
+    );
+  } else {
+    await db.query(
+      `UPDATE dispatch_issue
+       SET spawn_status = 'running',
+           spawn_run_id = $2,
+           spawn_started_at = NOW(),
+           spawn_type = $3,
+           spawn_attempt_count = COALESCE(spawn_attempt_count, 0) + 1,
+           agent_status = $4,
+           blocked_reason = NULL
+       WHERE id = $1`,
+      [issueId, runId, spawnType, agentStatus]
+    );
+  }
+
+  // Broadcast board move and record history if status changed
+  if (newStatusId && issue) {
+    try {
+      const boardIssue = await getIssueForBoard(issue.identifier);
+      if (boardIssue) {
+        broadcastBoardEvent({
+          type: "issue_moved",
+          issue: boardIssue,
+          previousStatusId: issue.status_id,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      await recordStatusChange(
+        issueId,
+        oldStatusName!,
+        newStatusName!,
+        "system",
+        "Spawn Service"
+      );
+    } catch (e) {
+      console.error("[Spawn] Failed to broadcast/record status change:", e);
+    }
+  }
 
   const budgetType = spawnType === "error_fix" ? "error_fix" : "prd";
   const maxBudget =

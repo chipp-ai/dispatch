@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/fixTrackingService";
 import { db } from "@/lib/db";
 import { notifyStatusChange } from "@/lib/services/notificationService";
+import { getStatusByName } from "@/lib/services/statusService";
 import type { HistoryActorType } from "@/lib/services/issueHistoryService";
 
 interface RouteParams {
@@ -79,6 +80,35 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
             { status: 403 }
           );
+        }
+      }
+    }
+
+    // Auto-transition: move issue to correct column when agent status changes
+    // Only applies when the caller didn't explicitly set statusId
+    if (!body.statusId && previousIssue) {
+      const currentStatusName = previousIssue.status?.name?.toLowerCase() || "";
+
+      // spawn_status → completed/failed while Investigating → Needs Review
+      if (
+        body.spawn_status &&
+        (body.spawn_status === "completed" || body.spawn_status === "failed") &&
+        currentStatusName === "investigating"
+      ) {
+        const target = await getStatusByName(previousIssue.workspace_id, "Needs Review");
+        if (target) {
+          body.statusId = target.id;
+        }
+      }
+
+      // plan_status → approved while Needs Review → In Progress
+      if (
+        body.plan_status === "approved" &&
+        currentStatusName === "needs review"
+      ) {
+        const target = await getStatusByName(previousIssue.workspace_id, "In Progress");
+        if (target) {
+          body.statusId = target.id;
         }
       }
     }

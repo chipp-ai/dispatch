@@ -55,11 +55,42 @@ function getStatusIcon(statusName: string, color: string) {
     );
   }
 
-  // Todo - empty circle
-  if (name === "todo" || name === "triage") {
+  // Triage - empty circle
+  if (name === "triage") {
     return (
       <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
         <circle cx="7" cy="7" r="6" stroke={color} strokeWidth="1.5" />
+      </svg>
+    );
+  }
+
+  // Investigating - magnifying glass with pulse
+  if (name === "investigating") {
+    return (
+      <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
+        <circle cx="6" cy="6" r="4" stroke={color} strokeWidth="1.5" />
+        <path
+          d="M9 9L12 12"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <circle cx="6" cy="6" r="1.5" fill={color} opacity="0.4" />
+      </svg>
+    );
+  }
+
+  // Needs Review - eye icon
+  if (name === "needs review") {
+    return (
+      <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M1 7C1 7 3.5 3 7 3C10.5 3 13 7 13 7C13 7 10.5 11 7 11C3.5 11 1 7 1 7Z"
+          stroke={color}
+          strokeWidth="1.25"
+          strokeLinejoin="round"
+        />
+        <circle cx="7" cy="7" r="2" fill={color} />
       </svg>
     );
   }

@@ -9,6 +9,7 @@ import {
 } from "@/lib/services/issueService";
 import { broadcastBoardEvent } from "@/lib/services/boardBroadcast";
 import { notifyIssueCreated } from "@/lib/services/notificationService";
+import { getStatusByName } from "@/lib/services/statusService";
 
 export async function GET() {
   const isAuthed = await requireAuth();
@@ -41,6 +42,14 @@ export async function POST(request: NextRequest) {
 
     if (!body.title) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
+    }
+
+    // Resolve statusName to statusId if provided
+    if (body.statusName && !body.statusId) {
+      const status = await getStatusByName(workspace.id, body.statusName);
+      if (status) {
+        body.statusId = status.id;
+      }
     }
 
     const issue = await createIssue(workspace.id, {

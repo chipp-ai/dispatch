@@ -17,6 +17,9 @@ export interface BoardIssue {
   assignee: { name: string } | null;
   labels: { label: { id: string; name: string; color: string } }[];
   created_at: string;
+  agent_status?: string;
+  plan_status?: string | null;
+  blocked_reason?: string | null;
   cost_usd?: number | null;
   run_outcome?: string | null;
   outcome_summary?: string | null;
