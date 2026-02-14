@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/fixTrackingService";
 import { db } from "@/lib/db";
 import { notifyStatusChange } from "@/lib/services/notificationService";
+import { notifyInternalAgentCompleted } from "@/lib/services/internalSlackService";
 import { getStatusByName } from "@/lib/services/statusService";
 import type { HistoryActorType } from "@/lib/services/issueHistoryService";
 
@@ -192,6 +193,17 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         slackThreadTs: null, // Will be looked up in the notification service
       }).catch((err) =>
         console.error("[Notification] Failed to notify status change:", err)
+      );
+    }
+
+    // Notify internal Slack when agent completes or fails
+    if (
+      body.spawn_status &&
+      (body.spawn_status === "completed" || body.spawn_status === "failed") &&
+      previousIssue?.spawn_status === "running"
+    ) {
+      notifyInternalAgentCompleted(id).catch((err) =>
+        console.error("[Internal Slack] notify agent completed:", err)
       );
     }
 

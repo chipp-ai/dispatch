@@ -22,6 +22,7 @@ import {
   dispatchInvestigation,
   recordSpawn,
 } from "@/lib/services/spawnService";
+import { notifyInternalNewError } from "@/lib/services/internalSlackService";
 import { handleLokiEventForMonitoredFix } from "@/lib/services/fixTrackingService";
 import { db } from "@/lib/db";
 
@@ -251,6 +252,17 @@ async function processAlert(alert: GrafanaAlert): Promise<{
       timestamp: new Date().toISOString(),
     });
   }
+
+  // Notify internal Slack channel
+  notifyInternalNewError({
+    issueId: issue.id,
+    identifier: issue.identifier,
+    title: context.msg,
+    priority: mapEventCountToPriority(context.eventCount, context.level),
+    source: context.source,
+    feature: context.feature,
+    eventCount: context.eventCount,
+  }).catch((err) => console.error("[Internal Slack] notify new error:", err));
 
   // Check spawn gate for the new issue
   const spawnResult = await maybeSpawn(

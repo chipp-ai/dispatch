@@ -13,6 +13,7 @@ import { createHistoryEntry, recordStatusChange } from "./issueHistoryService";
 import { getStatusByName } from "./statusService";
 import { getIssueForBoard } from "./issueService";
 import { broadcastBoardEvent } from "./boardBroadcast";
+import { notifyInternalAgentStarted } from "./internalSlackService";
 
 // --- Configuration ---
 
@@ -527,6 +528,15 @@ export async function recordSpawn(
   } catch (e) {
     console.error("[History] Failed to record spawn:", e);
   }
+
+  // Notify internal Slack channel
+  notifyInternalAgentStarted({
+    issueId,
+    identifier: issue?.identifier || "",
+    spawnType,
+  }).catch((err) =>
+    console.error("[Internal Slack] notify agent started:", err)
+  );
 
   return agentRun.id;
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function LoginPage() {
+function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,6 +37,57 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Enter password"
+          className="w-full px-4 py-3 bg-[#141414] border border-[#252525] rounded-lg text-[14px] text-[#f5f5f5] placeholder-[#555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+          autoFocus
+        />
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <svg
+            className="w-4 h-4 text-red-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <span className="text-[13px] text-red-400">{error}</span>
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={loading || !password}
+        className="w-full py-3 bg-[#5e6ad2] hover:bg-[#6b74db] disabled:bg-[#333] disabled:text-[#666] text-white text-[14px] font-medium rounded-lg transition-colors"
+      >
+        {loading ? (
+          <span className="flex items-center justify-center gap-2">
+            <div className="spinner" />
+            Signing in...
+          </span>
+        ) : (
+          "Sign In"
+        )}
+      </button>
+    </form>
+  );
+}
+
+export default function LoginPage() {
+  return (
     <div className="min-h-screen flex items-center justify-center bg-[#0d0d0d]">
       <div className="w-full max-w-sm">
         {/* Logo */}
@@ -63,52 +114,14 @@ export default function LoginPage() {
         </div>
 
         {/* Login form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              className="w-full px-4 py-3 bg-[#141414] border border-[#252525] rounded-lg text-[14px] text-[#f5f5f5] placeholder-[#555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
-              autoFocus
-            />
+        <Suspense fallback={
+          <div className="space-y-4">
+            <div className="w-full h-12 bg-[#141414] border border-[#252525] rounded-lg animate-pulse" />
+            <div className="w-full h-12 bg-[#333] rounded-lg animate-pulse" />
           </div>
-
-          {error && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
-              <svg
-                className="w-4 h-4 text-red-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <span className="text-[13px] text-red-400">{error}</span>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || !password}
-            className="w-full py-3 bg-[#5e6ad2] hover:bg-[#6b74db] disabled:bg-[#333] disabled:text-[#666] text-white text-[14px] font-medium rounded-lg transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="spinner" />
-                Signing in...
-              </span>
-            ) : (
-              "Sign In"
-            )}
-          </button>
-        </form>
+        }>
+          <LoginForm />
+        </Suspense>
       </div>
     </div>
   );
