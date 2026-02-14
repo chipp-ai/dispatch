@@ -85,29 +85,30 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Auto-transition: move issue to correct column when agent status changes
-    // Only applies when the caller didn't explicitly set statusId
+    // Auto-transition: move issue to correct board column when agent status changes.
+    // Only applies when the caller didn't explicitly set statusId.
     if (!body.statusId && previousIssue) {
       const currentStatusName = previousIssue.status?.name?.toLowerCase() || "";
 
-      // spawn_status → completed/failed while Investigating → Needs Review
+      // Investigation completed/failed → back to Waiting for agent
       if (
         body.spawn_status &&
         (body.spawn_status === "completed" || body.spawn_status === "failed") &&
         currentStatusName === "investigating"
       ) {
-        const target = await getStatusByName(previousIssue.workspace_id, "Needs Review");
+        const target = await getStatusByName(previousIssue.workspace_id, "Waiting for agent");
         if (target) {
           body.statusId = target.id;
         }
       }
 
-      // plan_status → approved while Needs Review → In Progress
+      // Plan approved → move to Being Developed
       if (
         body.plan_status === "approved" &&
-        currentStatusName === "needs review"
+        (currentStatusName === "waiting for agent" || currentStatusName === "investigating" ||
+         currentStatusName === "backlog")
       ) {
-        const target = await getStatusByName(previousIssue.workspace_id, "In Progress");
+        const target = await getStatusByName(previousIssue.workspace_id, "Being Developed");
         if (target) {
           body.statusId = target.id;
         }

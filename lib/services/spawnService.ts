@@ -418,7 +418,7 @@ export async function recordSpawn(
     );
     const currentName = currentStatus?.name?.toLowerCase() || "";
 
-    // Determine target column based on spawn type and current status
+    // Auto-transition to the correct board column based on spawn type
     if (
       (spawnType === "error_fix" || spawnType === "investigate") &&
       (currentName === "triage" || currentName === "backlog")
@@ -431,9 +431,10 @@ export async function recordSpawn(
       }
     } else if (
       spawnType === "implement" &&
-      (currentName === "triage" || currentName === "backlog" || currentName === "needs review")
+      (currentName === "triage" || currentName === "backlog" ||
+       currentName === "investigating" || currentName === "waiting for agent")
     ) {
-      const target = await getStatusByName(issue.workspace_id, "In Progress");
+      const target = await getStatusByName(issue.workspace_id, "Being Developed");
       if (target) {
         newStatusId = target.id;
         oldStatusName = currentStatus?.name || "Unknown";
