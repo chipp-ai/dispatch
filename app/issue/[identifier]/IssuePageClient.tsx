@@ -87,6 +87,25 @@ interface ExternalLink {
   created_at: string;
 }
 
+interface InvestigationContextRun {
+  run_number: number;
+  date: string;
+  outcome: string | null;
+  outcome_summary: string | null;
+  files_changed: string[];
+  pr_number: number | null;
+  pr_status: string | null;
+  pr_merged: boolean;
+  cost_usd: number;
+  num_turns: number;
+}
+
+interface InvestigationContext {
+  previous_runs: InvestigationContextRun[];
+  total_runs: number;
+  total_cost_usd: number;
+}
+
 interface Issue {
   id: string;
   identifier: string;
@@ -552,6 +571,220 @@ function formatActivityTime(timestamp: string): string {
   });
 }
 
+// Investigation context card - shows what was injected into the latest run
+function InvestigationContextCard({ context }: { context: InvestigationContext }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-[#1f1f1f] bg-[#0a0a0a] overflow-hidden shrink-0">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left px-3 py-2.5 flex items-center justify-between hover:bg-[#111111] transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-[#a78bfa]" viewBox="0 0 16 16" fill="none">
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+            <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.25" />
+          </svg>
+          <span className="text-[12px] font-medium text-[#a78bfa]">
+            Agent Context
+          </span>
+          <span className="text-[10px] text-[#505050]">
+            {context.total_runs} prior run{context.total_runs !== 1 ? "s" : ""} | ${context.total_cost_usd.toFixed(2)} total
+          </span>
+        </div>
+        <svg
+          className={`w-3.5 h-3.5 text-[#505050] transition-transform ${expanded ? "" : "-rotate-90"}`}
+          viewBox="0 0 16 16"
+          fill="none"
+        >
+          <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="border-t border-[#1f1f1f] p-3 space-y-2">
+          <p className="text-[11px] text-[#606060] mb-2">
+            This context was injected into the latest investigation prompt:
+          </p>
+          {context.previous_runs.map((run, i) => (
+            <div key={i} className="flex items-start gap-2 p-2 rounded bg-[#111111] border border-[#1a1a1a]">
+              <span className="text-[10px] text-[#505050] font-mono shrink-0 mt-0.5">#{run.run_number}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[11px] font-medium ${
+                    run.outcome === "completed" ? "text-[#4ade80]" :
+                    run.outcome === "failed" ? "text-[#f87171]" :
+                    "text-[#a0a0a0]"
+                  }`}>
+                    {run.outcome || "unknown"}
+                  </span>
+                  {run.pr_number && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
+                      run.pr_merged
+                        ? "bg-[#4ade80]/10 text-[#4ade80]"
+                        : "bg-[#5e6ad2]/10 text-[#5e6ad2]"
+                    }`}>
+                      PR #{run.pr_number} {run.pr_merged ? "(merged)" : `(${run.pr_status})`}
+                    </span>
+                  )}
+                </div>
+                {run.outcome_summary && (
+                  <p className="text-[11px] text-[#808080] mt-0.5 line-clamp-2">{run.outcome_summary}</p>
+                )}
+                <div className="flex items-center gap-2 mt-1 text-[10px] text-[#404040]">
+                  <span>{run.date}</span>
+                  <span>${run.cost_usd.toFixed(2)}</span>
+                  <span>{run.num_turns} turns</span>
+                  {run.files_changed.length > 0 && (
+                    <span className="truncate max-w-[200px]" title={run.files_changed.join(", ")}>
+                      {run.files_changed.length} file{run.files_changed.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Previous run block with lazy-loaded transcript
+function PreviousRunBlock({
+  run,
+  issueId,
+  isExpanded,
+  onToggle,
+}: {
+  run: AgentRunSummary;
+  issueId: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+
+  const outcomeColors: Record<string, string> = {
+    completed: "#4ade80",
+    no_changes_needed: "#60a5fa",
+    blocked: "#f87171",
+    needs_human_decision: "#facc15",
+    investigation_complete: "#a78bfa",
+    failed: "#f87171",
+  };
+
+  const workflowLabels: Record<string, string> = {
+    error_fix: "Error Fix",
+    prd_investigate: "Investigate",
+    prd_implement: "Implement",
+    qa: "QA Test",
+    deep_research: "Research",
+  };
+
+  useEffect(() => {
+    if (!isExpanded || transcript !== null) return;
+    setLoadingTranscript(true);
+    fetch(`/api/issues/${issueId}/runs/${run.id}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setTranscript(data?.transcript || "No transcript available."))
+      .catch(() => setTranscript("Failed to load transcript."))
+      .finally(() => setLoadingTranscript(false));
+  }, [isExpanded, issueId, run.id, transcript]);
+
+  const outcomeColor = run.outcome ? (outcomeColors[run.outcome] || "#808080") : "#808080";
+  const duration = run.duration_seconds != null
+    ? run.duration_seconds < 60
+      ? `${run.duration_seconds}s`
+      : `${Math.floor(run.duration_seconds / 60)}m ${run.duration_seconds % 60}s`
+    : "--";
+
+  return (
+    <div className="rounded-lg border border-[#1f1f1f] bg-[#0a0a0a] overflow-hidden shrink-0">
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-3 py-2.5 flex items-center justify-between hover:bg-[#111111] transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <OutcomeIcon outcome={run.outcome || "failed"} className="w-3.5 h-3.5 shrink-0" />
+          <span className="text-[12px] font-medium text-[#c0c0c0] truncate">
+            {workflowLabels[run.workflow_type] || run.workflow_type}
+          </span>
+          {run.outcome && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+              style={{ backgroundColor: outcomeColor + "20", color: outcomeColor }}
+            >
+              {run.outcome.replace(/_/g, " ")}
+            </span>
+          )}
+          {run.pr_number && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 bg-[#5e6ad2]/10 text-[#5e6ad2]">
+              PR #{run.pr_number}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span className="text-[10px] text-[#404040]">{duration}</span>
+          {Number(run.cost_usd) > 0 && (
+            <span className="text-[10px] text-[#404040]">${Number(run.cost_usd).toFixed(2)}</span>
+          )}
+          <svg
+            className={`w-3.5 h-3.5 text-[#505050] transition-transform ${isExpanded ? "" : "-rotate-90"}`}
+            viewBox="0 0 16 16"
+            fill="none"
+          >
+            <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      </button>
+      {run.outcome_summary && !isExpanded && (
+        <div className="px-3 pb-2 -mt-1">
+          <p className="text-[11px] text-[#606060] line-clamp-1">{run.outcome_summary}</p>
+        </div>
+      )}
+      {isExpanded && (
+        <div className="border-t border-[#1f1f1f]">
+          {run.outcome_summary && (
+            <div className="px-3 py-2 border-b border-[#1a1a1a] bg-[#0d0d0d]">
+              <p className="text-[12px] text-[#a0a0a0] leading-relaxed">{run.outcome_summary}</p>
+            </div>
+          )}
+          {run.github_run_url && (
+            <div className="px-3 py-1.5 border-b border-[#1a1a1a]">
+              <a
+                href={run.github_run_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[11px] text-[#5e6ad2] hover:text-[#7c8aff] transition-colors"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                </svg>
+                View on GitHub Actions
+              </a>
+            </div>
+          )}
+          <div className="p-3 max-h-[500px] overflow-y-auto">
+            {loadingTranscript ? (
+              <div className="flex items-center gap-2 text-[11px] text-[#505050]">
+                <div className="w-3 h-3 border border-[#404040] border-t-[#a78bfa] rounded-full animate-spin" />
+                Loading transcript...
+              </div>
+            ) : transcript ? (
+              <pre className="text-[11px] text-[#808080] leading-relaxed whitespace-pre-wrap font-mono">
+                {transcript}
+              </pre>
+            ) : (
+              <p className="text-[11px] text-[#404040]">No transcript available.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IssuePageClient() {
   const router = useRouter();
   const params = useParams();
@@ -584,6 +817,11 @@ export default function IssuePageClient() {
   const [agentRuns, setAgentRuns] = useState<AgentRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [showRunsSection, setShowRunsSection] = useState(true);
+
+  // Investigation context for previous runs
+  const [investigationContext, setInvestigationContext] = useState<InvestigationContext | null>(null);
+  const prevAgentStatusRef = useRef<string | null>(null);
+  const [expandedPrevRunId, setExpandedPrevRunId] = useState<string | null>(null);
 
   // Plan review
   const [planRejectFeedback, setPlanRejectFeedback] = useState("");
@@ -630,16 +868,13 @@ export default function IssuePageClient() {
             activityFeedRef.current.scrollHeight;
         }
         // Load persisted log into terminal when no live lines exist.
-        // Try activity log first (agent_full_log), then fall back to
-        // the latest agent run's incrementally-persisted transcript.
+        // When agent is active, load from current run's transcript (avoids stale agent_full_log).
+        // When idle, prefer agent_full_log (complete), fall back to latest run transcript.
         if (terminalLines.length === 0) {
-          const fullLog = [...data]
-            .reverse()
-            .find((a: AgentActivity) => a.type === "agent_full_log");
-          if (fullLog?.content) {
-            setTerminalLines(fullLog.content.split("\n"));
-          } else {
-            // No full log yet -- check the latest agent run for streamed transcript
+          const isActive = issue.agent_status === "investigating" || issue.agent_status === "implementing";
+
+          if (isActive) {
+            // Active investigation: load current run's partial transcript
             try {
               const runRes = await fetch(`/api/issues/${issue.id}/runs/current`);
               if (runRes.ok) {
@@ -649,7 +884,27 @@ export default function IssuePageClient() {
                 }
               }
             } catch {
-              // Non-fatal - just means no persisted transcript yet
+              // Non-fatal
+            }
+          } else {
+            // Completed: try agent_full_log first, then latest run transcript
+            const fullLog = [...data]
+              .reverse()
+              .find((a: AgentActivity) => a.type === "agent_full_log");
+            if (fullLog?.content) {
+              setTerminalLines(fullLog.content.split("\n"));
+            } else {
+              try {
+                const runRes = await fetch(`/api/issues/${issue.id}/runs/current`);
+                if (runRes.ok) {
+                  const runData = await runRes.json();
+                  if (runData.transcript) {
+                    setTerminalLines(runData.transcript.split("\n"));
+                  }
+                }
+              } catch {
+                // Non-fatal
+              }
             }
           }
         }
@@ -688,6 +943,19 @@ export default function IssuePageClient() {
     }
   }, [issue]);
 
+  const fetchInvestigationContext = useCallback(async () => {
+    if (!issue) return;
+    try {
+      const res = await fetch(`/api/issues/${issue.id}/investigation-context`);
+      if (res.ok) {
+        const data = await res.json();
+        setInvestigationContext(data);
+      }
+    } catch {
+      // Non-fatal
+    }
+  }, [issue]);
+
   useEffect(() => {
     fetchIssue().finally(() => setLoading(false));
   }, [fetchIssue]);
@@ -697,8 +965,20 @@ export default function IssuePageClient() {
       fetchAgentActivity();
       fetchLinkedPRs();
       fetchRuns();
+      fetchInvestigationContext();
     }
-  }, [issue, fetchAgentActivity, fetchLinkedPRs, fetchRuns]);
+  }, [issue, fetchAgentActivity, fetchLinkedPRs, fetchRuns, fetchInvestigationContext]);
+
+  // Clear terminal when a new investigation starts (avoids stale output from previous run)
+  useEffect(() => {
+    if (!issue) return;
+    const prev = prevAgentStatusRef.current;
+    const curr = issue.agent_status;
+    prevAgentStatusRef.current = curr;
+    if (prev && prev !== curr && (curr === "investigating" || curr === "implementing")) {
+      setTerminalLines([]);
+    }
+  }, [issue?.agent_status]);
 
   // SSE connection for real-time activity streaming
   useEffect(() => {
@@ -1136,14 +1416,14 @@ export default function IssuePageClient() {
 
       {/* Two-panel layout */}
       <div className="flex-1 flex min-h-0">
-        {/* Main area: Terminal */}
-        <main className="flex-1 flex flex-col min-w-0 p-3">
+        {/* Main area: Terminal + Previous Runs */}
+        <main className="flex-1 flex flex-col min-w-0 p-3 overflow-y-auto gap-3">
           {hasTerminalOutput ? (
             <TerminalViewer
               issueIdentifier={issue.identifier}
               isAgentActive={isAgentActive}
               sseLines={terminalLines}
-              className="flex-1 min-h-0"
+              className={agentRuns.filter(r => r.status !== "running").length > 0 ? "shrink-0" : "flex-1 min-h-0"}
             />
           ) : (
             /* Empty state with CTA */
@@ -1180,6 +1460,36 @@ export default function IssuePageClient() {
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Investigation Context - what was injected into the latest run */}
+          {investigationContext && investigationContext.total_runs > 0 && (
+            <InvestigationContextCard context={investigationContext} />
+          )}
+
+          {/* Previous Runs - reverse chronological, below live terminal */}
+          {agentRuns.filter(r => r.status !== "running").length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 px-1">
+                <svg className="w-3.5 h-3.5 text-[#505050]" viewBox="0 0 16 16" fill="currentColor">
+                  <path fillRule="evenodd" d="M1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 00.37.65l2.5 1.5a.75.75 0 10.76-1.3L8.5 7.94V4.75z" />
+                </svg>
+                <span className="text-[12px] font-medium text-[#606060]">
+                  Previous Runs ({agentRuns.filter(r => r.status !== "running").length})
+                </span>
+              </div>
+              {agentRuns
+                .filter(r => r.status !== "running")
+                .map((run) => (
+                  <PreviousRunBlock
+                    key={run.id}
+                    run={run}
+                    issueId={issue.id}
+                    isExpanded={expandedPrevRunId === run.id}
+                    onToggle={() => setExpandedPrevRunId(expandedPrevRunId === run.id ? null : run.id)}
+                  />
+                ))}
             </div>
           )}
         </main>
