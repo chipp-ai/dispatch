@@ -221,6 +221,8 @@ async function processAlert(alert: GrafanaAlert): Promise<{
       level: context.level,
       labels: context.labels,
       eventCount: context.eventCount,
+      errorMessage: context.errorMessage,
+      stackTrace: context.stackTrace,
     },
   });
 
@@ -253,7 +255,8 @@ async function processAlert(alert: GrafanaAlert): Promise<{
   // Check spawn gate for the new issue
   const spawnResult = await maybeSpawn(
     { ...issue, source: context.source, feature: context.feature },
-    context.fingerprint
+    context.fingerprint,
+    context
   );
 
   return {
@@ -307,7 +310,8 @@ async function createIssueFromLokiContext(
  */
 async function maybeSpawn(
   issue: { id: string; identifier: string; title?: string; description?: string | null; source?: string; feature?: string },
-  fp: string
+  fp: string,
+  errorContext?: LokiErrorContext | null
 ): Promise<string> {
   // Extract source for spawn gate threshold lookup
   let issueSource = issue.source || "";
@@ -344,6 +348,9 @@ async function maybeSpawn(
       description: issue.description || null,
       source,
       feature,
+      fingerprint: fp,
+      error_message: errorContext?.errorMessage,
+      stack_trace: errorContext?.stackTrace,
     });
 
     await recordSpawn(issue.id, runId);
@@ -389,20 +396,30 @@ async function maybeSpawnForExistingIssue(
     return "already_running";
   }
 
-  // Look up the Loki source from the external issue metadata
+  // Look up the Loki source and error context from the external issue metadata
   const externalIssue = await db.queryOne<{ metadata: Record<string, unknown> | string | null }>(
     `SELECT metadata FROM dispatch_external_issue WHERE source = 'loki' AND external_id = $1`,
     [fp]
   );
   let source: string | undefined;
+  let errorContext: LokiErrorContext | null = null;
   if (externalIssue?.metadata) {
     const meta = typeof externalIssue.metadata === "string"
       ? JSON.parse(externalIssue.metadata)
       : externalIssue.metadata;
     source = meta?.source as string | undefined;
+    // Reconstruct partial error context from stored metadata for dispatch
+    if (meta?.errorMessage || meta?.stackTrace) {
+      errorContext = {
+        source: (meta.source as string) || "",
+        feature: (meta.feature as string) || "",
+        errorMessage: (meta.errorMessage as string) || null,
+        stackTrace: (meta.stackTrace as string) || null,
+      } as LokiErrorContext;
+    }
   }
 
-  return maybeSpawn({ ...issue, source }, fp);
+  return maybeSpawn({ ...issue, source }, fp, errorContext);
 }
 
 // --- Health Check ---

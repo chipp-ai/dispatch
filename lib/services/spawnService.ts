@@ -111,6 +111,9 @@ export interface SpawnableIssue {
   description: string | null;
   source?: string | null;
   feature?: string | null;
+  fingerprint?: string | null;
+  error_message?: string | null;
+  stack_trace?: string | null;
   plan_content?: string | null;
   plan_feedback?: string | null;
   additional_context?: string;
@@ -284,6 +287,9 @@ export async function dispatchWorkflow(
   if (workflowType === "error_fix") {
     inputs.source = issue.source || "";
     inputs.feature = issue.feature || "";
+    inputs.error_fingerprint = issue.fingerprint || "";
+    inputs.error_message = (issue.error_message || "").slice(0, 1000);
+    inputs.stack_trace = (issue.stack_trace || "").slice(0, 2000);
   } else if (workflowType === "prd_investigate") {
     inputs.plan_feedback = issue.plan_feedback || "";
   } else if (workflowType === "prd_implement") {
