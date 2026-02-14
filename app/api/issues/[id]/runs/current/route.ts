@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/utils/auth";
 import {
   getRun,
   getLatestRun,
+  getRunByGithubRunId,
   updateRun,
 } from "@/lib/services/agentRunService";
 
@@ -45,9 +46,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 }
 
 /**
- * PATCH /api/issues/{id}/runs/current
+ * PATCH /api/issues/{id}/runs/current?github_run_id=X
  *
- * Find the latest agent run for an issue and update it.
+ * Find the agent run for an issue and update it.
+ * When github_run_id is provided (preferred), matches the exact run record.
+ * Otherwise falls back to the latest run by created_at (legacy behavior).
+ *
  * Used by GH Actions workflows to persist investigation results
  * (report, transcript, outcome, cost) back to the agent run record.
  */
@@ -61,15 +65,23 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const { id: issueId } = await params;
     const body = await request.json();
 
-    const latestRun = await getLatestRun(issueId);
-    if (!latestRun) {
+    // Prefer matching by github_run_id to avoid race conditions when
+    // multiple runs overlap (the "latest" run may not be the caller's run)
+    const githubRunId = request.nextUrl.searchParams.get("github_run_id");
+    const targetRun = githubRunId
+      ? await getRunByGithubRunId(issueId, githubRunId)
+      : await getLatestRun(issueId);
+
+    if (!targetRun) {
       return NextResponse.json(
-        { error: "No agent runs found for this issue" },
+        { error: githubRunId
+            ? `No agent run found with github_run_id=${githubRunId}`
+            : "No agent runs found for this issue" },
         { status: 404 }
       );
     }
 
-    const run = await updateRun(latestRun.id, {
+    const run = await updateRun(targetRun.id, {
       status: body.status,
       transcript: body.transcript,
       reportContent: body.report_content,

@@ -39,10 +39,14 @@ const statusConfig: Record<
   { label: string; color: string; bgColor: string }
 > = {
   running: { label: "Running", color: "#a78bfa", bgColor: "#a78bfa20" },
+  stale: { label: "Stale", color: "#f59e0b", bgColor: "#f59e0b20" },
   completed: { label: "Completed", color: "#4ade80", bgColor: "#4ade8020" },
   failed: { label: "Failed", color: "#f87171", bgColor: "#f8717120" },
   cancelled: { label: "Cancelled", color: "#808080", bgColor: "#80808020" },
 };
+
+// GitHub Actions timeout is 30 min. A run still "running" after 45 min is likely orphaned.
+const STALE_THRESHOLD_MS = 45 * 60 * 1000;
 
 const outcomeConfig: Record<string, { label: string; color: string }> = {
   completed: { label: "Completed", color: "#4ade80" },
@@ -144,7 +148,14 @@ export default function RunCard({ run, isSelected, onClick }: RunCardProps) {
     color: "#808080",
     icon: "code",
   };
-  const status = statusConfig[run.status] || statusConfig.completed;
+
+  // Detect stale "running" runs (likely orphaned -- workflow finished but status wasn't updated)
+  const isStale =
+    run.status === "running" &&
+    new Date().getTime() - new Date(run.started_at).getTime() > STALE_THRESHOLD_MS;
+  const effectiveStatus = isStale ? "stale" : run.status;
+
+  const status = statusConfig[effectiveStatus] || statusConfig.completed;
   const outcome = run.outcome ? outcomeConfig[run.outcome] : null;
 
   return (
@@ -166,7 +177,7 @@ export default function RunCard({ run, isSelected, onClick }: RunCardProps) {
           {workflow.label}
         </div>
         <div className="flex items-center gap-2">
-          {run.status === "running" && (
+          {run.status === "running" && !isStale && (
             <span
               className="relative flex h-2 w-2"
               style={{ color: status.color }}
@@ -190,7 +201,12 @@ export default function RunCard({ run, isSelected, onClick }: RunCardProps) {
         </div>
       </div>
 
-      {/* Outcome summary if present */}
+      {/* Outcome summary or stale warning */}
+      {isStale && !run.outcome_summary && (
+        <div className="text-[12px] text-[#f59e0b] mb-2 leading-relaxed">
+          Workflow finished but status was not updated
+        </div>
+      )}
       {run.outcome_summary && (
         <div className="text-[12px] text-[#a0a0a0] mb-2 line-clamp-2 leading-relaxed">
           {run.outcome_summary}

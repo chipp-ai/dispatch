@@ -219,6 +219,29 @@ export async function getLatestRun(
   );
 }
 
+/**
+ * Find a run for an issue by its GitHub Actions run ID.
+ * Used by the workflow to update the correct run record when multiple
+ * runs overlap (avoids the race condition of /runs/current always
+ * picking the latest run by created_at).
+ */
+export async function getRunByGithubRunId(
+  issueId: string,
+  githubRunId: string
+): Promise<AgentRunSummary | null> {
+  return db.queryOne<AgentRunSummary>(
+    `SELECT
+       id, issue_id, github_run_id, github_run_url, workflow_type, status,
+       outcome, outcome_summary, cost_usd, num_turns, model, pr_number,
+       started_at, completed_at, created_at,
+       EXTRACT(EPOCH FROM (COALESCE(completed_at, NOW()) - started_at))::integer AS duration_seconds
+     FROM dispatch_agent_runs
+     WHERE issue_id = $1 AND github_run_id = $2
+     LIMIT 1`,
+    [issueId, githubRunId]
+  );
+}
+
 export interface InvestigationContextRun {
   run_number: number;
   date: string;
