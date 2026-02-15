@@ -100,6 +100,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       filesChanged: body.files_changed,
       completedAt: body.completed_at,
       followUps: body.follow_ups,
+      githubRunId: body.github_run_id,
+      githubRunUrl: body.github_run_url,
+      promptText: body.prompt_text,
     });
 
     if (!run) {

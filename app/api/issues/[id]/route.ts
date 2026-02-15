@@ -95,6 +95,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       body.agent_status = "idle";
     }
 
+    // Resolve status name to statusId (allows workflows to send status by name)
+    if (body.status && !body.statusId && previousIssue) {
+      const target = await getStatusByName(previousIssue.workspace_id, body.status);
+      if (target) {
+        body.statusId = target.id;
+      }
+    }
+
     // Auto-transition: move issue to correct board column when agent status changes.
     // Only applies when the caller didn't explicitly set statusId.
     if (!body.statusId && previousIssue) {

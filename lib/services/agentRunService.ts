@@ -82,6 +82,9 @@ export interface UpdateRunInput {
   filesChanged?: string[];
   completedAt?: string;
   followUps?: FollowUp[];
+  githubRunId?: string;
+  githubRunUrl?: string;
+  promptText?: string;
 }
 
 export async function createRun(input: CreateRunInput): Promise<AgentRun> {
@@ -167,6 +170,18 @@ export async function updateRun(
   if (updates.completedAt !== undefined) {
     setClauses.push(`completed_at = $${paramIndex++}`);
     params.push(updates.completedAt);
+  }
+  if (updates.githubRunId !== undefined) {
+    setClauses.push(`github_run_id = $${paramIndex++}`);
+    params.push(updates.githubRunId);
+  }
+  if (updates.githubRunUrl !== undefined) {
+    setClauses.push(`github_run_url = $${paramIndex++}`);
+    params.push(updates.githubRunUrl);
+  }
+  if (updates.promptText !== undefined) {
+    setClauses.push(`prompt_text = $${paramIndex++}`);
+    params.push(updates.promptText);
   }
 
   if (setClauses.length === 0) return null;

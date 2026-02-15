@@ -153,24 +153,11 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
 
-      - name: Create Run Record
-        id: create-run
+      - name: Link Run Record
         if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
         run: |
-          RUN_PAYLOAD=$(jq -n \
-            --arg workflow_type "prd_implement" \
-            --arg github_run_id "$GITHUB_RUN_ID" \
-            --arg github_run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{workflow_type: $workflow_type, github_run_id: $github_run_id, github_run_url: $github_run_url}')
-
-          RESPONSE=$(curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs" \
-            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$RUN_PAYLOAD" 2>/dev/null) || true
-
-          AGENT_RUN_ID=$(echo "$RESPONSE" | jq -r '.id // empty' 2>/dev/null)
-          echo "agent_run_id=${AGENT_RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "Created run record: ${AGENT_RUN_ID}"
+          LINK_PAYLOAD=$(jq -n --arg github_run_id "$GITHUB_RUN_ID" --arg github_run_url "$GITHUB_RUN_URL" '{github_run_id: $github_run_id, github_run_url: $github_run_url}')
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/current" -H "Authorization: Bearer ${DISPATCH_API_KEY}" -H "Content-Type: application/json" -d "$LINK_PAYLOAD" || echo "Warning: Failed to link run record (non-fatal)"
 
       - name: Setup database
         env:
@@ -953,7 +940,6 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
           JOB_STATUS: ${{ job.status }}
           OUTCOME: ${{ steps.run-result.outputs.outcome }}
           PR_NEEDED: ${{ steps.run-result.outputs.pr_needed }}
-          AGENT_RUN_ID: ${{ steps.create-run.outputs.agent_run_id }}
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
             SPAWN_STATUS="completed"
@@ -1010,8 +996,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             --arg cost_usd "$COST_USD" \
             --arg num_turns "$NUM_TURNS" \
             --arg model "$MODEL" \
-            --arg agent_run_id "$AGENT_RUN_ID" \
-            '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement", cost_usd: $cost_usd, num_turns: $num_turns, model: $model, agent_run_id: $agent_run_id}}')
+            '{type: $type, content: $content, metadata: {pr_url: $pr_url, fix_attempted: $fix_attempted, run_id: $run_id, run_url: $run_url, workflow_type: "prd_implement", cost_usd: $cost_usd, num_turns: $num_turns, model: $model}}')
 
           curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
             -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
@@ -1024,6 +1009,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
           fi
 
+          # Transition issue status: PR created → "Needs Review"
+          ISSUE_STATUS=""
+          if [ -n "$PR_URL" ]; then
+            ISSUE_STATUS="Needs Review"
+          fi
+
           STATUS_PAYLOAD=$(jq -n \
             --arg spawn_status "$SPAWN_STATUS" \
             --arg spawn_completed_at "$TIMESTAMP" \
@@ -1032,45 +1023,42 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             --arg model "$MODEL" \
             --arg run_outcome "${OUTCOME:-failed}" \
             --arg outcome_summary "$OUTCOME_SUMMARY" \
-            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary}')
+            --arg status "$ISSUE_STATUS" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary} + (if $status != "" then {status: $status} else {} end)')
 
           curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
             -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
 
-          # Update agent run record with full results
-          if [ -n "$AGENT_RUN_ID" ]; then
-            [ -f .scratch/implementation-prompt.md ] || echo "" > .scratch/implementation-prompt.md
-            [ -f .scratch/claude-output.log ] || echo "" > .scratch/claude-output.log
+          # Update agent run record via /runs/current
+          [ -f .scratch/implementation-prompt.md ] || echo "" > .scratch/implementation-prompt.md
+          [ -f .scratch/claude-output.log ] || echo "" > .scratch/claude-output.log
+          REPORT_FILE=".scratch/implementation-summary.md"
+          [ -f "$REPORT_FILE" ] || echo "" > "$REPORT_FILE"
 
-            REPORT_FILE=".scratch/implementation-summary.md"
-            [ -f "$REPORT_FILE" ] || echo "" > "$REPORT_FILE"
-
-            # Extract PR number
-            PR_NUMBER=""
-            if [ -n "${PR_URL:-}" ]; then
-              PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
-            fi
-
-            RUN_UPDATE=$(jq -n \
-              --arg status "$SPAWN_STATUS" \
-              --arg outcome "${OUTCOME:-failed}" \
-              --arg outcome_summary "${OUTCOME_SUMMARY:-}" \
-              --arg cost_usd "${COST_USD:-0}" \
-              --arg num_turns "${NUM_TURNS:-0}" \
-              --arg model "${MODEL:-unknown}" \
-              --arg pr_number "$PR_NUMBER" \
-              --rawfile prompt_text .scratch/implementation-prompt.md \
-              --rawfile transcript .scratch/claude-output.log \
-              --rawfile report_content "$REPORT_FILE" \
-              '{status: $status, outcome: $outcome, outcome_summary: $outcome_summary, cost_usd: ($cost_usd | tonumber), num_turns: ($num_turns | tonumber), model: $model, prompt_text: $prompt_text, transcript: $transcript, report_content: $report_content} + (if $pr_number != "" then {pr_number: ($pr_number | tonumber)} else {} end)')
-
-            curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/${AGENT_RUN_ID}" \
-              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
+          PR_NUMBER=""
+          if [ -n "${PR_URL:-}" ]; then
+            PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
           fi
+
+          RUN_UPDATE=$(jq -n \
+            --arg status "$SPAWN_STATUS" \
+            --arg outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "${OUTCOME_SUMMARY:-}" \
+            --arg cost_usd "${COST_USD:-0}" \
+            --arg num_turns "${NUM_TURNS:-0}" \
+            --arg model "${MODEL:-unknown}" \
+            --arg pr_number "$PR_NUMBER" \
+            --rawfile prompt_text .scratch/implementation-prompt.md \
+            --rawfile transcript .scratch/claude-output.log \
+            --rawfile report_content "$REPORT_FILE" \
+            '{status: $status, outcome: $outcome, outcome_summary: $outcome_summary, cost_usd: ($cost_usd | tonumber), num_turns: ($num_turns | tonumber), model: $model, prompt_text: $prompt_text, transcript: $transcript, report_content: $report_content} + (if $pr_number != "" then {pr_number: ($pr_number | tonumber)} else {} end)')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/current" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
 
       - name: Upload full agent log
         if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''

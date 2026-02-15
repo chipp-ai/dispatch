@@ -57,6 +57,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       prNumber:
         body.pr_number !== undefined ? Number(body.pr_number) : undefined,
       completedAt: body.completed_at,
+      githubRunId: body.github_run_id,
+      githubRunUrl: body.github_run_url,
+      promptText: body.prompt_text,
     });
 
     if (!run) {
