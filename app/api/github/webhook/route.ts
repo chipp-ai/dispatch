@@ -308,7 +308,7 @@ async function handlePROpened(workspaceId: string, pr: PRData) {
     if (!issue) continue;
 
     // Only move to "In Review" if not already further along
-    const statusOrder = ["backlog", "triage", "todo", "in progress"];
+    const statusOrder = ["backlog", "triage", "todo", "in progress", "waiting for agent", "investigating"];
 
     if (statusOrder.includes(issue.status.name.toLowerCase())) {
       const inReviewStatus = await getStatusByName(workspaceId, "In Review");
