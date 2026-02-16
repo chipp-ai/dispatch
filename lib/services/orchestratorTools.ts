@@ -1,9 +1,10 @@
 /**
  * Orchestrator Tools
  *
- * 7 mission-oriented tools for the Dispatch orchestrator. Every dispatch_*
- * tool creates an issue AND immediately spawns an agent -- there is no
- * standalone issue creation.
+ * 17 tools for the Dispatch orchestrator:
+ * - 7 mission tools (dispatch_*, get_*, search_*) for agent orchestration
+ * - 6 Loki tools (loki_*) for production log analytics
+ * - 4 database tools (chipp_db_*) for product database queries
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
@@ -22,12 +23,19 @@ import {
 import { broadcastBoardEvent } from "./boardBroadcast";
 import { getOrCreateDefaultWorkspace } from "./workspaceService";
 import { db } from "../db";
+import { lokiTools, executeLokiTool } from "./analyticsLokiTools";
+import { dbTools, executeDbTool } from "./analyticsDbTools";
 
 type Tool = Anthropic.Tool;
 
 // --- Tool Definitions ---
 
 export const tools: Tool[] = [
+  // --- Analytics Tools ---
+  ...lokiTools,
+  ...dbTools,
+
+  // --- Mission Tools ---
   {
     name: "dispatch_investigation",
     description:
@@ -165,6 +173,14 @@ export async function executeTool(
   input: ToolInput
 ): Promise<string> {
   try {
+    // Route analytics tools by prefix
+    if (name.startsWith("loki_")) {
+      return await executeLokiTool(name, input);
+    }
+    if (name.startsWith("chipp_db_")) {
+      return await executeDbTool(name, input);
+    }
+
     switch (name) {
       case "dispatch_investigation":
         return await executeDispatchInvestigation(input);
