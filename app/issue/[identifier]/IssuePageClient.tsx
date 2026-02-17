@@ -124,6 +124,9 @@ interface Issue {
     | "idle"
     | "investigating"
     | "implementing"
+    | "testing"
+    | "researching"
+    | "triaging"
     | "blocked"
     | "awaiting_review";
   agent_output: AgentOutput | null;
@@ -169,6 +172,24 @@ const agentStatusConfig: Record<
     color: "#22d3d3",
     bgColor: "#22d3d320",
     pulseColor: "#22d3d3",
+  },
+  testing: {
+    label: "Testing",
+    color: "#f59e0b",
+    bgColor: "#f59e0b20",
+    pulseColor: "#f59e0b",
+  },
+  researching: {
+    label: "Researching",
+    color: "#8b5cf6",
+    bgColor: "#8b5cf620",
+    pulseColor: "#8b5cf6",
+  },
+  triaging: {
+    label: "Triaging",
+    color: "#ec4899",
+    bgColor: "#ec489920",
+    pulseColor: "#ec4899",
   },
   blocked: { label: "Blocked", color: "#f87171", bgColor: "#f8717120" },
   awaiting_review: {
@@ -363,7 +384,7 @@ function AgentStatusIcon({
   status: string;
   animate?: boolean;
 }) {
-  const isActive = status === "investigating" || status === "implementing";
+  const isActive = status === "investigating" || status === "implementing" || status === "testing" || status === "researching" || status === "triaging";
 
   return (
     <div className="relative">
@@ -834,6 +855,8 @@ export default function IssuePageClient() {
   const [showRetryDialog, setShowRetryDialog] = useState(false);
   const [autoSpawnOnApprove, setAutoSpawnOnApprove] = useState(true);
 
+  const issueJsonRef = useRef<string>("");
+
   const fetchIssue = useCallback(async () => {
     try {
       const res = await fetch(`/api/issues/${identifier}`);
@@ -849,9 +872,14 @@ export default function IssuePageClient() {
         throw new Error("Failed to fetch issue");
       }
       const data = await res.json();
-      setIssue(data);
-      setTitleValue(data.title);
-      setDescriptionValue(data.description || "");
+      // Only update state if data actually changed to prevent cascading re-renders
+      const json = JSON.stringify(data);
+      if (json !== issueJsonRef.current) {
+        issueJsonRef.current = json;
+        setIssue(data);
+        setTitleValue(data.title);
+        setDescriptionValue(data.description || "");
+      }
     } catch (err) {
       setError("Failed to load issue");
     }
@@ -913,7 +941,8 @@ export default function IssuePageClient() {
     } catch (err) {
       console.error("Failed to fetch agent activity:", err);
     }
-  }, [issue, terminalLines.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id, issue?.agent_status, terminalLines.length]);
 
   const fetchLinkedPRs = useCallback(async () => {
     if (!issue) return;
@@ -929,7 +958,8 @@ export default function IssuePageClient() {
     } finally {
       setLoadingPRs(false);
     }
-  }, [issue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id]);
 
   const fetchRuns = useCallback(async () => {
     if (!issue) return;
@@ -942,7 +972,8 @@ export default function IssuePageClient() {
     } catch (err) {
       console.error("Failed to fetch agent runs:", err);
     }
-  }, [issue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id]);
 
   const fetchInvestigationContext = useCallback(async () => {
     if (!issue) return;
@@ -955,7 +986,8 @@ export default function IssuePageClient() {
     } catch {
       // Non-fatal
     }
-  }, [issue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id]);
 
   useEffect(() => {
     fetchIssue().finally(() => setLoading(false));
@@ -968,7 +1000,8 @@ export default function IssuePageClient() {
       fetchRuns();
       fetchInvestigationContext();
     }
-  }, [issue, fetchAgentActivity, fetchLinkedPRs, fetchRuns, fetchInvestigationContext]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.id, fetchAgentActivity, fetchLinkedPRs, fetchRuns, fetchInvestigationContext]);
 
   // Clear terminal when a new investigation starts (avoids stale output from previous run)
   useEffect(() => {
@@ -1126,7 +1159,7 @@ export default function IssuePageClient() {
     }
   }
 
-  async function handleSpawn(type: "investigate" | "implement") {
+  async function handleSpawn(type: "investigate" | "implement" | "triage" | "qa" | "research") {
     if (!issue) return;
     setSpawnLoading(true);
     setSpawnError(null);
@@ -1169,7 +1202,7 @@ export default function IssuePageClient() {
   }
 
   async function handleRetrySpawn(data: {
-    type: "investigate" | "implement";
+    type: "investigate" | "implement" | "triage" | "qa" | "research";
     additional_context?: string;
     force?: boolean;
   }) {
@@ -1427,40 +1460,24 @@ export default function IssuePageClient() {
               className={agentRuns.filter(r => r.status !== "running").length > 0 ? "shrink-0" : "flex-1 min-h-0"}
             />
           ) : (
-            /* Empty state with CTA */
+            /* Empty state with Action Panel */
             <div className="flex-1 flex flex-col items-center justify-center rounded-lg border border-[#1f1f1f] bg-[#0a0a0a]">
-              <div className="text-center">
-                <div className="mb-4 text-[#303030]">
-                  <svg className="w-12 h-12 mx-auto" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M4 6l2 2-2 2M7 10h4"
-                      stroke="currentColor"
-                      strokeWidth="1.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+              {issue.agent_status === "idle" ? (
+                <ActionPanel
+                  hasApprovedPlan={issue.plan_status === "approved"}
+                  onAction={handleSpawn}
+                  loading={spawnLoading}
+                />
+              ) : (
+                <div className="text-center">
+                  <div className="mb-3 text-[#303030]">
+                    <svg className="w-10 h-10 mx-auto" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 6l2 2-2 2M7 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <p className="text-[13px] text-[#505050]">Waiting for agent output...</p>
                 </div>
-                <p className="text-[13px] text-[#505050] mb-4">
-                  No terminal output yet
-                </p>
-                {issue.agent_status === "idle" && (
-                  <button
-                    onClick={() => handleSpawn("investigate")}
-                    disabled={spawnLoading}
-                    className="flex items-center gap-2 px-5 py-2 mx-auto bg-gradient-to-r from-[#5e6ad2] to-[#7c3aed] hover:from-[#6b74db] hover:to-[#8b5cf6] text-white text-[13px] font-medium rounded-lg transition-all shadow-lg shadow-[#5e6ad2]/20 disabled:opacity-50"
-                  >
-                    {spawnLoading ? (
-                      <div className="w-4 h-4 border border-white/40 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <AgentStatusIcon status="investigating" />
-                    )}
-                    {issue.run_outcome || (issue.spawn_attempt_count != null && issue.spawn_attempt_count > 0)
-                      ? "Reinvestigate"
-                      : "Investigate"}
-                  </button>
-                )}
-              </div>
+              )}
             </div>
           )}
 
@@ -2312,6 +2329,167 @@ export default function IssuePageClient() {
         lastOutcome={issue.run_outcome}
         outcomeSummary={issue.outcome_summary}
       />
+    </div>
+  );
+}
+
+// --- Action Panel ---
+
+type SpawnType = "investigate" | "implement" | "triage" | "qa" | "research";
+
+interface ActionCardDef {
+  type: SpawnType;
+  label: string;
+  description: string;
+  color: string;
+  icon: React.ReactNode;
+  requiresPlan?: boolean;
+}
+
+const primaryActions: ActionCardDef[] = [
+  {
+    type: "investigate",
+    label: "Investigate",
+    description: "Explore the codebase and produce an implementation plan. Read-only, no changes made.",
+    color: "#a78bfa",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+        <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    type: "triage",
+    label: "Triage",
+    description: "Quick assessment: close if stale/duplicate, fix if simple, or escalate.",
+    color: "#ec4899",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    type: "research",
+    label: "Research",
+    description: "Deep research using internet + codebase. Produces a report with findings and recommendations.",
+    color: "#8b5cf6",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+        <path d="M3 2h7l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+        <path d="M5 7h6M5 9.5h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+];
+
+const postPlanActions: ActionCardDef[] = [
+  {
+    type: "implement",
+    label: "Implement",
+    description: "Execute the approved plan. Creates a branch, writes code, opens a PR.",
+    color: "#22d3d3",
+    requiresPlan: true,
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+        <path d="M4 6l2 2-2 2M8 10h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    type: "qa",
+    label: "QA Test",
+    description: "Test the implementation end-to-end in a browser. Produces a QA report with screenshots.",
+    color: "#f59e0b",
+    requiresPlan: true,
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+];
+
+function ActionPanel({
+  hasApprovedPlan,
+  onAction,
+  loading,
+}: {
+  hasApprovedPlan: boolean;
+  onAction: (type: SpawnType) => void;
+  loading: boolean;
+}) {
+  const actions = hasApprovedPlan
+    ? [...postPlanActions, ...primaryActions]
+    : primaryActions;
+
+  return (
+    <div className="w-full max-w-md px-6 py-8">
+      <div className="text-center mb-5">
+        <div className="mb-2 text-[#303030]">
+          <svg className="w-8 h-8 mx-auto" viewBox="0 0 16 16" fill="none">
+            <rect x="3" y="4" width="10" height="8" rx="2" stroke="currentColor" strokeWidth="1.25" />
+            <circle cx="6" cy="8" r="1" fill="currentColor" />
+            <circle cx="10" cy="8" r="1" fill="currentColor" />
+            <path d="M8 4V2M8 2L6 1M8 2L10 1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+          </svg>
+        </div>
+        <p className="text-[12px] text-[#505050]">Choose an action to begin</p>
+      </div>
+      <div className="space-y-2">
+        {actions.map((action) => {
+          const isGated = action.requiresPlan && !hasApprovedPlan;
+          return (
+            <button
+              key={action.type}
+              onClick={() => onAction(action.type)}
+              disabled={loading || isGated}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-all group ${
+                isGated
+                  ? "border-[#1a1a1a] opacity-40 cursor-not-allowed"
+                  : "border-[#1f1f1f] hover:border-[#333] hover:bg-[#111]"
+              }`}
+            >
+              <div
+                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-md"
+                style={{ backgroundColor: `${action.color}15`, color: action.color }}
+              >
+                {action.icon}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="text-[13px] font-medium"
+                    style={{ color: isGated ? "#505050" : action.color }}
+                  >
+                    {action.label}
+                  </span>
+                  {isGated && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-[#1a1a1a] text-[#505050] border border-[#252525]">
+                      Requires plan
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-[#505050] leading-relaxed mt-0.5 line-clamp-2">
+                  {action.description}
+                </p>
+              </div>
+              {!isGated && (
+                <svg
+                  className="w-4 h-4 shrink-0 text-[#333] group-hover:text-[#555] transition-colors"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                >
+                  <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

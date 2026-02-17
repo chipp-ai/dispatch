@@ -1009,10 +1009,13 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
           fi
 
-          # Transition issue status: PR created → "Needs Review"
+          # Transition issue status after implementation:
+          # - PR created → "In Review" (code needs human review)
+          # - No PR but completed → "In Review" (outcome needs human review)
+          # - Failed → leave status for auto-transition in API route
           ISSUE_STATUS=""
-          if [ -n "$PR_URL" ]; then
-            ISSUE_STATUS="Needs Review"
+          if [ "$SPAWN_STATUS" = "completed" ]; then
+            ISSUE_STATUS="In Review"
           fi
 
           STATUS_PAYLOAD=$(jq -n \

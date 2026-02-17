@@ -26,6 +26,11 @@ import { getOrCreateDefaultWorkspace } from "./workspaceService";
 import { db } from "../db";
 import { lokiTools, executeLokiTool } from "./analyticsLokiTools";
 import { dbTools, executeDbTool } from "./analyticsDbTools";
+import {
+  findDuplicateClusters,
+  reviewClusters,
+  executeDedupDecisions,
+} from "./deduplicationService";
 
 type Tool = Anthropic.Tool;
 
@@ -130,6 +135,33 @@ export const tools: Tool[] = [
         },
       },
       required: ["mission_identifier"],
+    },
+  },
+  {
+    name: "deduplicate_missions",
+    description:
+      "Find and resolve duplicate missions. Uses vector similarity to cluster similar issues, then Claude Haiku reviews each cluster to identify true duplicates. By default runs in dry-run mode (preview only). Set execute=true to close duplicates.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        statuses: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Board columns to scan (default: ["Backlog", "Investigating"])',
+        },
+        threshold: {
+          type: "number",
+          description:
+            "Similarity threshold 0-1 (default: 0.85). Lower = more aggressive matching.",
+        },
+        execute: {
+          type: "boolean",
+          description:
+            "If true, close duplicates. If false (default), just preview proposed actions.",
+        },
+      },
+      required: [],
     },
   },
   {
@@ -266,6 +298,8 @@ export async function executeTool(
         return await executeDispatchResearch(input);
       case "dispatch_triage":
         return await executeDispatchTriage(input);
+      case "deduplicate_missions":
+        return await executeDedupMissions(input);
       case "get_fleet_status":
         return await executeGetFleetStatus();
       case "get_mission":
@@ -575,6 +609,72 @@ async function executeDispatchTriage(input: ToolInput): Promise<string> {
     identifier: issue.identifier,
     dispatch_id: dispatchId,
     message: `Triage agent dispatched for ${issue.identifier}. It will investigate and decide: close, fix, or escalate.`,
+  });
+}
+
+// --- Dedup Tool ---
+
+async function executeDedupMissions(input: ToolInput): Promise<string> {
+  const statuses = (input.statuses as string[]) || ["Backlog", "Investigating"];
+  const threshold = (input.threshold as number) || 0.85;
+  const execute = (input.execute as boolean) || false;
+
+  // Step 1: Find clusters
+  const clusters = await findDuplicateClusters({
+    statuses,
+    threshold,
+    maxClusters: 50,
+  });
+
+  if (clusters.length === 0) {
+    return JSON.stringify({
+      message: `No duplicate clusters found in ${statuses.join(", ")} (threshold: ${threshold})`,
+    });
+  }
+
+  // Step 2: Review with LLM
+  const reviewed = await reviewClusters(clusters);
+
+  const totalToClose = reviewed.reduce(
+    (sum, r) => sum + r.duplicates.length,
+    0
+  );
+
+  if (!execute) {
+    // Dry run — format as readable markdown
+    let preview = `## Dedup Preview\n\n`;
+    preview += `Scanned: ${statuses.join(", ")} | Threshold: ${threshold}\n`;
+    preview += `Clusters found: ${clusters.length} | Reviewed: ${reviewed.length} | Proposed closures: ${totalToClose}\n\n`;
+
+    for (const cluster of reviewed) {
+      if (cluster.duplicates.length === 0) continue;
+      preview += `### Canonical: ${cluster.canonical.identifier} — ${cluster.canonical.title}\n`;
+      for (const dupe of cluster.duplicates) {
+        preview += `- Close **${dupe.issue.identifier}** (${dupe.issue.title}) — ${dupe.reason}\n`;
+      }
+      if (cluster.keep_separate.length > 0) {
+        preview += `- Keep separate: ${cluster.keep_separate.map((s) => s.identifier).join(", ")}\n`;
+      }
+      preview += "\n";
+    }
+
+    preview += `\n**Run with execute=true to close ${totalToClose} duplicate(s).**`;
+
+    return JSON.stringify({
+      dry_run: true,
+      clusters_reviewed: reviewed.length,
+      total_to_close: totalToClose,
+      preview,
+    });
+  }
+
+  // Step 3: Execute
+  const result = await executeDedupDecisions(reviewed);
+
+  return JSON.stringify({
+    executed: true,
+    ...result,
+    summary: `Closed ${result.issuesClosed} duplicate(s) across ${result.clustersReviewed} cluster(s). ${result.commentsAdded} comment(s) added.`,
   });
 }
 

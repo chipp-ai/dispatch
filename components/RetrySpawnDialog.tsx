@@ -2,11 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 
+type WorkflowType = "investigate" | "implement" | "triage" | "qa" | "research";
+
 interface RetrySpawnDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: {
-    type: "investigate" | "implement";
+    type: WorkflowType;
     additional_context?: string;
     force?: boolean;
   }) => Promise<void>;
@@ -15,6 +17,47 @@ interface RetrySpawnDialogProps {
   lastOutcome?: string | null;
   outcomeSummary?: string | null;
 }
+
+const workflowOptions: {
+  type: WorkflowType;
+  label: string;
+  description: string;
+  color: string;
+  requiresPlan?: boolean;
+}[] = [
+  {
+    type: "investigate",
+    label: "Investigate",
+    description: "Explore and plan",
+    color: "#a78bfa",
+  },
+  {
+    type: "implement",
+    label: "Implement",
+    description: "Write code",
+    color: "#22d3d3",
+    requiresPlan: true,
+  },
+  {
+    type: "triage",
+    label: "Triage",
+    description: "Quick assessment",
+    color: "#ec4899",
+  },
+  {
+    type: "qa",
+    label: "QA Test",
+    description: "Test end-to-end",
+    color: "#f59e0b",
+    requiresPlan: true,
+  },
+  {
+    type: "research",
+    label: "Research",
+    description: "Deep research",
+    color: "#8b5cf6",
+  },
+];
 
 export default function RetrySpawnDialog({
   isOpen,
@@ -26,7 +69,7 @@ export default function RetrySpawnDialog({
   outcomeSummary,
 }: RetrySpawnDialogProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [type, setType] = useState<"investigate" | "implement">("investigate");
+  const [type, setType] = useState<WorkflowType>("investigate");
   const [context, setContext] = useState("");
   const [force, setForce] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -106,25 +149,27 @@ export default function RetrySpawnDialog({
             </div>
           )}
 
-          {/* Workflow type */}
+          {/* Workflow type - 2 column grid */}
           <div className="px-5 pt-3">
             <label className="text-[11px] text-[#666] mb-1.5 block">
               Workflow
             </label>
-            <div className="flex gap-2">
-              <TypeButton
-                selected={type === "investigate"}
-                onClick={() => setType("investigate")}
-                label="Investigate"
-                description="Explore and plan"
-              />
-              <TypeButton
-                selected={type === "implement"}
-                onClick={() => setType("implement")}
-                label="Implement"
-                description="Write code"
-                disabled={!hasApprovedPlan}
-              />
+            <div className="grid grid-cols-2 gap-2">
+              {workflowOptions.map((opt) => {
+                const isDisabled = opt.requiresPlan && !hasApprovedPlan;
+                return (
+                  <TypeButton
+                    key={opt.type}
+                    selected={type === opt.type}
+                    onClick={() => setType(opt.type)}
+                    label={opt.label}
+                    description={opt.description}
+                    color={opt.color}
+                    disabled={isDisabled}
+                    badge={isDisabled ? "Needs plan" : undefined}
+                  />
+                );
+              })}
             </div>
           </div>
 
@@ -186,20 +231,24 @@ function TypeButton({
   onClick,
   label,
   description,
+  color,
   disabled,
+  badge,
 }: {
   selected: boolean;
   onClick: () => void;
   label: string;
   description: string;
+  color: string;
   disabled?: boolean;
+  badge?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex-1 px-3 py-2 rounded-lg border text-left transition-all ${
+      className={`px-3 py-2 rounded-lg border text-left transition-all ${
         selected
           ? "border-[#5e6ad2] bg-[#5e6ad215]"
           : disabled
@@ -207,14 +256,25 @@ function TypeButton({
           : "border-[#252525] hover:border-[#333]"
       }`}
     >
-      <div
-        className={`text-[12px] font-medium ${
-          selected ? "text-[#8b95e6]" : "text-[#888]"
-        }`}
-      >
-        {label}
+      <div className="flex items-center gap-1.5">
+        <div
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+        />
+        <span
+          className={`text-[12px] font-medium ${
+            selected ? "text-[#e0e0e0]" : "text-[#888]"
+          }`}
+        >
+          {label}
+        </span>
+        {badge && (
+          <span className="px-1 py-0.5 text-[8px] font-medium rounded bg-[#1a1a1a] text-[#555] border border-[#252525] ml-auto">
+            {badge}
+          </span>
+        )}
       </div>
-      <div className="text-[10px] text-[#555]">{description}</div>
+      <div className="text-[10px] text-[#555] mt-0.5 ml-3.5">{description}</div>
     </button>
   );
 }

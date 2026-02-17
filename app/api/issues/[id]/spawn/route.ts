@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       force = false,
       additional_context,
     } = body as {
-      type?: "investigate" | "implement" | "triage";
+      type?: "investigate" | "implement" | "triage" | "qa" | "research";
       force?: boolean;
       additional_context?: string;
     };
@@ -38,17 +38,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Map request type to workflow type
-    const workflowType: WorkflowType =
-      type === "implement"
-        ? "prd_implement"
-        : type === "triage"
-          ? "auto_triage"
-          : "prd_investigate";
+    const workflowTypeMap: Record<string, WorkflowType> = {
+      investigate: "prd_investigate",
+      implement: "prd_implement",
+      triage: "auto_triage",
+      qa: "qa",
+      research: "deep_research",
+    };
+    const workflowType: WorkflowType = workflowTypeMap[type] || "prd_investigate";
 
-    // For implement, require an approved plan
-    if (type === "implement" && !issue.plan_content) {
+    // For implement and qa, require an approved plan
+    if ((type === "implement" || type === "qa") && !issue.plan_content) {
       return NextResponse.json(
-        { error: "Cannot implement without an approved plan" },
+        { error: `Cannot ${type} without an approved plan` },
         { status: 400 }
       );
     }
@@ -81,7 +83,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       additional_context: additional_context || undefined,
     };
 
-    const spawnType = type === "implement" ? "implement" : type === "triage" ? "triage" : "investigate";
+    // Log plan_feedback for debugging re-investigation feedback propagation
+    if (type === "investigate" && issue.plan_feedback) {
+      console.log(
+        `[Spawn] Re-investigating ${issue.identifier} with plan_feedback: "${issue.plan_feedback.slice(0, 100)}..."`
+      );
+    }
+
+    const spawnTypeMap: Record<string, string> = {
+      investigate: "investigate",
+      implement: "implement",
+      triage: "triage",
+      qa: "qa",
+      research: "research",
+    };
+    const spawnType = spawnTypeMap[type] || "investigate";
     const dispatchId = await dispatchWorkflow(spawnable, workflowType);
     await recordSpawn(issue.id, dispatchId, spawnType);
 

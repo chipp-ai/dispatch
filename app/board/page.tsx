@@ -65,11 +65,6 @@ export default function BoardPage() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [isConnected, setIsConnected] = useState(false);
-  const [isReconciling, setIsReconciling] = useState(false);
-  const [reconcileResult, setReconcileResult] = useState<{
-    prsProcessed: number;
-    issuesUpdated: number;
-  } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -253,40 +248,6 @@ export default function BoardPage() {
     }
   }
 
-  async function handleReconcile() {
-    if (isReconciling) return;
-
-    setIsReconciling(true);
-    setReconcileResult(null);
-
-    try {
-      const res = await fetch("/api/reconcile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!res.ok) {
-        throw new Error("Reconciliation failed");
-      }
-
-      const result = await res.json();
-      setReconcileResult({
-        prsProcessed: result.prsProcessed,
-        issuesUpdated: result.issuesUpdated,
-      });
-
-      // Refresh data after reconciliation
-      await fetchData();
-
-      // Clear result after 5 seconds
-      setTimeout(() => setReconcileResult(null), 5000);
-    } catch (error) {
-      console.error("Reconciliation error:", error);
-    } finally {
-      setIsReconciling(false);
-    }
-  }
-
   // Filter statuses based on view mode
   const getFilteredStatuses = () => {
     const sortedStatuses = [...statuses].sort(
@@ -394,27 +355,6 @@ export default function BoardPage() {
               </div>
 
               <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
-                {/* Reconcile result toast */}
-                {reconcileResult && (
-                  <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-[#4ade80] bg-[#4ade8015] rounded">
-                    <svg
-                      className="w-3.5 h-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    {reconcileResult.prsProcessed} PRs,{" "}
-                    {reconcileResult.issuesUpdated} issues updated
-                  </div>
-                )}
-
                 {/* Live indicator */}
                 <div className="flex items-center gap-1.5 px-1.5 md:px-2 py-1 text-[11px] text-[#666]">
                   <span
@@ -424,21 +364,6 @@ export default function BoardPage() {
                   />
                   <span className="hidden sm:inline">{isConnected ? "Live" : "Offline"}</span>
                 </div>
-
-                {/* Reconcile button */}
-                <button
-                  onClick={handleReconcile}
-                  disabled={isReconciling}
-                  className={`flex items-center gap-1.5 p-1.5 md:px-2.5 md:py-1 text-[12px] rounded transition-colors ${
-                    isReconciling
-                      ? "text-[#555] cursor-not-allowed"
-                      : "text-[#5e6ad2] hover:text-[#7b83dc] hover:bg-[#5e6ad215]"
-                  }`}
-                  title="Reconcile"
-                >
-                  <ReconcileIcon spinning={isReconciling} />
-                  <span className="hidden md:inline">{isReconciling ? "Syncing..." : "Reconcile"}</span>
-                </button>
 
                 {/* Filter button */}
                 <button className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-[#888] hover:text-[#ccc] hover:bg-[#1a1a1a] rounded transition-colors">
@@ -543,20 +468,3 @@ function DisplayIcon() {
   );
 }
 
-function ReconcileIcon({ spinning }: { spinning?: boolean }) {
-  return (
-    <svg
-      className={`w-3.5 h-3.5 ${spinning ? "animate-spin" : ""}`}
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={1.5}
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
-  );
-}
