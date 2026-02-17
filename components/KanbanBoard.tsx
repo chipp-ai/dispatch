@@ -55,15 +55,6 @@ function getStatusIcon(statusName: string, color: string) {
     );
   }
 
-  // Triage - empty circle
-  if (name === "triage") {
-    return (
-      <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6" stroke={color} strokeWidth="1.5" />
-      </svg>
-    );
-  }
-
   // Investigating - magnifying glass with pulse
   if (name === "investigating") {
     return (

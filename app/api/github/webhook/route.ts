@@ -308,7 +308,7 @@ async function handlePROpened(workspaceId: string, pr: PRData) {
     if (!issue) continue;
 
     // Only move to "In Review" if not already further along
-    const statusOrder = ["backlog", "triage", "todo", "in progress", "waiting for agent", "investigating"];
+    const statusOrder = ["backlog", "investigating", "needs review", "in progress"];
 
     if (statusOrder.includes(issue.status.name.toLowerCase())) {
       const inReviewStatus = await getStatusByName(workspaceId, "In Review");
@@ -377,19 +377,19 @@ async function handlePRMerged(
       "GitHub Webhook"
     );
 
-    // Move issue to "In Staging"
+    // Move issue to "Done" when PR is merged
     const issue = await getIssue(existingPR.issue_id);
-    if (issue && pr.baseBranch === "staging") {
-      const inStagingStatus = await getStatusByName(workspaceId, "In Staging");
-      if (inStagingStatus && issue.status.name.toLowerCase() !== "in staging") {
+    if (issue) {
+      const doneStatus = await getStatusByName(workspaceId, "Done");
+      if (doneStatus && issue.status.name.toLowerCase() !== "done") {
         await updateIssue(existingPR.issue_id, {
-          statusId: inStagingStatus.id,
+          statusId: doneStatus.id,
         });
 
         await recordStatusChange(
           existingPR.issue_id,
           issue.status.name,
-          "In Staging",
+          "Done",
           "github_webhook",
           "GitHub Webhook"
         );
@@ -405,7 +405,7 @@ async function handlePRMerged(
         }
 
         console.log(
-          `[GitHub Webhook] Updated ${issue.identifier} status to "In Staging"`
+          `[GitHub Webhook] Updated ${issue.identifier} status to "Done"`
         );
       }
     }
@@ -433,35 +433,30 @@ async function handlePRMerged(
         "GitHub Webhook"
       );
 
-      // Move to "In Staging" if merged to staging
-      if (pr.baseBranch === "staging") {
-        const issue = await getIssue(match.issueId);
-        if (!issue) continue;
+      // Move to "Done" when PR is merged
+      const issue = await getIssue(match.issueId);
+      if (!issue) continue;
 
-        const inStagingStatus = await getStatusByName(
-          workspaceId,
-          "In Staging"
+      const doneStatus = await getStatusByName(workspaceId, "Done");
+      if (doneStatus && issue.status.name.toLowerCase() !== "done") {
+        await updateIssue(match.issueId, { statusId: doneStatus.id });
+
+        await recordStatusChange(
+          match.issueId,
+          issue.status.name,
+          "Done",
+          "github_webhook",
+          "GitHub Webhook"
         );
-        if (inStagingStatus) {
-          await updateIssue(match.issueId, { statusId: inStagingStatus.id });
 
-          await recordStatusChange(
-            match.issueId,
-            issue.status.name,
-            "In Staging",
-            "github_webhook",
-            "GitHub Webhook"
-          );
-
-          const boardIssue = await getIssueForBoard(match.issueId);
-          if (boardIssue) {
-            broadcastBoardEvent({
-              type: "issue_moved",
-              issue: boardIssue,
-              previousStatusId: issue.status.id,
-              timestamp: new Date().toISOString(),
-            });
-          }
+        const boardIssue = await getIssueForBoard(match.issueId);
+        if (boardIssue) {
+          broadcastBoardEvent({
+            type: "issue_moved",
+            issue: boardIssue,
+            previousStatusId: issue.status.id,
+            timestamp: new Date().toISOString(),
+          });
         }
       }
     }
@@ -545,15 +540,12 @@ async function handleFixTrackingForMergedPR(pr: PRData) {
 async function handleReleasePRMerged(workspaceId: string, pr: PRData) {
   console.log(`[GitHub Webhook] Processing release PR merged: #${pr.number}`);
 
-  // Find all issues that should move to "In Production"
+  // Find all issues that should move to "Done"
   const matches = await analyzeReleasePR(workspaceId, pr);
 
-  const inProductionStatus = await getStatusByName(
-    workspaceId,
-    "In Production"
-  );
-  if (!inProductionStatus) {
-    console.error('[GitHub Webhook] "In Production" status not found');
+  const doneStatus = await getStatusByName(workspaceId, "Done");
+  if (!doneStatus) {
+    console.error('[GitHub Webhook] "Done" status not found');
     return;
   }
 
@@ -561,13 +553,15 @@ async function handleReleasePRMerged(workspaceId: string, pr: PRData) {
     const issue = await getIssue(match.issueId);
     if (!issue) continue;
 
-    // Move to "In Production"
-    await updateIssue(match.issueId, { statusId: inProductionStatus.id });
+    if (issue.status.name.toLowerCase() === "done") continue;
+
+    // Move to "Done"
+    await updateIssue(match.issueId, { statusId: doneStatus.id });
 
     await recordStatusChange(
       match.issueId,
       issue.status.name,
-      "In Production",
+      "Done",
       "github_webhook",
       "GitHub Webhook (Release)"
     );
@@ -583,7 +577,7 @@ async function handleReleasePRMerged(workspaceId: string, pr: PRData) {
     }
 
     console.log(
-      `[GitHub Webhook] Moved ${match.issueIdentifier} to "In Production"`
+      `[GitHub Webhook] Moved ${match.issueIdentifier} to "Done"`
     );
   }
 }

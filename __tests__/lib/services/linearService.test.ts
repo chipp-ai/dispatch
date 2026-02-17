@@ -45,39 +45,47 @@ describe("linearService", () => {
       expect(mapLinearStatus("BACKLOG")).toBe("Backlog");
     });
 
-    it("maps triage to Triage", () => {
-      expect(mapLinearStatus("triage")).toBe("Triage");
-      expect(mapLinearStatus("Triage")).toBe("Triage");
+    it("maps triage to Backlog", () => {
+      expect(mapLinearStatus("triage")).toBe("Backlog");
+      expect(mapLinearStatus("Triage")).toBe("Backlog");
     });
 
-    it("maps waiting for agent to Waiting for agent", () => {
-      expect(mapLinearStatus("waiting for agent")).toBe("Waiting for agent");
-      expect(mapLinearStatus("Waiting for agent")).toBe("Waiting for agent");
+    it("maps investigating to Investigating", () => {
+      expect(mapLinearStatus("investigating")).toBe("Investigating");
     });
 
-    it("maps being developed to Being Developed", () => {
-      expect(mapLinearStatus("being developed")).toBe("Being Developed");
-      expect(mapLinearStatus("Being Developed")).toBe("Being Developed");
+    it("maps waiting for agent to Needs Review", () => {
+      expect(mapLinearStatus("waiting for agent")).toBe("Needs Review");
+      expect(mapLinearStatus("Waiting for agent")).toBe("Needs Review");
     });
 
-    it("maps pr open to PR Open", () => {
-      expect(mapLinearStatus("pr open")).toBe("PR Open");
-      expect(mapLinearStatus("PR Open")).toBe("PR Open");
+    it("maps being developed to In Progress", () => {
+      expect(mapLinearStatus("being developed")).toBe("In Progress");
+      expect(mapLinearStatus("Being Developed")).toBe("In Progress");
     });
 
-    it("maps verify in staging to Verify in Staging", () => {
-      expect(mapLinearStatus("verify in staging")).toBe("Verify in Staging");
-      expect(mapLinearStatus("Verify in Staging")).toBe("Verify in Staging");
+    it("maps in progress to In Progress", () => {
+      expect(mapLinearStatus("in progress")).toBe("In Progress");
     });
 
-    it("maps verify in prod to Verify in Prod", () => {
-      expect(mapLinearStatus("verify in prod")).toBe("Verify in Prod");
-      expect(mapLinearStatus("Verify in Prod")).toBe("Verify in Prod");
+    it("maps pr open to In Review", () => {
+      expect(mapLinearStatus("pr open")).toBe("In Review");
+      expect(mapLinearStatus("PR Open")).toBe("In Review");
     });
 
-    it("maps ready for prod to Ready for prod", () => {
-      expect(mapLinearStatus("ready for prod")).toBe("Ready for prod");
-      expect(mapLinearStatus("Ready for prod")).toBe("Ready for prod");
+    it("maps verify in staging to Done", () => {
+      expect(mapLinearStatus("verify in staging")).toBe("Done");
+      expect(mapLinearStatus("Verify in Staging")).toBe("Done");
+    });
+
+    it("maps verify in prod to Done", () => {
+      expect(mapLinearStatus("verify in prod")).toBe("Done");
+      expect(mapLinearStatus("Verify in Prod")).toBe("Done");
+    });
+
+    it("maps ready for prod to Done", () => {
+      expect(mapLinearStatus("ready for prod")).toBe("Done");
+      expect(mapLinearStatus("Ready for prod")).toBe("Done");
     });
 
     it("maps done to Done", () => {

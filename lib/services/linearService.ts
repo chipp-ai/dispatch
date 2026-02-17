@@ -220,17 +220,23 @@ export function mapLinearPriority(
  * Linear and Dispatch statuses should match exactly after migration.
  */
 export function mapLinearStatus(linearStatusName: string): string {
-  // Direct mapping - statuses should match exactly
+  // Map Linear status names to Dispatch's 7-column board
   const statusMap: Record<string, string> = {
     backlog: "Backlog",
-    triage: "Triage",
-    "waiting for agent": "Waiting for agent",
-    "being developed": "Being Developed",
-    "pr open": "PR Open",
-    "verify in staging": "Verify in Staging",
-    "verify in prod": "Verify in Prod",
-    "ready for prod": "Ready for prod",
+    triage: "Backlog",
+    investigating: "Investigating",
+    "needs review": "Needs Review",
+    "waiting for agent": "Needs Review",
+    "in progress": "In Progress",
+    "being developed": "In Progress",
+    "in review": "In Review",
+    "pr open": "In Review",
     done: "Done",
+    "in staging": "Done",
+    "in production": "Done",
+    "verify in staging": "Done",
+    "verify in prod": "Done",
+    "ready for prod": "Done",
     canceled: "Canceled",
     cancelled: "Canceled",
   };

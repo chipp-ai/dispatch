@@ -1,0 +1,659 @@
+name: Auto-Triage Issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Dispatch issue ID"
+        required: true
+        type: string
+      issue_identifier:
+        description: "Human-readable identifier (e.g. DISPATCH-456)"
+        required: true
+        type: string
+      title:
+        description: "Issue title"
+        required: true
+        type: string
+      description:
+        description: "Issue description (markdown)"
+        required: true
+        type: string
+      additional_context:
+        description: "Additional instructions from human (optional)"
+        required: false
+        type: string
+      callback_url:
+        description: "Override API callback URL (for local dev tunnels)"
+        required: false
+        type: string
+      ref:
+        description: "Git ref to checkout (branch, tag, or SHA). Defaults to the workflow dispatch ref."
+        required: false
+        type: string
+
+# Only one triage per issue at a time
+concurrency:
+  group: auto-triage-${{ inputs.issue_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    name: Triage ${{ inputs.issue_identifier }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    # All user-provided inputs go through env vars to prevent command injection.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DISPATCH_API_URL: ${{ inputs.callback_url || secrets.DISPATCH_API_URL }}
+      DISPATCH_API_KEY: ${{ secrets.DISPATCH_API_KEY }}
+      DENO_NO_PACKAGE_JSON: "1"
+      INPUT_ISSUE_ID: ${{ inputs.issue_id }}
+      INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
+      INPUT_TITLE: ${{ inputs.title }}
+      INPUT_DESCRIPTION: ${{ inputs.description }}
+      INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Sanitize branch name
+        id: branch
+        run: |
+          SAFE_ID=$(echo "$INPUT_ISSUE_IDENTIFIER" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+          echo "name=triage/${SAFE_ID}" >> "$GITHUB_OUTPUT"
+          echo "Branch name: triage/${SAFE_ID}"
+
+      - name: Notify Dispatch - In Progress
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          PAYLOAD=$(jq -n \
+            --arg status "in_progress" \
+            --arg spawn_status "running" \
+            --arg spawn_run_id "$GITHUB_RUN_ID" \
+            --arg spawn_started_at "$TIMESTAMP" \
+            '{status: $status, spawn_status: $spawn_status, spawn_run_id: $spawn_run_id, spawn_started_at: $spawn_started_at}')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to notify Dispatch (non-fatal)"
+
+      - name: Link Run Record
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          LINK_PAYLOAD=$(jq -n \
+            --arg github_run_id "$GITHUB_RUN_ID" \
+            --arg github_run_url "$GITHUB_RUN_URL" \
+            '{github_run_id: $github_run_id, github_run_url: $github_run_url}')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/current" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$LINK_PAYLOAD" || echo "Warning: Failed to link run record (non-fatal)"
+
+      - name: Run Triage
+        id: triage
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+        run: |
+          mkdir -p .scratch
+
+          cat > .scratch/triage-prompt.md <<PROMPT_BOUNDARY
+          You are a triage agent evaluating a backlog issue for this project.
+
+          Issue: ${INPUT_ISSUE_IDENTIFIER} - ${INPUT_TITLE}
+
+          Description:
+          ${INPUT_DESCRIPTION}
+          $([ -n "${INPUT_ADDITIONAL_CONTEXT}" ] && echo "
+          ADDITIONAL CONTEXT FROM HUMAN:
+          ${INPUT_ADDITIONAL_CONTEXT}
+          ")
+
+          YOUR MISSION:
+          Spend at most 10 minutes investigating this issue. Then make exactly ONE of three decisions:
+
+          DECISION A: not_applicable
+          The issue is stale, already fixed, a duplicate, or no longer relevant.
+          Evidence required: show that the code already handles this, or the referenced
+          behavior no longer exists.
+
+          DECISION B: fix_applied
+          The issue has a simple fix (< 50 lines changed, < 5 files).
+          If you choose this:
+          1. Create a branch: git checkout -b ${BRANCH_NAME}
+          2. Apply the fix
+          3. Run 'deno check main.ts' to verify type safety
+          4. Run 'deno lint' to check for lint errors
+          5. Stage and commit: git add -A && git commit -m "fix: description [${INPUT_ISSUE_IDENTIFIER}]"
+
+          DECISION C: needs_plan
+          The issue is real but complex -- it needs a full investigation + implementation plan.
+          Write a brief assessment (3-5 sentences) explaining what the issue is and why
+          it requires a deeper investigation.
+
+          CONSTRAINTS:
+          - No database migrations
+          - No UI/frontend changes
+          - No changes to CI/CD workflows
+          - If in doubt, choose DECISION C (escalate). It is always safe to escalate.
+          - Do NOT attempt fixes you are not confident about.
+          - Do NOT push any branches -- just prepare the commit locally.
+
+          GIT WORKFLOW (if applying a fix):
+          If you change ANY file, you MUST create a branch and commit before exiting.
+          The workflow CANNOT create a PR from uncommitted changes.
+            git checkout -b ${BRANCH_NAME}
+            # ... make changes ...
+            git add -A
+            git commit -m "fix: description [${INPUT_ISSUE_IDENTIFIER}]"
+
+          MANDATORY - RUN RESULT DECLARATION:
+          Before exiting, you MUST write .scratch/run-result.json with:
+          {
+            "triage_decision": "not_applicable|fix_applied|needs_plan",
+            "outcome": "completed|no_changes_needed|investigation_complete|failed",
+            "summary": "1-2 sentence explanation of your decision",
+            "assessment": "For needs_plan only: 3-5 sentence brief explaining what needs deeper investigation",
+            "changes_made": true/false,
+            "files_changed": ["list", "of", "paths"],
+            "pr_needed": true/false
+          }
+
+          Decision mapping:
+          - not_applicable → outcome=no_changes_needed, pr_needed=false
+          - fix_applied → outcome=completed, pr_needed=true, changes_made=true
+          - needs_plan → outcome=investigation_complete, pr_needed=false
+
+          START by reading CLAUDE.md to understand the codebase, then investigate the issue.
+          PROMPT_BOUNDARY
+          sed -i 's/^          //' .scratch/triage-prompt.md
+
+          # Create stream filter for human-readable output
+          cat > .scratch/stream-filter.py << 'PYEOF'
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  t = event.get("type", "")
+                  if t == "assistant":
+                      for c in event.get("message", {}).get("content", []):
+                          if c.get("type") == "text" and c.get("text"):
+                              print(c["text"], flush=True)
+                          elif c.get("type") == "tool_use":
+                              name = c.get("name", "unknown")
+                              inp = c.get("input", {})
+                              parts = [f"{k}={str(v)[:80]}" for k, v in list(inp.items())[:3]]
+                              print(f"[TOOL] {name}({', '.join(parts)})", flush=True)
+                  elif t == "tool_result":
+                      content = event.get("content", "")
+                      if isinstance(content, list):
+                          content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                      preview = str(content)[:200] + ("..." if len(str(content)) > 200 else "")
+                      print(f"[RESULT] {preview}", flush=True)
+                  elif t == "result":
+                      print(f"\n[COMPLETED] Cost: ${event.get('total_cost_usd', 0):.2f}, Turns: {event.get('num_turns', 0)}", flush=True)
+              except (json.JSONDecodeError, KeyError):
+                  print(line, flush=True)
+          PYEOF
+
+          cat > .scratch/run-claude.sh << 'RUNEOF'
+          #!/bin/bash
+          PROMPT=$(cat .scratch/triage-prompt.md)
+          exec claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
+          RUNEOF
+          chmod +x .scratch/run-claude.sh
+
+          script -qef .scratch/claude-raw.log -c "bash .scratch/run-claude.sh" > /dev/null 2>&1 &
+          CLAUDE_PID=$!
+          echo "Claude started (PID: $CLAUDE_PID)"
+
+          PREV_LINES=0
+          while kill -0 $CLAUDE_PID 2>/dev/null; do
+            sleep 15
+            [ -f .scratch/claude-raw.log ] || continue
+            CURR_LINES=$(wc -l < .scratch/claude-raw.log)
+            if [ "$CURR_LINES" -gt "$PREV_LINES" ]; then
+              CHUNK=$(sed -n "$((PREV_LINES + 1)),${CURR_LINES}p" .scratch/claude-raw.log \
+                | python3 -u .scratch/stream-filter.py)
+              echo "$CHUNK"
+
+              # Stream to Dispatch terminal viewer
+              if [ -n "$CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
+                jq -n --arg content "$CHUNK" '{content: $content}' | \
+                  curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                    -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d @- > /dev/null 2>&1 &
+              fi
+
+              PREV_LINES=$CURR_LINES
+            else
+              echo "[$(date -u +%H:%M:%S)] Claude working... ($CURR_LINES lines)"
+            fi
+          done
+          wait $CLAUDE_PID
+          CLAUDE_EXIT=$?
+          echo "=== Claude exited with code $CLAUDE_EXIT ==="
+
+          FINAL_LINES=$(wc -l < .scratch/claude-raw.log)
+          if [ "$FINAL_LINES" -gt "$PREV_LINES" ]; then
+            FINAL_CHUNK=$(sed -n "$((PREV_LINES + 1)),${FINAL_LINES}p" .scratch/claude-raw.log \
+              | python3 -u .scratch/stream-filter.py)
+            echo "$FINAL_CHUNK"
+            if [ -n "$FINAL_CHUNK" ] && [ -n "$DISPATCH_API_URL" ] && [ -n "$DISPATCH_API_KEY" ]; then
+              jq -n --arg content "$FINAL_CHUNK" '{content: $content}' | \
+                curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+                  -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+                  -H "Content-Type: application/json" \
+                  -d @- > /dev/null 2>&1 || true
+            fi
+          fi
+          python3 -u .scratch/stream-filter.py < .scratch/claude-raw.log > .scratch/claude-output.log
+
+          # Extract cost data from stream-json result event
+          python3 -c "
+          import json
+          for line in open('.scratch/claude-raw.log'):
+              line = line.strip()
+              if not line: continue
+              try:
+                  event = json.loads(line)
+                  if event.get('type') == 'result':
+                      cost = event.get('total_cost_usd', 0)
+                      turns = event.get('num_turns', 0)
+                      model = event.get('model', 'unknown')
+                      with open('.scratch/claude-cost.json', 'w') as f:
+                          json.dump({'cost_usd': cost, 'num_turns': turns, 'model': model}, f)
+                      print(f'Cost: \${cost:.4f}, Turns: {turns}, Model: {model}')
+              except (json.JSONDecodeError, KeyError): pass
+          " 2>/dev/null || echo "Warning: Could not extract cost data"
+
+          exit $CLAUDE_EXIT
+
+      - name: Parse run result
+        id: run-result
+        if: always()
+        run: |
+          if [ ! -f .scratch/run-result.json ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "triage_decision=needs_plan" >> "$GITHUB_OUTPUT"
+            echo "Agent exited without declaring an outcome" > .scratch/outcome-summary.txt
+            echo "pr_needed=false" >> "$GITHUB_OUTPUT"
+            echo "changes_made=false" >> "$GITHUB_OUTPUT"
+            echo "Run outcome: failed (no run-result.json)"
+            exit 0
+          fi
+
+          OUTCOME=$(jq -r '.outcome // "failed"' .scratch/run-result.json)
+          SUMMARY=$(jq -r '.summary // "No summary provided"' .scratch/run-result.json)
+          TRIAGE_DECISION=$(jq -r '.triage_decision // "needs_plan"' .scratch/run-result.json)
+          PR_NEEDED=$(jq -r '.pr_needed // false' .scratch/run-result.json)
+          CHANGES_MADE=$(jq -r '.changes_made // false' .scratch/run-result.json)
+          ASSESSMENT=$(jq -r '.assessment // ""' .scratch/run-result.json)
+
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "triage_decision=$TRIAGE_DECISION" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" > .scratch/outcome-summary.txt
+          echo "pr_needed=$PR_NEEDED" >> "$GITHUB_OUTPUT"
+          echo "changes_made=$CHANGES_MADE" >> "$GITHUB_OUTPUT"
+
+          # Save assessment for later steps
+          echo "$ASSESSMENT" > .scratch/triage-assessment.txt
+
+          echo "Run outcome: $OUTCOME"
+          echo "Triage decision: $TRIAGE_DECISION"
+          echo "Summary: $SUMMARY"
+
+      - name: Check for fix
+        id: check-fix
+        if: steps.run-result.outputs.triage_decision == 'fix_applied'
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+          ISSUE_ID: ${{ inputs.issue_identifier }}
+        run: |
+          CURRENT_BRANCH=$(git branch --show-current)
+          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Fix was committed on branch: $CURRENT_BRANCH"
+          elif git diff --quiet && git diff --cached --quiet; then
+            echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            echo "No fix found despite fix_applied decision"
+          else
+            echo "Agent left uncommitted changes -- auto-committing"
+            git diff --stat
+
+            if [ "$CURRENT_BRANCH" = "staging" ]; then
+              git checkout -b "$BRANCH_NAME"
+            fi
+
+            git add -A
+            git reset -- .scratch/ 2>/dev/null || true
+            if ! git diff --cached --quiet; then
+              SUMMARY=""
+              if [ -f .scratch/outcome-summary.txt ]; then
+                SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+              fi
+              git commit -m "fix: ${INPUT_TITLE} [${ISSUE_ID}]
+
+$SUMMARY
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>"
+              echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Verify fix
+        if: steps.check-fix.outputs.fix_attempted == 'true'
+        run: |
+          echo "Running deno check..."
+          deno check main.ts || echo "Warning: deno check failed"
+
+          echo "Running deno lint..."
+          deno lint || echo "Warning: deno lint failed"
+
+      - name: Push branch and create PR
+        id: create-pr
+        if: steps.check-fix.outputs.fix_attempted == 'true' && steps.run-result.outputs.pr_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH_NAME=$(git branch --show-current)
+          git push origin "HEAD:${BRANCH_NAME}"
+
+          DISPATCH_ISSUE_URL="${DISPATCH_API_URL}/issue/${INPUT_ISSUE_IDENTIFIER}"
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          {
+            echo "## Triage Fix"
+            echo ""
+            echo "**Issue:** [${INPUT_ISSUE_IDENTIFIER}](${DISPATCH_ISSUE_URL}) -- ${INPUT_TITLE}"
+            echo ""
+            echo "### Summary"
+            echo ""
+            echo "$OUTCOME_SUMMARY"
+            echo ""
+            echo "---"
+            echo ""
+            echo "Autonomously triaged and fixed by Claude Code for ${INPUT_ISSUE_IDENTIFIER}"
+            echo ""
+            echo "- **Triage**: [${INPUT_ISSUE_IDENTIFIER} on Dispatch](${DISPATCH_ISSUE_URL})"
+            echo "- **Run**: [${GITHUB_RUN_ID}](${GITHUB_RUN_URL})"
+          } > .scratch/pr-body.md
+
+          PR_URL=$(gh pr create \
+            --title "fix: ${INPUT_TITLE} [${INPUT_ISSUE_IDENTIFIER}]" \
+            --body-file .scratch/pr-body.md \
+            --base staging \
+            --head "${BRANCH_NAME}")
+
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+          echo "Created PR: ${PR_URL}"
+
+      - name: Handle not_applicable - close issue
+        if: always() && steps.run-result.outputs.triage_decision == 'not_applicable' && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          # Move issue to Canceled with explanation
+          PAYLOAD=$(jq -n \
+            --arg status "Canceled" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            '{status: $status, outcome_summary: $outcome_summary}')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || echo "Warning: Failed to close issue (non-fatal)"
+
+          echo "Issue closed as not_applicable: $OUTCOME_SUMMARY"
+
+      - name: Handle needs_plan - post assessment
+        if: always() && steps.run-result.outputs.triage_decision == 'needs_plan' && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          ASSESSMENT=""
+          if [ -f .scratch/triage-assessment.txt ]; then
+            ASSESSMENT=$(cat .scratch/triage-assessment.txt)
+          fi
+
+          # If no assessment, use the summary
+          if [ -z "$ASSESSMENT" ] || [ "$ASSESSMENT" = "" ]; then
+            if [ -f .scratch/outcome-summary.txt ]; then
+              ASSESSMENT=$(cat .scratch/outcome-summary.txt)
+            fi
+          fi
+
+          # Post triage assessment as a plan and move to Needs Review
+          PLAN_PAYLOAD=$(jq -n \
+            --arg plan_content "$ASSESSMENT" \
+            --arg plan_status "posted" \
+            --arg status "Needs Review" \
+            '{plan_content: $plan_content, plan_status: $plan_status, status: $status}')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PLAN_PAYLOAD" || echo "Warning: Failed to post assessment (non-fatal)"
+
+          echo "Posted triage assessment for human review"
+
+      - name: Post results to Dispatch
+        if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        env:
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+          JOB_STATUS: ${{ job.status }}
+          OUTCOME: ${{ steps.run-result.outputs.outcome }}
+          TRIAGE_DECISION: ${{ steps.run-result.outputs.triage_decision }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            SPAWN_STATUS="completed"
+          else
+            SPAWN_STATUS="failed"
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Read cost data if available
+          COST_USD="0"
+          NUM_TURNS="0"
+          MODEL="unknown"
+          if [ -f .scratch/claude-cost.json ]; then
+            COST_USD=$(jq -r '.cost_usd // 0' .scratch/claude-cost.json)
+            NUM_TURNS=$(jq -r '.num_turns // 0' .scratch/claude-cost.json)
+            MODEL=$(jq -r '.model // "unknown"' .scratch/claude-cost.json)
+          fi
+
+          OUTCOME_SUMMARY=""
+          if [ -f .scratch/outcome-summary.txt ]; then
+            OUTCOME_SUMMARY=$(cat .scratch/outcome-summary.txt)
+          fi
+
+          # Post triage activity
+          ACTIVITY_PAYLOAD=$(jq -n \
+            --arg type "triage_complete" \
+            --arg content "Triage decision: ${TRIAGE_DECISION}. ${OUTCOME_SUMMARY}" \
+            --arg pr_url "$PR_URL" \
+            --arg triage_decision "$TRIAGE_DECISION" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            '{
+              type: $type,
+              content: $content,
+              metadata: {
+                pr_url: $pr_url,
+                triage_decision: $triage_decision,
+                run_id: $run_id,
+                run_url: $run_url,
+                cost_usd: $cost_usd,
+                num_turns: $num_turns,
+                model: $model
+              }
+            }')
+
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$ACTIVITY_PAYLOAD" || echo "Warning: Failed to post activity (non-fatal)"
+
+          # Transition issue status based on triage outcome
+          ISSUE_STATUS=""
+          if [ -n "$PR_URL" ]; then
+            ISSUE_STATUS="Needs Review"
+          elif [ "$TRIAGE_DECISION" = "not_applicable" ]; then
+            ISSUE_STATUS="Canceled"
+          fi
+
+          # Update spawn status with cost data and outcome
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "$SPAWN_STATUS" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            --arg run_outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            --arg status "$ISSUE_STATUS" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at, cost_usd: $cost_usd, num_turns: $num_turns, model: $model, run_outcome: $run_outcome, outcome_summary: $outcome_summary} + (if $status != "" then {status: $status} else {} end)')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"
+
+          # Update agent run record
+          [ -f .scratch/triage-prompt.md ] || echo "" > .scratch/triage-prompt.md
+          [ -f .scratch/claude-output.log ] || echo "" > .scratch/claude-output.log
+
+          PR_NUMBER=""
+          if [ -n "$PR_URL" ]; then
+            PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
+          fi
+
+          RUN_UPDATE=$(jq -n \
+            --arg status "$SPAWN_STATUS" \
+            --arg outcome "${OUTCOME:-failed}" \
+            --arg outcome_summary "$OUTCOME_SUMMARY" \
+            --arg cost_usd "$COST_USD" \
+            --arg num_turns "$NUM_TURNS" \
+            --arg model "$MODEL" \
+            --arg pr_number "$PR_NUMBER" \
+            --rawfile prompt_text .scratch/triage-prompt.md \
+            --rawfile transcript .scratch/claude-output.log \
+            '{status: $status, outcome: $outcome, outcome_summary: $outcome_summary, cost_usd: ($cost_usd | tonumber), num_turns: ($num_turns | tonumber), model: $model, prompt_text: $prompt_text, transcript: $transcript} + (if $pr_number != "" then {pr_number: ($pr_number | tonumber)} else {} end)')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/runs/current" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$RUN_UPDATE" || echo "Warning: Failed to update run record (non-fatal)"
+
+      - name: Upload full agent log
+        if: always() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          LOG_FILE=".scratch/claude-output.log"
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "No output log found, skipping"
+            exit 0
+          fi
+
+          FULL_SIZE=$(wc -c < "$LOG_FILE")
+
+          head -c 512000 "$LOG_FILE" > .scratch/full-log-truncated.txt
+          if [ "$FULL_SIZE" -gt 512000 ]; then
+            echo "" >> .scratch/full-log-truncated.txt
+            echo "... [truncated - full log was $(( FULL_SIZE / 1024 ))KB]" >> .scratch/full-log-truncated.txt
+          fi
+
+          jq -n \
+            --arg type "agent_full_log" \
+            --rawfile content .scratch/full-log-truncated.txt \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, workflow_type: "auto_triage"}}' \
+            > .scratch/full-log-payload.json
+
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @.scratch/full-log-payload.json || echo "Warning: Failed to upload full log (non-fatal)"
+
+          echo "Full log uploaded ($(( FULL_SIZE / 1024 ))KB)"
+
+      - name: Report failure to Dispatch
+        if: failure() && env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          ERROR_TAIL=""
+          if [ -f .scratch/claude-output.log ]; then
+            ERROR_TAIL=$(tail -20 .scratch/claude-output.log)
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          FAILURE_PAYLOAD=$(jq -n \
+            --arg type "triage_failed" \
+            --arg content "Triage workflow failed. Run: ${GITHUB_RUN_URL}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg error_tail "$ERROR_TAIL" \
+            '{
+              type: $type,
+              content: $content,
+              metadata: {
+                run_id: $run_id,
+                run_url: $run_url,
+                error_tail: $error_tail
+              }
+            }')
+
+          curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$FAILURE_PAYLOAD" || echo "Warning: Failed to report failure (non-fatal)"
+
+          STATUS_PAYLOAD=$(jq -n \
+            --arg spawn_status "failed" \
+            --arg spawn_completed_at "$TIMESTAMP" \
+            '{spawn_status: $spawn_status, spawn_completed_at: $spawn_completed_at}')
+
+          curl -sf -X PATCH "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}" \
+            -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$STATUS_PAYLOAD" || echo "Warning: Failed to update spawn status (non-fatal)"

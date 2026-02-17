@@ -274,24 +274,25 @@ export async function analyzeReleasePR(
   pr: PRData
 ): Promise<MatchResult[]> {
   // A release PR merges staging -> main
-  // We need to find all issues that are currently "In Staging"
+  // We need to find all issues that are currently in active (non-closed) statuses
 
   // First, check if this is a release PR
   if (pr.baseBranch !== "main" || pr.headBranch !== "staging") {
     return [];
   }
 
-  // Get all issues in "In Staging" status
-  const inStagingIssues = await db.query<IssueCandidate>(
+  // Get all issues in non-closed statuses that might be in this release
+  const activeIssues = await db.query<IssueCandidate>(
     `SELECT i.id, i.identifier, i.title, i.description, s.name as status_name, 1.0 as similarity
      FROM dispatch_issue i
      JOIN dispatch_status s ON i.status_id = s.id
      WHERE i.workspace_id = $1
-       AND LOWER(s.name) = 'in staging'`,
+       AND s.is_closed = false
+       AND LOWER(s.name) IN ('in review', 'in progress')`,
     [workspaceId]
   );
 
-  if (inStagingIssues.length === 0) {
+  if (activeIssues.length === 0) {
     return [];
   }
 
@@ -325,9 +326,9 @@ ${pr.body || "(no description)"}
 
 ${pr.commits ? `## Commits in this release:\n${pr.commits.map((c) => `- ${c.message}`).join("\n")}` : ""}
 
-## Issues currently "In Staging" that may be included:
+## Active issues that may be included in this release:
 
-${inStagingIssues.map((i) => `- **${i.identifier}**: ${i.title}`).join("\n")}
+${activeIssues.map((i) => `- **${i.identifier}**: ${i.title}`).join("\n")}
 
 ## Issue identifiers found in commits:
 ${commitIdentifiers.size > 0 ? Array.from(commitIdentifiers).join(", ") : "None found"}
@@ -338,7 +339,7 @@ Determine which issues are being deployed to production in this release.
 
 Rules:
 1. If an issue identifier is explicitly mentioned in the PR or commits, it's definitely included (confidence: 95+)
-2. Issues that are "In Staging" are likely included, but we can't be 100% certain without explicit mention
+2. Issues that are "In Review" or "In Progress" are likely included, but we can't be 100% certain without explicit mention
 3. Be conservative - we'd rather miss an update than incorrectly notify a customer
 
 Return JSON:
@@ -364,7 +365,7 @@ Return JSON:
         response
       );
       // Fall back to issues with explicit mentions in commits
-      return inStagingIssues
+      return activeIssues
         .filter((i) => commitIdentifiers.has(i.identifier))
         .map((i) => ({
           issueId: i.id,
@@ -386,7 +387,7 @@ Return JSON:
           reasoning: string;
           ai_summary?: string;
         }) => {
-          const candidate = inStagingIssues.find(
+          const candidate = activeIssues.find(
             (c) => c.identifier === match.identifier
           );
           if (!candidate) return null;
@@ -405,7 +406,7 @@ Return JSON:
   } catch (error) {
     console.error("Failed to analyze release PR with Gemini:", error);
     // Fall back to issues with explicit mentions
-    return inStagingIssues
+    return activeIssues
       .filter((i) => commitIdentifiers.has(i.identifier))
       .map((i) => ({
         issueId: i.id,
@@ -425,9 +426,9 @@ export function determineTargetStatus(
   pr: PRData,
   currentStatus: string
 ): string | null {
-  // PR merged to main (via release PR) -> "In Production"
+  // PR merged to main (via release PR) -> "Done"
   if (pr.baseBranch === "main" && pr.headBranch === "staging") {
-    return "In Production";
+    return "Done";
   }
 
   // PR opened to staging -> "In Review"
@@ -435,12 +436,10 @@ export function determineTargetStatus(
     // Only move to "In Review" if not already further along
     const statusOrder = [
       "backlog",
-      "triage",
-      "todo",
+      "investigating",
+      "needs review",
       "in progress",
       "in review",
-      "in staging",
-      "in production",
       "done",
     ];
     const currentIndex = statusOrder.indexOf(currentStatus.toLowerCase());
@@ -461,14 +460,9 @@ export function determineStatusOnMerge(
   pr: PRData,
   currentStatus: string
 ): string | null {
-  // Merged to main (release PR) -> "In Production"
-  if (pr.baseBranch === "main") {
-    return "In Production";
-  }
-
-  // Merged to staging -> "In Staging"
-  if (pr.baseBranch === "staging") {
-    return "In Staging";
+  // Any merge means the work is done
+  if (pr.baseBranch === "main" || pr.baseBranch === "staging") {
+    return "Done";
   }
 
   return null;

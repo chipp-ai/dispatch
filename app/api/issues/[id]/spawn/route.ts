@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       force = false,
       additional_context,
     } = body as {
-      type?: "investigate" | "implement";
+      type?: "investigate" | "implement" | "triage";
       force?: boolean;
       additional_context?: string;
     };
@@ -39,7 +39,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Map request type to workflow type
     const workflowType: WorkflowType =
-      type === "implement" ? "prd_implement" : "prd_investigate";
+      type === "implement"
+        ? "prd_implement"
+        : type === "triage"
+          ? "auto_triage"
+          : "prd_investigate";
 
     // For implement, require an approved plan
     if (type === "implement" && !issue.plan_content) {
@@ -77,7 +81,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       additional_context: additional_context || undefined,
     };
 
-    const spawnType = type === "implement" ? "implement" : "investigate";
+    const spawnType = type === "implement" ? "implement" : type === "triage" ? "triage" : "investigate";
     const dispatchId = await dispatchWorkflow(spawnable, workflowType);
     await recordSpawn(issue.id, dispatchId, spawnType);
 

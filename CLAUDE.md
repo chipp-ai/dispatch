@@ -32,7 +32,7 @@ charts/           -- Kubernetes deployment examples
 - All user-facing inputs sanitized, env vars for sensitive config
 
 ### Agent Workflows
-- 5 workflow types: `auto-investigate`, `prd-investigate`, `prd-implement`, `qa-test`, `deep-research`
+- 6 workflow types: `auto-investigate`, `prd-investigate`, `prd-implement`, `qa-test`, `deep-research`, `auto-triage`
 - Agents communicate back via REST API (`DISPATCH_API_URL` + `DISPATCH_API_KEY`)
 - Terminal output streamed via SSE to the issue detail page
 - Run results declared in `.scratch/run-result.json` with structured outcomes

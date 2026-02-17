@@ -102,11 +102,12 @@ const WORKFLOW_IDS: Record<WorkflowType, string> = {
   prd_implement: "prd-implement.yml",
   qa: "qa-test.yml",
   deep_research: "deep-research.yml",
+  auto_triage: "auto-triage.yml",
 };
 
 // --- Types ---
 
-export type WorkflowType = "error_fix" | "prd_investigate" | "prd_implement" | "qa" | "deep_research";
+export type WorkflowType = "error_fix" | "prd_investigate" | "prd_implement" | "qa" | "deep_research" | "auto_triage";
 
 export interface SpawnableIssue {
   id: string;
@@ -180,7 +181,7 @@ export async function getActiveSpawnCount(
     const isErrorType = workflowType === "error_fix";
     const sql = isErrorType
       ? `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running' AND (spawn_type IS NULL OR spawn_type = 'error_fix')`
-      : `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement', 'qa', 'research')`;
+      : `SELECT COUNT(*) as count FROM dispatch_issue WHERE spawn_status = 'running' AND spawn_type IN ('investigate', 'implement', 'qa', 'research', 'triage')`;
     const result = await db.queryOne<{ count: string }>(sql);
     return parseInt(result?.count || "0", 10);
   }
@@ -307,6 +308,8 @@ export async function dispatchWorkflow(
     if (issue.test_instructions) {
       inputs.test_instructions = issue.test_instructions.slice(0, 2000);
     }
+  } else if (workflowType === "auto_triage") {
+    // No extra inputs needed -- triage agent only needs base fields
   }
 
   // Pass additional context from retry dialog (all workflow types)
@@ -373,6 +376,7 @@ const workflowTypeMap: Record<string, string> = {
   implement: "prd_implement",
   qa: "qa",
   research: "deep_research",
+  triage: "auto_triage",
 };
 
 /**
@@ -392,6 +396,7 @@ export async function recordSpawn(
     error_fix: "investigating",
     qa: "testing",
     research: "researching",
+    triage: "triaging",
   };
   const agentStatus = agentStatusMap[spawnType] || "investigating";
 
@@ -420,8 +425,8 @@ export async function recordSpawn(
 
     // Auto-transition to the correct board column based on spawn type
     if (
-      (spawnType === "error_fix" || spawnType === "investigate") &&
-      (currentName === "triage" || currentName === "backlog")
+      (spawnType === "error_fix" || spawnType === "investigate" || spawnType === "triage") &&
+      currentName === "backlog"
     ) {
       const target = await getStatusByName(issue.workspace_id, "Investigating");
       if (target) {
@@ -431,10 +436,10 @@ export async function recordSpawn(
       }
     } else if (
       spawnType === "implement" &&
-      (currentName === "triage" || currentName === "backlog" ||
-       currentName === "investigating" || currentName === "waiting for agent")
+      (currentName === "backlog" ||
+       currentName === "investigating" || currentName === "needs review")
     ) {
-      const target = await getStatusByName(issue.workspace_id, "Being Developed");
+      const target = await getStatusByName(issue.workspace_id, "In Progress");
       if (target) {
         newStatusId = target.id;
         oldStatusName = currentStatus?.name || "Unknown";

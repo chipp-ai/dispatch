@@ -13,6 +13,7 @@ export type AgentStatus =
   | "idle"
   | "investigating"
   | "implementing"
+  | "triaging"
   | "blocked"
   | "awaiting_review";
 
@@ -33,7 +34,7 @@ export type PlanStatus =
   | "approved"
   | "rejected"
   | "needs_revision";
-export type SpawnType = "investigate" | "implement" | "error_fix";
+export type SpawnType = "investigate" | "implement" | "error_fix" | "triage";
 export type BlockerCategory =
   | "missing_env"
   | "unclear_requirement"
@@ -323,7 +324,8 @@ export async function updateIssue(
       // When transitioning to an active state, set started_at
       if (
         (input.agent_status === "investigating" ||
-          input.agent_status === "implementing") &&
+          input.agent_status === "implementing" ||
+          input.agent_status === "triaging") &&
         existing.agent_status === "idle"
       ) {
         agentStartedAt = new Date();
@@ -335,7 +337,8 @@ export async function updateIssue(
           input.agent_status === "blocked" ||
           input.agent_status === "awaiting_review") &&
         (existing.agent_status === "investigating" ||
-          existing.agent_status === "implementing")
+          existing.agent_status === "implementing" ||
+          existing.agent_status === "triaging")
       ) {
         agentCompletedAt = new Date();
       }
@@ -463,9 +466,9 @@ export async function updateIssue(
 
       // Agent status change (started/completed)
       if (input.agent_status && input.agent_status !== existing.agent_status) {
-        const isStarting = (input.agent_status === "investigating" || input.agent_status === "implementing") && existing.agent_status === "idle";
+        const isStarting = (input.agent_status === "investigating" || input.agent_status === "implementing" || input.agent_status === "triaging") && existing.agent_status === "idle";
         const isCompleting = (input.agent_status === "idle" || input.agent_status === "blocked" || input.agent_status === "awaiting_review")
-          && (existing.agent_status === "investigating" || existing.agent_status === "implementing");
+          && (existing.agent_status === "investigating" || existing.agent_status === "implementing" || existing.agent_status === "triaging");
 
         if (isStarting) {
           await createHistoryEntry({

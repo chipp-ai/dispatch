@@ -64,26 +64,30 @@ function mapPriority(linearPriority: string): "P1" | "P2" | "P3" | "P4" {
 function mapStatus(linearStatus: string): string {
   switch (linearStatus?.toLowerCase()) {
     case "backlog":
-      return "Backlog";
     case "triage":
-      return "Triage";
     case "todo":
     case "this week":
     case "ready for dev":
-      return "Todo";
+      return "Backlog";
+    case "investigating":
+      return "Investigating";
+    case "needs review":
+    case "waiting for agent":
+      return "Needs Review";
     case "in progress":
     case "being developed":
-    case "waiting for agent":
       return "In Progress";
     case "in review":
     case "pr open":
-    case "verify in staging":
-    case "verify in prod":
-    case "ready for prod":
       return "In Review";
     case "done":
     case "done - win":
     case "done - lost":
+    case "verify in staging":
+    case "verify in prod":
+    case "ready for prod":
+    case "in staging":
+    case "in production":
       return "Done";
     case "canceled":
     case "cancelled":

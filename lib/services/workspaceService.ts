@@ -26,75 +26,54 @@ export interface Label {
   color: string;
 }
 
-// Status names match Linear exactly for seamless sync
+// 7-column Kanban board: left-to-right flow
 const DEFAULT_STATUSES = [
   {
     name: "Backlog",
-    color: "#95a2b3", // Linear gray
+    color: "#6B7280",
     position: 0,
     is_triage: false,
     is_closed: false,
   },
   {
-    name: "Triage",
-    color: "#8b5cf6", // Linear purple
+    name: "Investigating",
+    color: "#F59E0B",
     position: 1,
-    is_triage: true,
+    is_triage: false,
     is_closed: false,
   },
   {
-    name: "Waiting for agent",
-    color: "#5e6ad2", // Linear blue
+    name: "Needs Review",
+    color: "#EAB308",
     position: 2,
     is_triage: false,
     is_closed: false,
   },
   {
-    name: "Being Developed",
-    color: "#f2c94c", // Linear yellow
+    name: "In Progress",
+    color: "#3B82F6",
     position: 3,
     is_triage: false,
     is_closed: false,
   },
   {
-    name: "PR Open",
-    color: "#26b5ce", // Linear cyan
+    name: "In Review",
+    color: "#10B981",
     position: 4,
     is_triage: false,
     is_closed: false,
   },
   {
-    name: "Verify in Staging",
-    color: "#4cb782", // Linear green
-    position: 5,
-    is_triage: false,
-    is_closed: false,
-  },
-  {
-    name: "Verify in Prod",
-    color: "#4cb782", // Linear green
-    position: 6,
-    is_triage: false,
-    is_closed: false,
-  },
-  {
-    name: "Ready for prod",
-    color: "#4cb782", // Linear green
-    position: 7,
-    is_triage: false,
-    is_closed: false,
-  },
-  {
     name: "Done",
-    color: "#5e6ad2", // Linear purple-blue
-    position: 8,
+    color: "#22C55E",
+    position: 5,
     is_triage: false,
     is_closed: true,
   },
   {
     name: "Canceled",
-    color: "#95a2b3", // Linear gray
-    position: 9,
+    color: "#EF4444",
+    position: 6,
     is_triage: false,
     is_closed: true,
   },

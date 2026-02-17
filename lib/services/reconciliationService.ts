@@ -198,7 +198,7 @@ export async function runReconciliation(): Promise<ReconciliationResult> {
       const isReleasePR = pr.baseRef === "main" && pr.headRef === "staging";
 
       if (isReleasePR && pr.state === "merged") {
-        // Handle release PR - move issues to "In Production"
+        // Handle release PR - move issues to "Done"
         const commits = await getPRCommits(
           GITHUB_OWNER,
           GITHUB_REPO,
@@ -319,14 +319,11 @@ async function processMatchedPR(
   let targetStatusName: string | null = null;
 
   if (pr.state === "merged") {
-    if (pr.baseRef === "staging") {
-      targetStatusName = "In Staging";
-    } else if (pr.baseRef === "main") {
-      targetStatusName = "In Production";
-    }
+    // Any merge (staging or main) means the work is done
+    targetStatusName = "Done";
   } else if (pr.state === "open") {
     // Only move to "In Review" if issue is before that status
-    const earlyStatuses = ["backlog", "triage", "todo", "in progress"];
+    const earlyStatuses = ["backlog", "investigating", "needs review", "in progress"];
     if (earlyStatuses.includes(issue.status.name.toLowerCase())) {
       targetStatusName = "In Review";
     }
@@ -393,23 +390,20 @@ async function updateIssueForRelease(
   const issue = await getIssue(issueId);
   if (!issue) return null;
 
-  // Move to "In Production"
-  const inProductionStatus = await getStatusByName(
-    workspaceId,
-    "In Production"
-  );
-  if (!inProductionStatus) return null;
+  // Move to "Done"
+  const doneStatus = await getStatusByName(workspaceId, "Done");
+  if (!doneStatus) return null;
 
-  if (issue.status.name.toLowerCase() === "in production") {
-    return null; // Already in production
+  if (issue.status.name.toLowerCase() === "done") {
+    return null; // Already done
   }
 
-  await updateIssue(issueId, { statusId: inProductionStatus.id });
+  await updateIssue(issueId, { statusId: doneStatus.id });
 
   await recordStatusChange(
     issueId,
     issue.status.name,
-    "In Production",
+    "Done",
     "reconciliation",
     "Reconciliation Bot (Release)"
   );
@@ -417,7 +411,7 @@ async function updateIssueForRelease(
   await recordReconciliation(issueId, {
     release_pr: pr.number,
     old_status: issue.status.name,
-    new_status: "In Production",
+    new_status: "Done",
   });
 
   const boardIssue = await getIssueForBoard(issueId);

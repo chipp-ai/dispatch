@@ -110,27 +110,27 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
       // Investigation completed/failed → move forward based on outcome.
       // If a PR was created (pr_number set), move to "In Review".
-      // Otherwise move back to "Waiting for agent" for the next action.
+      // Otherwise move to "Needs Review" for human decision.
       if (
         body.spawn_status &&
         (body.spawn_status === "completed" || body.spawn_status === "failed") &&
         currentStatusName === "investigating"
       ) {
-        const hasPR = body.pr_number || previousIssue.pr_number;
-        const targetStatus = hasPR ? "In Review" : "Waiting for agent";
+        const hasPR = body.pr_number;
+        const targetStatus = hasPR ? "In Review" : "Needs Review";
         const target = await getStatusByName(previousIssue.workspace_id, targetStatus);
         if (target) {
           body.statusId = target.id;
         }
       }
 
-      // Plan approved → move to Being Developed
+      // Plan approved → move to In Progress
       if (
         body.plan_status === "approved" &&
-        (currentStatusName === "waiting for agent" || currentStatusName === "investigating" ||
+        (currentStatusName === "needs review" || currentStatusName === "investigating" ||
          currentStatusName === "backlog")
       ) {
-        const target = await getStatusByName(previousIssue.workspace_id, "Being Developed");
+        const target = await getStatusByName(previousIssue.workspace_id, "In Progress");
         if (target) {
           body.statusId = target.id;
         }

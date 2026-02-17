@@ -1,8 +1,8 @@
 /**
  * Orchestrator Tools
  *
- * 17 tools for the Dispatch orchestrator:
- * - 7 mission tools (dispatch_*, get_*, search_*) for agent orchestration
+ * 20 tools for the Dispatch orchestrator:
+ * - 10 mission tools (dispatch_*, get_*, search_*, list_*, update_*) for agent orchestration
  * - 6 Loki tools (loki_*) for production log analytics
  * - 4 database tools (chipp_db_*) for product database queries
  */
@@ -10,6 +10,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   createIssue,
+  updateIssue,
   searchIssuesSemantic,
   getIssue,
   getIssueForBoard,
@@ -117,6 +118,21 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "dispatch_triage",
+    description:
+      "Dispatch a lightweight triage agent to evaluate a backlog item. The agent investigates the issue and makes one of three decisions: close it (stale/fixed/duplicate), fix it (simple <50 line fix), or escalate it (complex, needs a full plan). Use this for bulk backlog grooming.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        mission_identifier: {
+          type: "string",
+          description: "Mission identifier (e.g. DISPATCH-42)",
+        },
+      },
+      required: ["mission_identifier"],
+    },
+  },
+  {
     name: "get_fleet_status",
     description:
       "Get fleet dashboard: running agents, recent completions, daily cost, budget usage. Use this to understand current state before dispatching.",
@@ -160,6 +176,64 @@ export const tools: Tool[] = [
       required: ["query"],
     },
   },
+  {
+    name: "list_missions",
+    description:
+      "List missions with optional filters. Use this to browse the board by column (status), priority, or assignee. Supports filtering by status name (e.g. 'Backlog', 'Investigating', 'Needs Review', 'In Progress', 'In Review', 'Done', 'Canceled').",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        status: {
+          type: "string",
+          description:
+            "Filter by board column/status name (e.g. 'Backlog', 'Investigating', 'Needs Review', 'In Progress', 'In Review', 'Done', 'Canceled')",
+        },
+        priority: {
+          type: "string",
+          enum: ["P1", "P2", "P3", "P4"],
+          description: "Filter by priority",
+        },
+        limit: {
+          type: "number",
+          description: "Max results to return (default 50, max 500)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "update_mission",
+    description:
+      "Update an existing mission. Use this to change status (move between board columns), update priority, close duplicates, or edit title/description.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        mission_identifier: {
+          type: "string",
+          description: "Mission identifier (e.g. DISPATCH-42)",
+        },
+        status: {
+          type: "string",
+          description:
+            "New status/column name (e.g. 'Backlog', 'Investigating', 'Needs Review', 'In Progress', 'In Review', 'Done', 'Canceled')",
+        },
+        priority: {
+          type: "string",
+          enum: ["P1", "P2", "P3", "P4"],
+          description: "New priority",
+        },
+        title: {
+          type: "string",
+          description: "New title",
+        },
+        description: {
+          type: "string",
+          description: "New description",
+        },
+      },
+      required: ["mission_identifier"],
+    },
+  },
 ];
 
 // --- Tool Executors ---
@@ -190,12 +264,18 @@ export async function executeTool(
         return await executeDispatchQA(input);
       case "dispatch_research":
         return await executeDispatchResearch(input);
+      case "dispatch_triage":
+        return await executeDispatchTriage(input);
       case "get_fleet_status":
         return await executeGetFleetStatus();
       case "get_mission":
         return await executeGetMission(input);
       case "search_missions":
         return await executeSearchMissions(input);
+      case "list_missions":
+        return await executeListMissions(input);
+      case "update_mission":
+        return await executeUpdateMission(input);
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -438,6 +518,66 @@ async function executeDispatchResearch(input: ToolInput): Promise<string> {
   });
 }
 
+async function executeDispatchTriage(input: ToolInput): Promise<string> {
+  const identifier = input.mission_identifier as string;
+
+  const issue = await getIssue(identifier);
+  if (!issue) {
+    return JSON.stringify({ error: `Mission ${identifier} not found` });
+  }
+
+  // Guard: don't triage closed issues
+  const statusName = issue.status.name.toLowerCase();
+  if (statusName === "done" || statusName === "canceled") {
+    return JSON.stringify({
+      error: `Mission ${identifier} is already ${issue.status.name}. Nothing to triage.`,
+    });
+  }
+
+  // Guard: don't triage issues with an agent already running
+  if (issue.spawn_status === "running") {
+    return JSON.stringify({
+      error: `Mission ${identifier} already has an agent running (${issue.agent_status}). Wait for it to complete.`,
+    });
+  }
+
+  const allowed = await canSpawn("auto_triage");
+  if (!allowed) {
+    return JSON.stringify({
+      error: "Spawn not allowed -- concurrency limit or daily budget exhausted",
+      suggestion: "Check get_fleet_status for current agent/budget info",
+    });
+  }
+
+  const dispatchId = await dispatchWorkflow(
+    {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      description: issue.description,
+    },
+    "auto_triage"
+  );
+
+  await recordSpawn(issue.id, dispatchId, "triage");
+
+  const boardIssue = await getIssueForBoard(issue.identifier);
+  if (boardIssue) {
+    broadcastBoardEvent({
+      type: "issue_updated",
+      issue: boardIssue,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  return JSON.stringify({
+    dispatched: true,
+    identifier: issue.identifier,
+    dispatch_id: dispatchId,
+    message: `Triage agent dispatched for ${issue.identifier}. It will investigate and decide: close, fix, or escalate.`,
+  });
+}
+
 // --- Query Tools ---
 
 async function executeGetFleetStatus(): Promise<string> {
@@ -539,6 +679,110 @@ async function executeSearchMissions(input: ToolInput): Promise<string> {
       title: r.title,
       similarity: parseFloat(Number(r.similarity).toFixed(3)),
     })),
+  });
+}
+
+async function executeListMissions(input: ToolInput): Promise<string> {
+  const workspace = await getOrCreateDefaultWorkspace();
+  const status = input.status as string | undefined;
+  const priority = input.priority as string | undefined;
+  const limit = (input.limit as number) || 50;
+
+  let sql = `
+    SELECT ci.identifier, ci.title, ci.priority, cs.name as status_name, ca.name as assignee_name
+    FROM dispatch_issue ci
+    LEFT JOIN dispatch_status cs ON ci.status_id = cs.id
+    LEFT JOIN dispatch_agent ca ON ci.assignee_id = ca.id
+    WHERE ci.workspace_id = $1
+  `;
+  const params: unknown[] = [workspace.id];
+  let idx = 2;
+
+  if (status) {
+    sql += ` AND LOWER(cs.name) LIKE LOWER($${idx})`;
+    params.push(`%${status}%`);
+    idx++;
+  }
+  if (priority) {
+    sql += ` AND ci.priority = $${idx}`;
+    params.push(priority);
+    idx++;
+  }
+
+  sql += ` ORDER BY ci.priority, ci.created_at DESC LIMIT $${idx}`;
+  params.push(Math.min(limit, 500));
+
+  const issues = await db.query<{
+    identifier: string;
+    title: string;
+    priority: string;
+    status_name: string;
+    assignee_name: string | null;
+  }>(sql, params);
+
+  return JSON.stringify({
+    count: issues.length,
+    filter: { status: status || "all", priority: priority || "all" },
+    missions: issues.map((i) => ({
+      identifier: i.identifier,
+      title: i.title,
+      priority: i.priority,
+      status: i.status_name,
+      assignee: i.assignee_name,
+    })),
+  });
+}
+
+async function executeUpdateMission(input: ToolInput): Promise<string> {
+  const identifier = input.mission_identifier as string;
+  const issue = await getIssue(identifier);
+  if (!issue) {
+    return JSON.stringify({ error: `Mission ${identifier} not found` });
+  }
+
+  // Resolve status name to ID if provided
+  let statusId: string | undefined;
+  if (input.status) {
+    const statusResult = await db.queryOne<{ id: string }>(
+      `SELECT id FROM dispatch_status WHERE LOWER(name) LIKE LOWER($1)`,
+      [`%${input.status}%`]
+    );
+    if (!statusResult) {
+      return JSON.stringify({
+        error: `Status "${input.status}" not found. Valid statuses: Backlog, Investigating, Needs Review, In Progress, In Review, Done, Canceled`,
+      });
+    }
+    statusId = statusResult.id;
+  }
+
+  const updateInput: Parameters<typeof updateIssue>[1] = {};
+  if (input.title) updateInput.title = input.title as string;
+  if (input.description !== undefined) updateInput.description = input.description as string;
+  if (statusId) updateInput.statusId = statusId;
+  if (input.priority) updateInput.priority = input.priority as Priority;
+
+  const updated = await updateIssue(identifier, updateInput);
+
+  if (!updated) {
+    return JSON.stringify({ error: `Failed to update mission ${identifier}` });
+  }
+
+  // Broadcast board update
+  const boardIssue = await getIssueForBoard(identifier);
+  if (boardIssue) {
+    broadcastBoardEvent({
+      type: "issue_updated",
+      issue: boardIssue,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  return JSON.stringify({
+    success: true,
+    identifier: updated.identifier,
+    title: updated.title,
+    status: input.status || issue.status?.name,
+    priority: updated.priority,
   });
 }
 
