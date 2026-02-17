@@ -117,6 +117,45 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$LINK_PAYLOAD" || echo "Warning: Failed to link run record (non-fatal)"
 
+      - name: Post Run Context
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          mkdir -p .scratch
+          python3 -c "
+          import os
+          fields = []
+          fields.append(('Workflow', 'auto_triage'))
+          fields.append(('Issue', os.environ.get('INPUT_ISSUE_IDENTIFIER', '')))
+          fields.append(('Run', os.environ.get('GITHUB_RUN_URL', '')))
+          fields.append(('Title', os.environ.get('INPUT_TITLE', '')))
+          desc = os.environ.get('INPUT_DESCRIPTION', '')
+          if desc:
+              preview = desc[:500] + ('...' if len(desc) > 500 else '')
+              fields.append(('Description', preview))
+          ctx = os.environ.get('INPUT_ADDITIONAL_CONTEXT', '')
+          if ctx:
+              fields.append(('Additional Context', ctx))
+          lines = ['=' * 60, 'RUN CONTEXT', '=' * 60]
+          for label, value in fields:
+              if '\n' in value:
+                  lines.append(f'{label}:')
+                  for line in value.split('\n')[:20]:
+                      lines.append(f'  {line}')
+                  if value.count('\n') > 20:
+                      lines.append('  ...(truncated)')
+              else:
+                  lines.append(f'{label}: {value}')
+          lines.append('=' * 60)
+          with open('.scratch/run-context.txt', 'w') as f:
+              f.write('\n'.join(lines))
+          print('\n'.join(lines))
+          "
+          jq -n --rawfile content .scratch/run-context.txt '{content: $content}' | \
+            curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d @- || echo "Warning: Failed to post run context (non-fatal)"
+
       - name: Run Triage
         id: triage
         env:
