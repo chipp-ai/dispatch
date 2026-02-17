@@ -437,9 +437,12 @@ export async function recordSpawn(
     } else if (
       spawnType === "implement" &&
       (currentName === "backlog" ||
-       currentName === "investigating" || currentName === "needs review")
+       currentName === "investigating" || currentName === "needs review" ||
+       currentName === "waiting for agent")
     ) {
-      const target = await getStatusByName(issue.workspace_id, "In Progress");
+      // Try new name first, fall back to legacy
+      const target = await getStatusByName(issue.workspace_id, "In Progress")
+        || await getStatusByName(issue.workspace_id, "Being Developed");
       if (target) {
         newStatusId = target.id;
         oldStatusName = currentStatus?.name || "Unknown";

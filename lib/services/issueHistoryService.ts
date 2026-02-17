@@ -160,23 +160,6 @@ export async function recordPRStatusChange(
 }
 
 /**
- * Record a reconciliation event
- */
-export async function recordReconciliation(
-  issueId: string,
-  changes: Record<string, unknown>,
-  actorName: string = "Reconciliation Bot"
-): Promise<IssueHistoryEntry> {
-  return createHistoryEntry({
-    issueId,
-    action: "reconciled",
-    newValue: changes,
-    actorType: "reconciliation",
-    actorName,
-  });
-}
-
-/**
  * Format a history entry for display
  */
 export function formatHistoryEntry(entry: IssueHistoryEntry): string {

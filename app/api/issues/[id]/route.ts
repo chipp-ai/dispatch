@@ -124,13 +124,28 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         }
       }
 
-      // Plan approved → move to In Progress
+      // Implementation completed/failed → move to "In Review" for human review.
+      // This covers both "in progress" (new 7-column) and "being developed" (legacy).
+      if (
+        body.spawn_status &&
+        (body.spawn_status === "completed" || body.spawn_status === "failed") &&
+        (currentStatusName === "in progress" || currentStatusName === "being developed")
+      ) {
+        const target = await getStatusByName(previousIssue.workspace_id, "In Review");
+        if (target) {
+          body.statusId = target.id;
+        }
+      }
+
+      // Plan approved → move to In Progress (or "Being Developed" on legacy boards)
       if (
         body.plan_status === "approved" &&
         (currentStatusName === "needs review" || currentStatusName === "investigating" ||
-         currentStatusName === "backlog")
+         currentStatusName === "backlog" || currentStatusName === "waiting for agent")
       ) {
-        const target = await getStatusByName(previousIssue.workspace_id, "In Progress");
+        // Try new name first, fall back to legacy
+        const target = await getStatusByName(previousIssue.workspace_id, "In Progress")
+          || await getStatusByName(previousIssue.workspace_id, "Being Developed");
         if (target) {
           body.statusId = target.id;
         }
