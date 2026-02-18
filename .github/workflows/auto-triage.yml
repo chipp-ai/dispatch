@@ -402,11 +402,8 @@ jobs:
               if [ -f .scratch/outcome-summary.txt ]; then
                 SUMMARY=$(head -1 .scratch/outcome-summary.txt)
               fi
-              git commit -m "fix: ${INPUT_TITLE} [${ISSUE_ID}]
-
-$SUMMARY
-
-Co-Authored-By: Claude Code <noreply@anthropic.com>"
+              COMMIT_MSG=$(printf 'fix: %s [%s]\n\n%s' "${INPUT_TITLE}" "${ISSUE_ID}" "$SUMMARY")
+              git commit -m "$COMMIT_MSG"
               echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
             else
               echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
