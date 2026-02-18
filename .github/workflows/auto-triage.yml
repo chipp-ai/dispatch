@@ -227,9 +227,9 @@ jobs:
           }
 
           Decision mapping:
-          - not_applicable → outcome=no_changes_needed, pr_needed=false
-          - fix_applied → outcome=completed, pr_needed=true, changes_made=true
-          - needs_plan → outcome=investigation_complete, pr_needed=false
+          - not_applicable -> outcome=no_changes_needed, pr_needed=false
+          - fix_applied -> outcome=completed, pr_needed=true, changes_made=true
+          - needs_plan -> outcome=investigation_complete, pr_needed=false
 
           START by reading CLAUDE.md to understand the codebase, then investigate the issue.
           PROMPT_BOUNDARY
