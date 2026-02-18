@@ -10,6 +10,7 @@ interface SpawnStats {
     prd: { used: number; max: number };
   };
   dailyCost: number;
+  staleCount?: number;
   outcomes: Record<string, number>;
 }
 
@@ -27,6 +28,8 @@ export default function FleetStatusPanel() {
   const [stats, setStats] = useState<SpawnStats | null>(null);
   const [activeSpawns, setActiveSpawns] = useState<ActiveSpawn[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<number | null>(null);
 
   useEffect(() => {
     fetchStats();
@@ -44,6 +47,23 @@ export default function FleetStatusPanel() {
       if (activeRes.ok) setActiveSpawns(await activeRes.json());
     } catch {
       // Silently fail - panel is informational
+    }
+  }
+
+  async function handleCleanup() {
+    setCleaningUp(true);
+    setCleanupResult(null);
+    try {
+      const res = await fetch("/api/spawns/cleanup", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setCleanupResult(data.cleaned);
+        fetchStats(); // Refresh stats after cleanup
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setCleaningUp(false);
     }
   }
 
@@ -134,6 +154,29 @@ export default function FleetStatusPanel() {
       {expanded && activeSpawns.length === 0 && stats.active === 0 && (
         <div className="mt-1 px-3 py-2 text-[11px] text-[#555]">
           No agents running
+        </div>
+      )}
+
+      {/* Stale run cleanup */}
+      {expanded && (stats.staleCount ?? 0) > 0 && (
+        <div className="mt-1.5 px-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCleanup();
+            }}
+            disabled={cleaningUp}
+            className="w-full px-2 py-1.5 rounded text-[11px] font-medium text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 transition-colors disabled:opacity-50"
+          >
+            {cleaningUp
+              ? "Cleaning up..."
+              : `Clean up ${stats.staleCount} stale run${stats.staleCount === 1 ? "" : "s"}`}
+          </button>
+          {cleanupResult !== null && (
+            <div className="mt-1 text-[10px] text-[#888]">
+              Cleaned {cleanupResult} run{cleanupResult === 1 ? "" : "s"}
+            </div>
+          )}
         </div>
       )}
 

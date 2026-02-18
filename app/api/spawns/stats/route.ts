@@ -42,6 +42,14 @@ export async function GET() {
     );
     const dailyCost = parseFloat(costResult?.total || "0");
 
+    // Stale run count (running > 45 minutes, likely stuck)
+    const staleResult = await db.queryOne<{ count: string }>(
+      `SELECT COUNT(*) as count FROM dispatch_agent_runs
+       WHERE status = 'running'
+         AND started_at < NOW() - INTERVAL '45 minutes'`
+    );
+    const staleCount = parseInt(staleResult?.count || "0", 10);
+
     // Today's completed/failed counts (from agent runs for accurate per-run counting)
     const outcomesResult = await db.query<{
       run_outcome: string;
@@ -73,6 +81,7 @@ export async function GET() {
       },
       dailyCost,
       dailyCostLimit: parseFloat(process.env.DAILY_COST_LIMIT_USD || "200"),
+      staleCount,
       outcomes,
     });
   } catch (error) {

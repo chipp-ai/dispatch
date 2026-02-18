@@ -66,6 +66,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write  # Needed for GCP Workload Identity Federation
 
     # All user-provided inputs go through env vars to prevent command injection.
     # See: https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
@@ -74,6 +75,7 @@ jobs:
       # callback_url input overrides the production API URL (for local dev tunnels)
       DISPATCH_API_URL: ${{ inputs.callback_url || secrets.DISPATCH_API_URL }}
       DISPATCH_API_KEY: ${{ secrets.DISPATCH_API_KEY }}
+      CLOUD_SQL_PASSWORD: ${{ secrets.CLOUD_SQL_PASSWORD }}
       DENO_NO_PACKAGE_JSON: "1"
       INPUT_ISSUE_ID: ${{ inputs.issue_id }}
       INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
@@ -107,6 +109,41 @@ jobs:
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
+
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: production
+          location: us-central1
+
+      - name: Start Cloud SQL Proxy
+        run: |
+          curl -sSL https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy chippai-398019:us-central1:primary-postgres --port 5432 --quiet &
+          sleep 3
+          echo "Cloud SQL Proxy started on localhost:5432"
+
+      - name: Start Loki Port-Forward
+        run: |
+          kubectl port-forward -n monitoring svc/loki-gateway 3100:80 &
+          sleep 3
+          echo "Loki port-forward started on localhost:3100"
+
+      - name: Register MCP servers
+        run: |
+          # Loki MCP - uses kubectl port-forward (started above)
+          claude mcp add-json loki '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","--allow-run=kubectl","tools/mcp-loki/index.ts"],"env":{"LOKI_URL":"http://localhost:3100"}}'
+
+          # Chipp-deno production DB (read-only via Cloud SQL Proxy)
+          claude mcp add-json chipp-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-chipp-db/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:'"${CLOUD_SQL_PASSWORD}"'@127.0.0.1:5432/chipp_deno"}}'
 
       - name: Sanitize branch name
         id: branch
@@ -204,6 +241,103 @@ jobs:
               -H "Content-Type: application/json" \
               -d @- || echo "Warning: Failed to post run context (non-fatal)"
 
+      - name: Gather Production Context
+        if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
+        run: |
+          mkdir -p .scratch
+
+          # Query recent errors from Loki
+          END_TIME=$(date -u +%s)000000000
+          START_TIME=$(date -u -d '24 hours ago' +%s 2>/dev/null || date -u -v-24H +%s)000000000
+
+          LOKI_ERRORS=$(curl -s --max-time 10 \
+            "http://localhost:3100/loki/api/v1/query_range" \
+            --data-urlencode "query={app=\"chipp-deno\",level=\"error\"} | json | source=\"${INPUT_SOURCE}\" | feature=\"${INPUT_FEATURE}\"" \
+            --data-urlencode "limit=25" \
+            --data-urlencode "start=${START_TIME}" \
+            --data-urlencode "end=${END_TIME}" 2>/dev/null || echo '{"data":{"result":[]}}')
+
+          # Query error count over last 24h
+          LOKI_COUNT=$(curl -s --max-time 10 \
+            "http://localhost:3100/loki/api/v1/query" \
+            --data-urlencode "query=count_over_time({app=\"chipp-deno\",level=\"error\"} | json | source=\"${INPUT_SOURCE}\" | feature=\"${INPUT_FEATURE}\" [24h])" \
+            2>/dev/null || echo '{"data":{"result":[]}}')
+
+          # Format into readable context (write JSON to file first to avoid shell escaping)
+          echo "$LOKI_ERRORS" > .scratch/loki-errors-raw.json
+          echo "$LOKI_COUNT" > .scratch/loki-count-raw.json
+
+          python3 -c "
+          import json, os
+
+          sections = ['=' * 60, 'PRODUCTION CONTEXT (auto-gathered)', '=' * 60]
+
+          source = os.environ.get('INPUT_SOURCE', '')
+          feature = os.environ.get('INPUT_FEATURE', '')
+          sections.append(f'Source: {source} | Feature: {feature}')
+          sections.append('')
+
+          # Parse error logs
+          try:
+              with open('.scratch/loki-errors-raw.json') as f:
+                  errors = json.load(f)
+              streams = errors.get('data', {}).get('result', [])
+              total_entries = sum(len(s.get('values', [])) for s in streams)
+              sections.append(f'Recent errors (last 24h): {total_entries} occurrences')
+              sections.append('')
+
+              # Show most recent error samples
+              samples = []
+              for stream in streams:
+                  for ts, line in stream.get('values', [])[:5]:
+                      try:
+                          entry = json.loads(line)
+                          msg = entry.get('message', entry.get('msg', line[:200]))
+                          user_id = entry.get('userId', 'unknown')
+                          samples.append(f'  [{entry.get(\"timestamp\", \"?\")[:19]}] user={user_id}: {msg[:200]}')
+                      except:
+                          samples.append(f'  {line[:200]}')
+              if samples:
+                  sections.append('Sample error entries:')
+                  sections.extend(samples[:10])
+              else:
+                  sections.append('No error samples found in the last 24h.')
+          except Exception as e:
+              sections.append(f'Error querying Loki: {e}')
+
+          sections.append('')
+          sections.append('=' * 60)
+          sections.append('Use loki_errors(), loki_search(), loki_stats() MCP tools for deeper investigation.')
+          sections.append('Use db_query() MCP tool for production database queries (read-only).')
+          sections.append('=' * 60)
+
+          result = '\n'.join(sections)
+          with open('.scratch/loki-context.md', 'w') as f:
+              f.write(result)
+          print(result)
+          "
+
+          # Post to terminal (visible in terminal viewer)
+          jq -n --rawfile content .scratch/loki-context.md '{content: $content}' | \
+            curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/terminal" \
+              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d @- || echo "Warning: Failed to post Loki context to terminal (non-fatal)"
+
+          # Post to activity timeline (visible in history)
+          jq -n \
+            --arg type "context_gathered" \
+            --rawfile content .scratch/loki-context.md \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_RUN_URL" \
+            --arg source "$INPUT_SOURCE" \
+            --arg feature "$INPUT_FEATURE" \
+            '{type: $type, content: $content, metadata: {run_id: $run_id, run_url: $run_url, source: $source, feature: $feature, context_type: "loki_prefetch"}}' | \
+            curl -sf -X POST "${DISPATCH_API_URL}/api/issues/${INPUT_ISSUE_ID}/activity" \
+              -H "Authorization: Bearer ${DISPATCH_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d @- || echo "Warning: Failed to post context activity (non-fatal)"
+
       - name: Run Investigation
         id: investigate
         env:
@@ -234,6 +368,26 @@ jobs:
           ADDITIONAL CONTEXT FROM HUMAN:
           ${INPUT_ADDITIONAL_CONTEXT}
           ")
+          $([ -f .scratch/loki-context.md ] && cat .scratch/loki-context.md)
+
+          PRODUCTION LOGS (Loki MCP):
+          You have access to production logs via MCP tools. Use them to investigate:
+          - loki_errors(source: "${INPUT_SOURCE}", since: "1h") -- recent errors from this module
+          - loki_search(pattern: "<error message snippet>", since: "1h") -- find related logs
+          - loki_stats(since: "1h", groupBy: "source") -- overview of recent errors
+          - loki_user_activity(userId: "<user-id>", since: "24h") -- user behavior before/after error
+          - loki_error_impact(source: "${INPUT_SOURCE}", feature: "${INPUT_FEATURE}") -- blast radius analysis
+          - loki_trace(requestId: "<request-id>") -- trace a single request across all services
+
+          DATABASE ACCESS (Production - READ ONLY):
+          You have access to the production chipp_deno database via MCP tools.
+          - db_query(sql: "SELECT ...") -- run read-only queries against production
+          - db_describe_table(table: "schema.table_name") -- inspect table structure
+          - db_list_tables() -- list all tables
+          - db_find_table(pattern: "...") -- find tables by name
+          - db_sample_rows(table: "schema.table_name") -- see sample data
+          IMPORTANT: The database is READ-ONLY. Do NOT attempt writes.
+
           LOKI QUERY REFERENCE (include relevant queries in your investigation report so humans can drill deeper):
           - Recent errors: {app="chipp-deno", level="error"} | json | source="${INPUT_SOURCE}" | feature="${INPUT_FEATURE}"
           - Affected users: {app="chipp-deno", level="error"} | json | source="${INPUT_SOURCE}" | feature="${INPUT_FEATURE}" | userId!=""

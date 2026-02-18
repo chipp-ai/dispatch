@@ -49,6 +49,7 @@ jobs:
 
     permissions:
       contents: read
+      id-token: write  # Needed for GCP Workload Identity Federation
 
     # SECURITY: All user-provided inputs are passed through env vars to
     # prevent command injection. They are NEVER interpolated in run: blocks.
@@ -57,6 +58,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DISPATCH_API_URL: ${{ inputs.callback_url || secrets.DISPATCH_API_URL }}
       DISPATCH_API_KEY: ${{ secrets.DISPATCH_API_KEY }}
+      CLOUD_SQL_PASSWORD: ${{ secrets.CLOUD_SQL_PASSWORD }}
       DENO_NO_PACKAGE_JSON: "1"
       INPUT_ISSUE_ID: ${{ inputs.issue_id }}
       INPUT_ISSUE_IDENTIFIER: ${{ inputs.issue_identifier }}
@@ -86,6 +88,41 @@ jobs:
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
+
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: production
+          location: us-central1
+
+      - name: Start Cloud SQL Proxy
+        run: |
+          curl -sSL https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy chippai-398019:us-central1:primary-postgres --port 5432 --quiet &
+          sleep 3
+          echo "Cloud SQL Proxy started on localhost:5432"
+
+      - name: Start Loki Port-Forward
+        run: |
+          kubectl port-forward -n monitoring svc/loki-gateway 3100:80 &
+          sleep 3
+          echo "Loki port-forward started on localhost:3100"
+
+      - name: Register MCP servers
+        run: |
+          # Loki MCP - uses kubectl port-forward (started above)
+          claude mcp add-json loki '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","--allow-run=kubectl","tools/mcp-loki/index.ts"],"env":{"LOKI_URL":"http://localhost:3100"}}'
+
+          # Chipp-deno production DB (read-only via Cloud SQL Proxy)
+          claude mcp add-json chipp-database '{"type":"stdio","command":"deno","args":["run","--allow-net","--allow-env","--allow-read","tools/mcp-chipp-db/index.ts"],"env":{"DATABASE_URL":"postgresql://postgres:'"${CLOUD_SQL_PASSWORD}"'@127.0.0.1:5432/chipp_deno"}}'
 
       - name: Notify Dispatch - Investigating
         if: env.DISPATCH_API_URL != '' && env.DISPATCH_API_KEY != ''
@@ -190,6 +227,22 @@ jobs:
 
           Description / PRD:
           {d['description']}{feedback_section}{additional_section}
+
+          PRODUCTION LOGS (Loki MCP):
+          You have access to production logs via MCP tools. Useful for understanding current behavior:
+          - loki_errors(since: \"24h\") -- recent errors across all modules
+          - loki_search(pattern: \"<keyword>\", since: \"24h\") -- find related logs
+          - loki_stats(since: \"24h\", groupBy: \"source\") -- overview of recent errors
+
+          DATABASE ACCESS (Production - READ ONLY):
+          You have access to the production chipp_deno database via MCP tools.
+          Useful for understanding schema, data model, and current state:
+          - db_query(sql: \"SELECT ...\") -- run read-only queries against production
+          - db_describe_table(table: \"schema.table_name\") -- inspect table structure
+          - db_list_tables() -- list all tables
+          - db_find_table(pattern: \"...\") -- find tables by name
+          - db_sample_rows(table: \"schema.table_name\") -- see sample data
+          IMPORTANT: The database is READ-ONLY. Do NOT attempt writes.
 
           Instructions:
           1. Read CLAUDE.md first to understand the codebase

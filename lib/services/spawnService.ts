@@ -14,6 +14,7 @@ import { getStatusByName } from "./statusService";
 import { getIssueForBoard } from "./issueService";
 import { broadcastBoardEvent } from "./boardBroadcast";
 import { notifyInternalAgentStarted } from "./internalSlackService";
+import { cleanupStaleRunsThrottled } from "./staleRunCleanupService";
 
 // --- Configuration ---
 
@@ -102,7 +103,7 @@ const WORKFLOW_IDS: Record<WorkflowType, string> = {
   prd_implement: "prd-implement.yml",
   qa: "qa-test.yml",
   deep_research: "deep-research.yml",
-  auto_triage: "triage.yml",
+  auto_triage: "auto-triage.yml",
 };
 
 // --- Types ---
@@ -137,6 +138,9 @@ export interface SpawnableIssue {
 export async function canSpawn(
   workflowType: WorkflowType = "error_fix"
 ): Promise<boolean> {
+  // Clean up stale runs before checking limits (throttled to once per 5min)
+  await cleanupStaleRunsThrottled();
+
   if (process.env.SPAWN_KILL_SWITCH === "true") {
     console.log("[Spawn] Kill switch is enabled, blocking spawn");
     return false;
