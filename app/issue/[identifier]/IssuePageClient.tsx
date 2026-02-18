@@ -1368,6 +1368,31 @@ export default function IssuePageClient({
           )}
         </div>
 
+        {/* PR link badge */}
+        {(() => {
+          const primaryPR = linkedPRs.find((pr) => pr.pr_status === "open") || linkedPRs.find((pr) => pr.pr_status === "merged") || linkedPRs[0];
+          if (!primaryPR) return null;
+          const statusColor = primaryPR.pr_status === "merged"
+            ? "text-[#a371f7] bg-[#a371f7]/10 border-[#a371f7]/20"
+            : primaryPR.pr_status === "open"
+              ? "text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/20"
+              : "text-[#f85149] bg-[#f85149]/10 border-[#f85149]/20";
+          return (
+            <a
+              href={primaryPR.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-opacity hover:opacity-80 ${statusColor}`}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" />
+              </svg>
+              #{primaryPR.pr_number}
+              <span className="hidden md:inline capitalize">{primaryPR.pr_status}</span>
+            </a>
+          );
+        })()}
+
         {/* Right: status + actions + sidebar toggle + delete */}
         <div className="flex items-center gap-2 shrink-0 ml-2">
           {/* Agent status badge */}
@@ -1774,6 +1799,63 @@ export default function IssuePageClient({
                 </div>
               )}
 
+              {/* Linked Pull Requests - always visible, prominent */}
+              <div className={`p-3 rounded-lg ${
+                linkedPRs.length > 0
+                  ? "bg-[#0a0a0a] border-l-2 border border-[#1f1f1f] border-l-[#5e6ad2]"
+                  : "bg-[#0a0a0a] border border-[#1f1f1f]"
+              }`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <svg className="w-4 h-4 text-[#5e6ad2]" viewBox="0 0 16 16" fill="currentColor">
+                    <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" />
+                  </svg>
+                  <h3 className="text-[13px] font-semibold text-[#e0e0e0]">
+                    Pull Requests
+                  </h3>
+                  {linkedPRs.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#5e6ad2]/15 text-[#5e6ad2] font-medium">
+                      {linkedPRs.length}
+                    </span>
+                  )}
+                </div>
+                {loadingPRs ? (
+                  <div className="flex items-center gap-2 text-[11px] text-[#505050]">
+                    <div className="w-3 h-3 border border-[#404040] border-t-[#5e6ad2] rounded-full animate-spin" />
+                    Loading...
+                  </div>
+                ) : linkedPRs.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {linkedPRs.map((pr) => (
+                      <PRCard key={pr.id} pr={pr} onUnlink={handleUnlinkPR} />
+                    ))}
+                  </div>
+                ) : issue.agent_output?.pr_url ? (
+                  <a
+                    href={issue.agent_output.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 p-2.5 bg-[#141414] border border-[#252525] rounded-lg hover:border-[#5e6ad2]/40 transition-colors group"
+                  >
+                    <svg className="w-4 h-4 text-[#5e6ad2] group-hover:text-[#7b83dc] transition-colors flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 01-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 010 8c0-4.42 3.58-8 8-8z" />
+                    </svg>
+                    <div className="min-w-0">
+                      <div className="text-[12px] text-[#5e6ad2] group-hover:text-[#7b83dc] font-medium transition-colors truncate">
+                        {issue.agent_output.pr_url.replace("https://github.com/", "")}
+                      </div>
+                      <div className="text-[10px] text-[#505050]">From agent output</div>
+                    </div>
+                    <svg className="w-3 h-3 text-[#404040] group-hover:text-[#5e6ad2] transition-colors ml-auto flex-shrink-0" viewBox="0 0 16 16" fill="none">
+                      <path d="M6 3H3v10h10v-3M9 2h5v5M14 2L7 9" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </a>
+                ) : (
+                  <div className="text-[11px] text-[#404040] py-1">
+                    No linked pull requests
+                  </div>
+                )}
+              </div>
+
               {/* Title (editable) - only shown when main pane has terminal */}
               {hasTerminalOutput && (
               <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
@@ -2084,19 +2166,7 @@ export default function IssuePageClient({
                     </div>
                   )}
 
-                  {issue.agent_output.pr_url && (
-                    <a
-                      href={issue.agent_output.pr_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-2 flex items-center gap-1.5 text-[11px] text-[#5e6ad2] hover:text-[#7b83dc] transition-colors"
-                    >
-                      <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 01-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 010 8c0-4.42 3.58-8 8-8z" />
-                      </svg>
-                      View Pull Request
-                    </a>
-                  )}
+                  {/* PR link now shown in dedicated Pull Requests section above */}
 
                   {issue.agent_output.error && (
                     <div className="mt-1.5 p-2 bg-red-500/10 border border-red-500/20 rounded text-[11px] text-red-400">
@@ -2167,34 +2237,7 @@ export default function IssuePageClient({
                 </div>
               )}
 
-              {/* Linked Pull Requests */}
-              {(linkedPRs.length > 0 || loadingPRs) && (
-                <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <svg className="w-3.5 h-3.5 text-[#606060]" viewBox="0 0 16 16" fill="currentColor">
-                      <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z" />
-                    </svg>
-                    <h3 className="text-[12px] font-medium text-[#e0e0e0]">
-                      Pull Requests
-                    </h3>
-                    {linkedPRs.length > 0 && (
-                      <span className="text-[10px] text-[#505050]">({linkedPRs.length})</span>
-                    )}
-                  </div>
-                  {loadingPRs ? (
-                    <div className="flex items-center gap-2 text-[10px] text-[#505050]">
-                      <div className="w-3 h-3 border border-[#404040] border-t-[#5e6ad2] rounded-full animate-spin" />
-                      Loading...
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {linkedPRs.map((pr) => (
-                        <PRCard key={pr.id} pr={pr} onUnlink={handleUnlinkPR} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Linked Pull Requests - moved to top of sidebar, see below Overview Card */}
 
               {/* Agent Runs */}
               {agentRuns.length > 0 && (
