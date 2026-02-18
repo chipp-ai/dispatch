@@ -1460,24 +1460,104 @@ export default function IssuePageClient() {
               className={agentRuns.filter(r => r.status !== "running").length > 0 ? "shrink-0" : "flex-1 min-h-0"}
             />
           ) : (
-            /* Empty state with Action Panel */
-            <div className="flex-1 flex flex-col items-center justify-center rounded-lg border border-[#1f1f1f] bg-[#0a0a0a]">
-              {issue.agent_status === "idle" ? (
-                <ActionPanel
-                  hasApprovedPlan={issue.plan_status === "approved"}
-                  onAction={handleSpawn}
-                  loading={spawnLoading}
-                />
-              ) : (
-                <div className="text-center">
-                  <div className="mb-3 text-[#303030]">
-                    <svg className="w-10 h-10 mx-auto" viewBox="0 0 16 16" fill="none">
-                      <path d="M4 6l2 2-2 2M7 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+            /* Empty state: Mission details + Action Panel */
+            <div className="flex-1 flex flex-col rounded-lg border border-[#1f1f1f] bg-[#0a0a0a] overflow-y-auto">
+              {/* Mission info */}
+              <div className="px-6 pt-6 pb-4 border-b border-[#1f1f1f]">
+                {/* Identifier + metadata row */}
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="text-[11px] font-mono text-[#505050]">{issue.identifier}</span>
+                  {parsedSource && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-[#1a1a2e] text-[#a78bfa] border border-[#a78bfa]/20">
+                      {parsedSource}{parsedFeature ? ` / ${parsedFeature}` : ""}
+                    </span>
+                  )}
+                  {lokiMeta?.level && (
+                    <span className={`px-1.5 py-0.5 text-[10px] font-mono rounded border ${
+                      lokiMeta.level === "error"
+                        ? "bg-red-500/10 text-red-400 border-red-500/20"
+                        : lokiMeta.level === "warn"
+                          ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+                          : "bg-[#1a1a1a] text-[#808080] border-[#252525]"
+                    }`}>
+                      {lokiMeta.level}
+                    </span>
+                  )}
+                  {lokiMeta?.event_count && Number(lokiMeta.event_count) > 1 && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-[#1a1a1a] text-[#808080] border border-[#252525]">
+                      {lokiMeta.event_count} occurrences
+                    </span>
+                  )}
+                  {issue.labels.map((il) => (
+                    <span
+                      key={il.label.id}
+                      className="px-1.5 py-0.5 text-[10px] font-medium rounded border"
+                      style={{
+                        backgroundColor: `${il.label.color}15`,
+                        color: il.label.color,
+                        borderColor: `${il.label.color}30`,
+                      }}
+                    >
+                      {il.label.name}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Title */}
+                <h1 className="text-[18px] font-semibold text-[#e0e0e0] leading-snug mb-1">
+                  {cleanTitle}
+                </h1>
+
+                {/* Created date */}
+                <span className="text-[11px] text-[#404040]">
+                  Created {new Date(issue.created_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                  {lokiLink ? " via Loki" : ""}
+                </span>
+              </div>
+
+              {/* Description */}
+              {issue.description && (
+                <div className="px-6 py-4 border-b border-[#1f1f1f]">
+                  <div className="prose prose-invert prose-sm max-w-none
+                    prose-headings:text-[#e0e0e0] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+                    prose-h1:text-[14px] prose-h2:text-[13px] prose-h3:text-[12px]
+                    prose-p:text-[#a0a0a0] prose-p:text-[13px] prose-p:leading-relaxed prose-p:my-1.5
+                    prose-strong:text-[#d0d0d0]
+                    prose-code:text-[#c792ea] prose-code:bg-[#1a1a1a] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+                    prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#252525] prose-pre:rounded-lg prose-pre:text-[11px]
+                    prose-ul:text-[#a0a0a0] prose-ul:my-1 prose-li:my-0
+                    prose-a:text-[#5e6ad2] prose-a:no-underline hover:prose-a:underline
+                  ">
+                    <ReactMarkdown>{issue.description}</ReactMarkdown>
                   </div>
-                  <p className="text-[13px] text-[#505050]">Waiting for agent output...</p>
                 </div>
               )}
+
+              {/* Action panel or waiting state */}
+              <div className="flex-1 flex flex-col items-center justify-center">
+                {issue.agent_status === "idle" ? (
+                  <ActionPanel
+                    hasApprovedPlan={issue.plan_status === "approved"}
+                    onAction={handleSpawn}
+                    loading={spawnLoading}
+                  />
+                ) : (
+                  <div className="text-center">
+                    <div className="mb-3 text-[#303030]">
+                      <svg className="w-10 h-10 mx-auto" viewBox="0 0 16 16" fill="none">
+                        <path d="M4 6l2 2-2 2M7 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[13px] text-[#505050]">Waiting for agent output...</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

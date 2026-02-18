@@ -152,16 +152,23 @@ function shouldCreateIssue(payload: SentryWebhookPayload): boolean {
 export async function POST(request: NextRequest) {
   const clientSecret = process.env.SENTRY_CLIENT_SECRET;
 
+  // Require SENTRY_CLIENT_SECRET to be configured -- reject all webhooks otherwise.
+  // This also serves as the kill switch: remove the env var to disable Sentry integration.
+  if (!clientSecret) {
+    return NextResponse.json(
+      { error: "Sentry integration disabled" },
+      { status: 503 }
+    );
+  }
+
   // Get the raw body for signature verification
   const rawBody = await request.text();
 
-  // Verify signature if secret is configured
-  if (clientSecret) {
-    const signature = request.headers.get("sentry-hook-signature");
-    if (!verifySignature(rawBody, signature, clientSecret)) {
-      console.error("[Sentry Webhook] Invalid signature");
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+  // Verify signature (always required when secret is configured)
+  const signature = request.headers.get("sentry-hook-signature");
+  if (!verifySignature(rawBody, signature, clientSecret)) {
+    console.error("[Sentry Webhook] Invalid signature");
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   let payload: SentryWebhookPayload;
