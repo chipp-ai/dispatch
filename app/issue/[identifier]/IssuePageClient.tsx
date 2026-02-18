@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import TerminalViewer from "@/components/TerminalViewer";
 import IssueTimeline from "@/components/IssueTimeline";
@@ -806,7 +805,13 @@ function PreviousRunBlock({
   );
 }
 
-export default function IssuePageClient() {
+export default function IssuePageClient({
+  isModal = false,
+  onClose,
+}: {
+  isModal?: boolean;
+  onClose?: () => void;
+} = {}) {
   const router = useRouter();
   const params = useParams();
   const identifier = params.identifier as string;
@@ -1109,10 +1114,29 @@ export default function IssuePageClient() {
         method: "DELETE",
       });
       if (res.ok) {
-        router.push("/board");
+        goBack();
       }
     } catch (err) {
       console.error("Failed to delete issue:", err);
+    }
+  }
+
+  async function handleCloseIssue() {
+    if (!issue) return;
+    try {
+      const res = await fetch(`/api/issues/${issue.identifier}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "Canceled" }),
+      });
+      if (res.ok) {
+        goBack();
+      } else if (res.status === 403) {
+        const data = await res.json();
+        setSpawnError(data.reason || "Cannot close this issue");
+      }
+    } catch (err) {
+      console.error("Failed to close issue:", err);
     }
   }
 
@@ -1244,9 +1268,14 @@ export default function IssuePageClient() {
     }
   }
 
+  function goBack() {
+    if (isModal && onClose) onClose();
+    else router.push("/board");
+  }
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0d0d0d]">
+      <div className={`${isModal ? "h-full" : "min-h-screen"} flex items-center justify-center bg-[#0d0d0d]`}>
         <div className="spinner" />
       </div>
     );
@@ -1254,16 +1283,16 @@ export default function IssuePageClient() {
 
   if (error || !issue) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#0d0d0d]">
+      <div className={`${isModal ? "h-full" : "min-h-screen"} flex flex-col items-center justify-center gap-4 bg-[#0d0d0d]`}>
         <div className="text-red-400 text-[14px]">
           {error || "Issue not found"}
         </div>
-        <Link
-          href="/board"
+        <button
+          onClick={goBack}
           className="text-[13px] text-[#5e6ad2] hover:text-[#6b74db]"
         >
           Back to board
-        </Link>
+        </button>
       </div>
     );
   }
@@ -1304,13 +1333,13 @@ export default function IssuePageClient() {
   const hasTerminalOutput = isAgentActive || terminalLines.length > 0;
 
   return (
-    <div className="h-screen flex flex-col bg-[#0d0d0d]">
+    <div className={`${isModal ? "h-full" : "h-screen"} flex flex-col bg-[#0d0d0d]`}>
       {/* Compact Header */}
       <header className="h-11 border-b border-[#1f1f1f] flex items-center px-3 md:px-4 bg-[#0d0d0d] shrink-0 z-10">
         {/* Left: breadcrumb */}
         <div className="flex items-center gap-2 text-[13px] shrink-0">
-          <Link
-            href="/board"
+          <button
+            onClick={goBack}
             className="flex items-center gap-1.5 text-[#808080] hover:text-[#e0e0e0] transition-colors"
           >
             <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
@@ -1320,7 +1349,7 @@ export default function IssuePageClient() {
               <rect x="9" y="9" width="5" height="5" rx="1" fill="currentColor" opacity="0.6" />
             </svg>
             <span className="hidden md:inline">Board</span>
-          </Link>
+          </button>
           <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 16 16" fill="none">
             <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -1428,6 +1457,19 @@ export default function IssuePageClient() {
               <rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.25" />
               <path d="M10 2v12" stroke="currentColor" strokeWidth="1.25" />
             </svg>
+          </button>
+
+          {/* Close / Dismiss */}
+          <button
+            onClick={handleCloseIssue}
+            className="flex items-center gap-1 px-2.5 py-1 bg-[#1a1a1a] border border-[#252525] hover:border-[#404040] text-[#808080] hover:text-[#e0e0e0] text-[11px] rounded-md transition-colors"
+            title="Close as not relevant"
+          >
+            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.25" />
+              <path d="M5.5 8h5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+            </svg>
+            <span className="hidden md:inline">Close</span>
           </button>
 
           {/* Delete */}
@@ -1565,6 +1607,18 @@ export default function IssuePageClient() {
                     onAction={handleSpawn}
                     loading={spawnLoading}
                   />
+                  <div className="mt-4 pt-4 border-t border-[#1a1a1a]">
+                    <button
+                      onClick={handleCloseIssue}
+                      className="flex items-center gap-2 text-[12px] text-[#505050] hover:text-[#808080] transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+                        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.25" />
+                        <path d="M5.5 8h5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                      </svg>
+                      Dismiss as not relevant or duplicate
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center py-8 gap-3">
