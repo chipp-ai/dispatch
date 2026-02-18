@@ -102,7 +102,7 @@ const WORKFLOW_IDS: Record<WorkflowType, string> = {
   prd_implement: "prd-implement.yml",
   qa: "qa-test.yml",
   deep_research: "deep-research.yml",
-  auto_triage: "auto-triage.yml",
+  auto_triage: "triage.yml",
 };
 
 // --- Types ---
