@@ -192,7 +192,9 @@ export async function notifyInternalAgentCompleted(
   }
 
   if (issue.cost_usd != null && issue.cost_usd > 0) {
-    text += `\nCost: $${issue.cost_usd.toFixed(2)}`;
+    const maxCost = parseFloat(process.env.MAX_AGENT_COST_PER_RUN || "25");
+    const hitLimit = issue.cost_usd >= maxCost * 0.9;
+    text += `\nCost: $${issue.cost_usd.toFixed(2)}${hitLimit ? " :warning: hit budget limit" : ""}`;
   }
 
   await client.chat.postMessage({

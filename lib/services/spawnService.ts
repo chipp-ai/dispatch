@@ -168,7 +168,30 @@ export async function canSpawn(
     return false;
   }
 
+  // 4. Daily cost limit
+  const dailyCostLimit = parseFloat(
+    process.env.DAILY_COST_LIMIT_USD || "200"
+  );
+  if (dailyCostLimit > 0) {
+    const dailyCost = await getDailyCost();
+    if (dailyCost >= dailyCostLimit) {
+      console.log(
+        `[Spawn] Daily cost limit reached: $${dailyCost.toFixed(2)}/$${dailyCostLimit}`
+      );
+      return false;
+    }
+  }
+
   return true;
+}
+
+async function getDailyCost(): Promise<number> {
+  const result = await db.queryOne<{ total: string }>(
+    `SELECT COALESCE(SUM(cost_usd), 0) as total
+     FROM dispatch_agent_runs
+     WHERE started_at >= CURRENT_DATE`
+  );
+  return parseFloat(result?.total || "0");
 }
 
 /**

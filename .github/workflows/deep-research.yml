@@ -59,6 +59,7 @@ jobs:
       INPUT_DESCRIPTION: ${{ inputs.description }}
       INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      MAX_AGENT_COST_PER_RUN: ${{ vars.MAX_AGENT_COST_PER_RUN || '25' }}
 
     steps:
       - name: Checkout code
@@ -271,7 +272,7 @@ jobs:
           cat > .scratch/run-claude.sh << 'RUNEOF'
           #!/bin/bash
           PROMPT=$(cat .scratch/research-prompt.md)
-          exec claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions "$PROMPT"
+          exec claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions --max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}" "$PROMPT"
           RUNEOF
           chmod +x .scratch/run-claude.sh
 

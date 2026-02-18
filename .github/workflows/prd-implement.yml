@@ -66,6 +66,7 @@ jobs:
       INPUT_PLAN_CONTENT: ${{ inputs.plan_content }}
       INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      MAX_AGENT_COST_PER_RUN: ${{ vars.MAX_AGENT_COST_PER_RUN || '25' }}
 
     services:
       postgres:
@@ -530,7 +531,7 @@ jobs:
 
           # Quick MCP readiness check (servers registered at user scope - no approval needed)
           echo "=== MCP readiness check ==="
-          timeout 60 claude --print --model claude-opus-4-6 --dangerously-skip-permissions \
+          timeout 60 claude --print --model claude-opus-4-6 --dangerously-skip-permissions --max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}" \
             "List your available MCP tools. Respond with the count of MCP tools you have access to." 2>&1 \
             && echo "MCP check: PASS" || echo "MCP check: FAIL (exit: $?)"
 
@@ -540,7 +541,7 @@ jobs:
 
           # Servers are registered at user scope (via `claude mcp add-json` above).
           # No --mcp-config flag needed - Claude auto-discovers user-scoped servers.
-          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions \
+          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions --max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}" \
             "$PROMPT" > .scratch/claude-raw.log 2>&1 &
           CLAUDE_PID=$!
           echo "Claude started (PID: $CLAUDE_PID)"
@@ -712,7 +713,7 @@ jobs:
           PREV_FIX_LINES=$(wc -l < .scratch/claude-raw.log 2>/dev/null || echo 0)
 
           # Run fix attempt (MCP servers auto-discovered from user config)
-          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions \
+          claude --print --model claude-opus-4-6 --verbose --output-format stream-json --dangerously-skip-permissions --max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}" \
             "$(cat .scratch/fix-prompt.md)" > .scratch/claude-fix-raw.log 2>&1 &
           FIX_PID=$!
 

@@ -74,6 +74,7 @@ jobs:
       INPUT_PR_URL: ${{ inputs.pr_url }}
       INPUT_ADDITIONAL_CONTEXT: ${{ inputs.additional_context }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      MAX_AGENT_COST_PER_RUN: ${{ vars.MAX_AGENT_COST_PER_RUN || '25' }}
 
     services:
       postgres:
@@ -418,7 +419,7 @@ jobs:
 
           PROMPT=$(cat .scratch/qa-prompt.md)
 
-          claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions \
+          claude --print --model claude-sonnet-4-5-20250929 --verbose --output-format stream-json --dangerously-skip-permissions --max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}" \
             "$PROMPT" > .scratch/claude-raw.log 2>&1 &
           CLAUDE_PID=$!
           echo "Claude QA agent started (PID: $CLAUDE_PID)"

@@ -72,6 +72,7 @@ export async function GET() {
         },
       },
       dailyCost,
+      dailyCostLimit: parseFloat(process.env.DAILY_COST_LIMIT_USD || "200"),
       outcomes,
     });
   } catch (error) {
