@@ -1443,8 +1443,24 @@ export default function IssuePageClient() {
 
       {/* Spawn error toast */}
       {spawnError && (
-        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20">
-          <p className="text-[12px] text-red-400">{spawnError}</p>
+        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-red-400 shrink-0" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.25" />
+            <path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+          </svg>
+          <p className="text-[12px] text-red-400">
+            {(() => {
+              // Parse "[Spawn] GitHub dispatch failed: 422 {...json...}" into human-readable message
+              try {
+                const jsonMatch = spawnError.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const parsed = JSON.parse(jsonMatch[0]);
+                  return parsed.message || spawnError;
+                }
+              } catch { /* fall through */ }
+              return spawnError;
+            })()}
+          </p>
         </div>
       )}
 
@@ -1540,24 +1556,24 @@ export default function IssuePageClient() {
               )}
 
               {/* Action panel or waiting state */}
-              <div className="flex-1 flex flex-col items-center justify-center">
-                {issue.agent_status === "idle" ? (
+              {issue.agent_status === "idle" ? (
+                <div className="px-6 py-5">
                   <ActionPanel
                     hasApprovedPlan={issue.plan_status === "approved"}
                     onAction={handleSpawn}
                     loading={spawnLoading}
                   />
-                ) : (
-                  <div className="text-center">
-                    <div className="mb-3 text-[#303030]">
-                      <svg className="w-10 h-10 mx-auto" viewBox="0 0 16 16" fill="none">
-                        <path d="M4 6l2 2-2 2M7 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </div>
-                    <p className="text-[13px] text-[#505050]">Waiting for agent output...</p>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center py-8">
+                  <div className="mb-3 text-[#303030]">
+                    <svg className="w-10 h-10 mx-auto animate-pulse" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 6l2 2-2 2M7 10h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
                   </div>
-                )}
-              </div>
+                  <p className="text-[13px] text-[#505050]">Waiting for agent output...</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -1689,7 +1705,8 @@ export default function IssuePageClient() {
                 </div>
               )}
 
-              {/* Title (editable) */}
+              {/* Title (editable) - only shown when main pane has terminal */}
+              {hasTerminalOutput && (
               <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
                 <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
                   Title
@@ -1719,8 +1736,10 @@ export default function IssuePageClient() {
                   </p>
                 )}
               </div>
+              )}
 
-              {/* Description (editable, collapsible) */}
+              {/* Description (editable, collapsible) - only shown when main pane has terminal */}
+              {hasTerminalOutput && (
               <div className="p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
                 <div className="text-[11px] font-medium text-[#606060] uppercase tracking-wider mb-2">
                   Description
@@ -1779,6 +1798,7 @@ export default function IssuePageClient() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Blocked Indicator */}
               {issue.agent_status === "blocked" && issue.blocked_reason && (
@@ -2507,18 +2527,7 @@ function ActionPanel({
     : primaryActions;
 
   return (
-    <div className="w-full max-w-md px-6 py-8">
-      <div className="text-center mb-5">
-        <div className="mb-2 text-[#303030]">
-          <svg className="w-8 h-8 mx-auto" viewBox="0 0 16 16" fill="none">
-            <rect x="3" y="4" width="10" height="8" rx="2" stroke="currentColor" strokeWidth="1.25" />
-            <circle cx="6" cy="8" r="1" fill="currentColor" />
-            <circle cx="10" cy="8" r="1" fill="currentColor" />
-            <path d="M8 4V2M8 2L6 1M8 2L10 1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-          </svg>
-        </div>
-        <p className="text-[12px] text-[#505050]">Choose an action to begin</p>
-      </div>
+    <div className="w-full max-w-lg">
       <div className="space-y-2">
         {actions.map((action) => {
           const isGated = action.requiresPlan && !hasApprovedPlan;
