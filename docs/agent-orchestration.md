@@ -170,6 +170,20 @@ The **Agent Activity** section shows structured events:
 
 ## Budget & Safety Controls
 
+Dispatch uses a multi-layer cost control system. See `docs/cost-controls.md` for full architecture details.
+
+### Per-Run Cost Cap (`--max-budget-usd`)
+
+Every `claude --print` invocation includes `--max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}"`. Claude CLI tracks cost client-side and self-terminates when the budget is exceeded. Default: **$25 per run**.
+
+- Configurable via GitHub Actions variable `vars.MAX_AGENT_COST_PER_RUN`
+- The `result` event is still emitted on budget termination (`"subtype":"error_max_budget_usd"`)
+- Cost extraction and persistence still work normally
+
+### Daily Cost Limit
+
+The 4th gate in `canSpawn()` checks today's total spend across all agent runs against `DAILY_COST_LIMIT_USD` (default: **$200**). When the limit is reached, no new agents can be spawned.
+
 ### Daily Spawn Budgets
 
 Each workflow type has a daily spawn limit (configured in `dispatch_spawn_budget` table):
@@ -189,6 +203,10 @@ Only one agent can run per issue at a time. The spawn service checks for existin
 ### Cooldown Periods
 
 For auto-spawned error fixes, there's a cooldown per error fingerprint to prevent repeatedly spawning for the same recurring error.
+
+### Slack Budget Warnings
+
+When a completed run's cost reaches 90% of the per-run cap, the Slack notification includes a `:warning: hit budget limit` warning so the team knows the run may have been truncated.
 
 ---
 

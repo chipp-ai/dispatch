@@ -71,6 +71,41 @@ Key tables: `dispatch_issue`, `dispatch_status`, `dispatch_comment`, `dispatch_l
 
 The `dispatch_status` table defines board columns (Backlog, Investigating, Needs Review, In Progress, In Review, Done, Canceled). Filter issues by `status_id` to query specific columns.
 
+## Cost Controls
+
+Dispatch has a multi-layer cost control system to prevent runaway agent spend (added after DISPATCH-31 cost $257.90):
+
+### Per-Run Cap (`--max-budget-usd`)
+Every `claude --print` invocation in all 6 workflow files includes `--max-budget-usd "${MAX_AGENT_COST_PER_RUN:-25}"`. Claude CLI tracks cost client-side and self-terminates after the budget is exceeded.
+
+- Default: $25 per run (configurable via GitHub Actions `vars.MAX_AGENT_COST_PER_RUN`)
+- The `result` event is still emitted on budget termination with `"subtype":"error_max_budget_usd"` and `is_error: false`
+- Cost extraction and persistence still works normally
+- **First API call can exceed the cap** (checked after each call completes), but this is negligible for $25 budgets
+
+### Daily Cost Limit (server-side)
+`canSpawn()` in `lib/services/spawnService.ts` has 4 gates:
+1. Kill switch (`SPAWN_KILL_SWITCH`)
+2. Concurrency limit (`MAX_CONCURRENT_SPAWNS_*`)
+3. Daily spawn count (`DAILY_SPAWN_BUDGET_*`)
+4. **Daily cost limit** (`DAILY_COST_LIMIT_USD`, default $200)
+
+The daily cost gate sums `cost_usd` from `dispatch_agent_runs WHERE started_at >= CURRENT_DATE`.
+
+### Slack Budget Warnings
+When a run's cost reaches 90% of the per-run cap, the Slack notification includes a `:warning: hit budget limit` suffix.
+
+### Stats Endpoint
+`GET /api/spawns/stats` returns `dailyCostLimit` alongside `dailyCost` for dashboard display.
+
+### Configuration
+| Env Var | Default | Where | Purpose |
+|---------|---------|-------|---------|
+| `MAX_AGENT_COST_PER_RUN` | `25` | GitHub Actions vars | Per-run dollar cap |
+| `DAILY_COST_LIMIT_USD` | `200` | Server env | Daily total cost gate |
+
+See `docs/cost-controls.md` for full architecture details.
+
 ## Common Commands
 
 ```bash
