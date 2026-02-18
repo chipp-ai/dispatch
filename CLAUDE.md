@@ -47,6 +47,30 @@ charts/           -- Kubernetes deployment examples
 - Server definition in `lib/mcp/server.ts`
 - 18+ tools for issue CRUD, agent dispatch, plan management
 
+## Database Access
+
+### Local
+```
+postgresql://localhost:5432/dispatch
+```
+
+### Production (issues.chipp.ai)
+Production dispatch runs on the same Cloud SQL instance as chipp-deno (`primary-postgres` at `34.41.92.151`) but in the `dispatch` database.
+
+To connect via the chipp-database MCP tool:
+```
+db_connect(connectionUrl: "postgresql://postgres:<password>@34.41.92.151:5432/dispatch")
+```
+
+The password is in the K8s secret `chipp-issues` under `PG_DATABASE_URL`:
+```bash
+kubectl get secrets chipp-issues -o jsonpath='{.data.PG_DATABASE_URL}' | base64 -d
+```
+
+Key tables: `dispatch_issue`, `dispatch_status`, `dispatch_comment`, `dispatch_label`, `dispatch_issue_label`, `dispatch_agent_runs`.
+
+The `dispatch_status` table defines board columns (Backlog, Investigating, Needs Review, In Progress, In Review, Done, Canceled). Filter issues by `status_id` to query specific columns.
+
 ## Common Commands
 
 ```bash
