@@ -163,9 +163,9 @@ export default function TerminalViewer({
   // Combine WebSocket lines and SSE lines
   const allLines = [...wsLines, ...sseLines];
 
-  // Determine connection status: SSE lines mean CI is streaming even without WebSocket
+  // Determine connection status: only show "connected" when agent is actively running
   const hasSSEData = sseLines.length > 0;
-  const effectiveStatus = hasSSEData && !isConnected ? "connected" : connectionStatus;
+  const effectiveStatus = isAgentActive && hasSSEData && !isConnected ? "connected" : connectionStatus;
 
   // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {

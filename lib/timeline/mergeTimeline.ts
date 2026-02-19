@@ -292,6 +292,24 @@ function findRunForActivity(
   return undefined;
 }
 
+// Priority for entries within a run group:
+// 0 = run_started (group header, always first)
+// 1 = results (reports, PRs, blockers, plans - the distilled outcomes)
+// 2 = terminal_stream (raw output, collapsible detail)
+// 3 = run_completed (closing marker)
+function getRunGroupPriority(entry: TimelineEntry): number {
+  switch (entry.kind) {
+    case "run_started":
+      return 0;
+    case "terminal_stream":
+      return 2;
+    case "run_completed":
+      return 3;
+    default:
+      return 1;
+  }
+}
+
 function sortEntries(entries: TimelineEntry[]): TimelineEntry[] {
   // Group entries by runId
   const runGroups = new Map<string, TimelineEntry[]>();
@@ -307,12 +325,17 @@ function sortEntries(entries: TimelineEntry[]): TimelineEntry[] {
     }
   }
 
-  // Sort each run group chronologically (oldest first within group)
+  // Sort each run group: run_started first, then results (newest first), terminal last
   for (const [, group] of runGroups) {
-    group.sort(
-      (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    group.sort((a, b) => {
+      const pa = getRunGroupPriority(a);
+      const pb = getRunGroupPriority(b);
+      if (pa !== pb) return pa - pb;
+      // Within same priority, reverse chronological (newest first)
+      return (
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+    });
   }
 
   // Get the "representative timestamp" for each run group (the earliest entry)
