@@ -10,6 +10,7 @@ This folder contains documentation for Dispatch - an autonomous agent orchestrat
 
 ### Integrations
 
+- [GitHub Webhook Integration](./github-webhook-integration.md) - PR tracking, issue status automation, and fix verification
 - [Sentry Integration](./sentry-integration.md) - Automatic issue creation from production errors
 - [External Issue Linking](./external-issue-linking.md) - Connecting Dispatch with external tracking systems
 
@@ -29,11 +30,13 @@ This folder contains documentation for Dispatch - an autonomous agent orchestrat
 
 ## Quick Links
 
-| Topic                 | Document                                                               |
-| --------------------- | ---------------------------------------------------------------------- |
-| Sentry webhook setup  | [sentry-integration.md](./sentry-integration.md#setup)                 |
-| Deduplication logic   | [external-issue-linking.md](./external-issue-linking.md#usage-pattern) |
-| Environment variables | [../.env.example](../.env.example)                                     |
+| Topic                 | Document                                                                         |
+| --------------------- | -------------------------------------------------------------------------------- |
+| GitHub PR tracking    | [github-webhook-integration.md](./github-webhook-integration.md)                 |
+| Fix verification      | [github-webhook-integration.md](./github-webhook-integration.md#fix-verification-pipeline) |
+| Sentry webhook setup  | [sentry-integration.md](./sentry-integration.md#setup)                           |
+| Deduplication logic   | [external-issue-linking.md](./external-issue-linking.md#usage-pattern)           |
+| Environment variables | [../.env.example](../.env.example)                                               |
 
 ## Environment Setup
 
@@ -65,15 +68,18 @@ See [.env.example](../.env.example) for required environment variables:
 
 ## Database Tables
 
-| Table                  | Purpose                                    |
-| ---------------------- | ------------------------------------------ |
-| `dispatch_workspace`      | Multi-tenant workspace configuration       |
-| `dispatch_issue`          | Core issue data                            |
-| `dispatch_status`         | Workflow statuses (columns)                |
-| `dispatch_label`          | Issue labels/tags                          |
-| `dispatch_agent`          | AI agents that can be assigned             |
-| `dispatch_external_issue` | Links to external systems (Sentry, GitHub) |
-| `dispatch_agent_activity` | Agent investigation logs                   |
+| Table                     | Purpose                                         |
+| ------------------------- | ----------------------------------------------- |
+| `dispatch_workspace`      | Multi-tenant workspace configuration            |
+| `dispatch_issue`          | Core issue data                                 |
+| `dispatch_status`         | Workflow statuses (columns)                     |
+| `dispatch_label`          | Issue labels/tags                               |
+| `dispatch_agent`          | AI agents that can be assigned                  |
+| `dispatch_external_issue` | Links to external systems (Sentry, GitHub)      |
+| `dispatch_agent_activity` | Agent investigation logs                        |
+| `dispatch_issue_pr`       | Linked pull requests (from GitHub webhook)      |
+| `dispatch_fix_attempt`    | Fix verification tracking (post-deploy monitor) |
+| `dispatch_issue_history`  | Audit trail for status changes and PR links     |
 
 ## Contributing
 
