@@ -106,6 +106,10 @@ When a run's cost reaches 90% of the per-run cap, the Slack notification include
 
 See `docs/cost-controls.md` for full architecture details.
 
+## Security: `.mcp.json`
+
+The root `.mcp.json` is committed to git and shared across all agents. **Never write secrets, credentials, connection strings, or API keys directly into `.mcp.json`.** All sensitive values must use env var references (`${VAR_NAME}`). In CI, MCP servers are registered at user scope via `claude mcp add-json` (which can embed CI-local values) and `.mcp.json` is removed to avoid conflicts. Agents must never modify `.mcp.json`.
+
 ## Common Commands
 
 ```bash
