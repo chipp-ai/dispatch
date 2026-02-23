@@ -323,11 +323,10 @@ jobs:
           DECISION B: fix_applied
           The issue has a simple fix (< 50 lines changed, < 5 files).
           If you choose this:
-          1. Create a branch: git checkout -b ${BRANCH_NAME}
-          2. Apply the fix
-          3. Run 'deno check main.ts' to verify type safety
-          4. Run 'deno lint' to check for lint errors
-          5. Stage and commit: git add -A && git commit -m "fix: description [${INPUT_ISSUE_IDENTIFIER}]"
+          1. Apply the fix
+          2. Run 'deno check main.ts' to verify type safety
+          3. Run 'deno lint' to check for lint errors
+          4. Stage and commit: git add -A && git commit -m "fix: description [${INPUT_ISSUE_IDENTIFIER}]"
 
           DECISION C: needs_plan
           The issue is real but complex -- it needs a full investigation + implementation plan.
@@ -341,14 +340,15 @@ jobs:
           - If in doubt, choose DECISION C (escalate). It is always safe to escalate.
           - Do NOT attempt fixes you are not confident about.
           - Do NOT push any branches -- just prepare the commit locally.
+          - Do NOT run git checkout or git branch -- stay on the current branch at all times.
 
           GIT WORKFLOW (if applying a fix):
-          If you change ANY file, you MUST create a branch and commit before exiting.
+          If you change ANY file, you MUST commit before exiting.
           The workflow CANNOT create a PR from uncommitted changes.
-            git checkout -b ${BRANCH_NAME}
             # ... make changes ...
             git add -A
             git commit -m "fix: description [${INPUT_ISSUE_IDENTIFIER}]"
+          Do NOT create branches -- the workflow handles that after you exit.
 
           MANDATORY - RUN RESULT DECLARATION:
           Before exiting, you MUST write .scratch/run-result.json with:
@@ -516,34 +516,41 @@ jobs:
           BRANCH_NAME: ${{ steps.branch.outputs.name }}
           ISSUE_ID: ${{ inputs.issue_identifier }}
         run: |
-          CURRENT_BRANCH=$(git branch --show-current)
-          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
-            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-            echo "Fix was committed on branch: $CURRENT_BRANCH"
-          elif git diff --quiet && git diff --cached --quiet; then
+          # Check if agent committed changes or left uncommitted work
+          HAS_COMMITS=false
+          if git log --oneline origin/staging..HEAD 2>/dev/null | grep -q .; then
+            HAS_COMMITS=true
+          fi
+
+          HAS_UNCOMMITTED=false
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            HAS_UNCOMMITTED=true
+          fi
+
+          if [ "$HAS_COMMITS" = "false" ] && [ "$HAS_UNCOMMITTED" = "false" ]; then
             echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
             echo "No fix found despite fix_applied decision"
           else
-            echo "Agent left uncommitted changes -- auto-committing"
-            git diff --stat
-
-            if [ "$CURRENT_BRANCH" = "staging" ]; then
-              git checkout -b "$BRANCH_NAME"
-            fi
-
-            git add -A
-            git reset -- .scratch/ 2>/dev/null || true
-            if ! git diff --cached --quiet; then
-              SUMMARY=""
-              if [ -f .scratch/outcome-summary.txt ]; then
-                SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+            # Auto-commit any uncommitted changes the agent left behind
+            if [ "$HAS_UNCOMMITTED" = "true" ]; then
+              echo "Agent left uncommitted changes -- auto-committing"
+              git diff --stat
+              git add -A
+              git reset -- .scratch/ 2>/dev/null || true
+              if ! git diff --cached --quiet; then
+                SUMMARY=""
+                if [ -f .scratch/outcome-summary.txt ]; then
+                  SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+                fi
+                COMMIT_MSG=$(printf 'fix: %s [%s]\n\n%s' "${INPUT_TITLE}" "${ISSUE_ID}" "$SUMMARY")
+                git commit -m "$COMMIT_MSG"
               fi
-              COMMIT_MSG=$(printf 'fix: %s [%s]\n\n%s' "${INPUT_TITLE}" "${ISSUE_ID}" "$SUMMARY")
-              git commit -m "$COMMIT_MSG"
-              echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
             fi
+
+            # Move commits to a new branch for the PR
+            git checkout -b "$BRANCH_NAME"
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Moved agent changes to branch: $BRANCH_NAME"
           fi
 
       - name: Verify fix

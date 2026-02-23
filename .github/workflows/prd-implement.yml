@@ -363,8 +363,7 @@ jobs:
 
           Instructions:
           1. Read CLAUDE.md first to understand the codebase conventions
-          2. Create a feature branch: git checkout -b feat/{branch_id}
-          3. Follow the plan step by step:
+          2. Follow the plan step by step:
              - Create files listed in 'Files to Create'
              - Modify files listed in 'Files to Modify'
              - Create database migrations if listed in 'Database Changes'
@@ -379,16 +378,17 @@ jobs:
              Fix pre-existing failures too -- the PR must be green.
           5. Stage and commit: git add -A && git commit -m "feat: description [{identifier}]"
           6. Do NOT push branches - just prepare commits locally
+          7. Do NOT run git checkout or git branch - stay on the current branch at all times
 
           GIT WORKFLOW (CRITICAL - READ THIS):
-          If you change ANY file, you MUST create a branch and commit before exiting.
+          If you change ANY file, you MUST commit before exiting.
           The workflow CANNOT create a PR from uncommitted changes. If you edit files
           but do not commit, your work is lost. The sequence is ALWAYS:
-            git checkout -b feat/{branch_id}
             # ... make changes, run checks ...
             git add -A
             git commit -m "feat: description [{identifier}]"
           Then set pr_needed=true in run-result.json. No commit = no PR = wasted work.
+          Do NOT create branches -- the workflow handles that after you exit.
 
           EVIDENCE & PR SUMMARY (MANDATORY):
           After ALL implementation and checks pass, you MUST write .scratch/implementation-summary.md.
@@ -816,40 +816,44 @@ jobs:
           ISSUE_TITLE: ${{ inputs.title }}
           ISSUE_ID: ${{ inputs.issue_identifier }}
         run: |
-          CURRENT_BRANCH=$(git branch --show-current)
-          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
-            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-            echo "Implementation committed on branch: $CURRENT_BRANCH"
-          elif git diff --quiet && git diff --cached --quiet; then
+          # Check if agent committed changes or left uncommitted work
+          HAS_COMMITS=false
+          if git log --oneline origin/staging..HEAD 2>/dev/null | grep -q .; then
+            HAS_COMMITS=true
+          fi
+
+          HAS_UNCOMMITTED=false
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            HAS_UNCOMMITTED=true
+          fi
+
+          if [ "$HAS_COMMITS" = "false" ] && [ "$HAS_UNCOMMITTED" = "false" ]; then
             echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
             echo "No implementation commits found"
           else
-            # Agent made changes but forgot to create a branch and commit.
-            echo "Agent left uncommitted changes -- auto-committing"
-            git diff --stat
-
-            if [ "$CURRENT_BRANCH" = "staging" ]; then
-              git checkout -b "$BRANCH_NAME"
-            fi
-
-            git add -A
-            git reset -- .scratch/ 2>/dev/null || true
-            if ! git diff --cached --quiet; then
-              SUMMARY=""
-              if [ -f .scratch/outcome-summary.txt ]; then
-                SUMMARY=$(head -1 .scratch/outcome-summary.txt)
-              fi
-              git commit -m "feat($ISSUE_SOURCE): $ISSUE_TITLE [$ISSUE_ID]
+            # Auto-commit any uncommitted changes the agent left behind
+            if [ "$HAS_UNCOMMITTED" = "true" ]; then
+              echo "Agent left uncommitted changes -- auto-committing"
+              git diff --stat
+              git add -A
+              git reset -- .scratch/ 2>/dev/null || true
+              if ! git diff --cached --quiet; then
+                SUMMARY=""
+                if [ -f .scratch/outcome-summary.txt ]; then
+                  SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+                fi
+                git commit -m "feat($ISSUE_SOURCE): $ISSUE_TITLE [$ISSUE_ID]
 
 $SUMMARY
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
-              echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-              echo "Auto-committed agent changes on branch: $(git branch --show-current)"
-            else
-              echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
-              echo "No meaningful changes to commit after excluding scratch files"
+              fi
             fi
+
+            # Move commits to a new branch for the PR
+            git checkout -b "$BRANCH_NAME"
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Moved agent changes to branch: $BRANCH_NAME"
           fi
 
       - name: Push branch and create PR
@@ -860,7 +864,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
         run: |
           # Ensure .github/ directory is clean - PAT may lack `workflows` scope
           # which blocks pushing any changes to workflow files.
-          git checkout -- .github/ 2>/dev/null || true
+          git restore .github/ 2>/dev/null || true
 
           # Use PAT for push (enterprise blocks default GITHUB_TOKEN writes)
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"

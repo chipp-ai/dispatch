@@ -406,23 +406,23 @@ jobs:
              The report becomes part of the PR description and must be clear enough for a human
              reviewer to understand the bug, the impact, and the fix without reading the code diff.
           5. If you can identify a fix with HIGH confidence:
-             a. Create a new branch from staging: git checkout -b ${BRANCH_NAME}
-             b. Implement the fix
-             c. Run 'deno check main.ts' to verify type safety
-             d. Stage and commit: git add -A && git commit -m "fix(${INPUT_SOURCE}): description [${INPUT_ISSUE_IDENTIFIER}]"
+             a. Implement the fix
+             b. Run 'deno check main.ts' to verify type safety
+             c. Stage and commit: git add -A && git commit -m "fix(${INPUT_SOURCE}): description [${INPUT_ISSUE_IDENTIFIER}]"
           6. If you cannot identify a confident fix, that is fine - just write the investigation report
           7. Do NOT attempt fixes you are not confident about
           8. Do NOT push any branches - just prepare the commit locally
+          9. Do NOT run git checkout or git branch - stay on the current branch at all times
 
           GIT WORKFLOW (CRITICAL - READ THIS):
-          If you change ANY file, you MUST create a branch and commit before exiting.
+          If you change ANY file, you MUST commit before exiting.
           The workflow CANNOT create a PR from uncommitted changes. If you edit files
           but do not commit, your work is lost. The sequence is ALWAYS:
-            git checkout -b ${BRANCH_NAME}
             # ... make changes ...
             git add -A
             git commit -m "fix(${INPUT_SOURCE}): description [${INPUT_ISSUE_IDENTIFIER}]"
           Then set pr_needed=true in run-result.json. No commit = no PR = wasted work.
+          Do NOT create branches -- the workflow handles that after you exit.
 
           ENVIRONMENT VARIABLES:
           If you need an environment variable, FIRST read .env and .env.example to check what is
@@ -609,43 +609,44 @@ jobs:
           ISSUE_TITLE: ${{ inputs.title }}
           ISSUE_ID: ${{ inputs.issue_identifier }}
         run: |
-          # Check if Claude created a new branch with commits ahead of staging
-          CURRENT_BRANCH=$(git branch --show-current)
-          if [ "$CURRENT_BRANCH" != "staging" ] && git log --oneline staging..HEAD 2>/dev/null | grep -q .; then
-            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-            echo "Fix was committed on branch: $CURRENT_BRANCH"
-          elif git diff --quiet && git diff --cached --quiet; then
+          # Check if agent committed changes or left uncommitted work
+          HAS_COMMITS=false
+          if git log --oneline origin/staging..HEAD 2>/dev/null | grep -q .; then
+            HAS_COMMITS=true
+          fi
+
+          HAS_UNCOMMITTED=false
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            HAS_UNCOMMITTED=true
+          fi
+
+          if [ "$HAS_COMMITS" = "false" ] && [ "$HAS_UNCOMMITTED" = "false" ]; then
             echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
             echo "No fix attempted - investigation report only"
           else
-            # Agent made changes but forgot to create a branch and commit.
-            # Salvage the work: create the branch, stage, and commit.
-            echo "Agent left uncommitted changes -- auto-committing"
-            git diff --stat
-
-            if [ "$CURRENT_BRANCH" = "staging" ]; then
-              git checkout -b "$BRANCH_NAME"
-            fi
-
-            git add -A
-            # Exclude scratch files from the commit
-            git reset -- .scratch/ 2>/dev/null || true
-            if ! git diff --cached --quiet; then
-              SUMMARY=""
-              if [ -f .scratch/outcome-summary.txt ]; then
-                SUMMARY=$(head -1 .scratch/outcome-summary.txt)
-              fi
-              git commit -m "fix($ISSUE_SOURCE): $ISSUE_TITLE [$ISSUE_ID]
+            # Auto-commit any uncommitted changes the agent left behind
+            if [ "$HAS_UNCOMMITTED" = "true" ]; then
+              echo "Agent left uncommitted changes -- auto-committing"
+              git diff --stat
+              git add -A
+              git reset -- .scratch/ 2>/dev/null || true
+              if ! git diff --cached --quiet; then
+                SUMMARY=""
+                if [ -f .scratch/outcome-summary.txt ]; then
+                  SUMMARY=$(head -1 .scratch/outcome-summary.txt)
+                fi
+                git commit -m "fix($ISSUE_SOURCE): $ISSUE_TITLE [$ISSUE_ID]
 
 $SUMMARY
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
-              echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
-              echo "Auto-committed agent changes on branch: $(git branch --show-current)"
-            else
-              echo "fix_attempted=false" >> "$GITHUB_OUTPUT"
-              echo "No meaningful changes to commit after excluding scratch files"
+              fi
             fi
+
+            # Move commits to a new branch for the PR
+            git checkout -b "$BRANCH_NAME"
+            echo "fix_attempted=true" >> "$GITHUB_OUTPUT"
+            echo "Moved agent changes to branch: $BRANCH_NAME"
           fi
 
       - name: Push branch and create PR
